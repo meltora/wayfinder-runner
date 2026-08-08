@@ -1,0 +1,47 @@
+[Unit]
+Description=Autonomous Delivery Platform Runner
+Documentation=https://github.com/example/app-runner
+After=network-online.target
+Wants=network-online.target our-runner-updater.socket
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=our-runner
+Group=our-runner
+ExecStart=/opt/our-runner/current/our-runner start --config /etc/our-runner/config.yaml
+Restart=always
+RestartSec=5
+Environment=DOCKER_HOST=unix:///run/user/%U/docker.sock
+UMask=0077
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+MemoryDenyWriteExecute=true
+StateDirectory=our-runner
+ReadWritePaths=/var/lib/our-runner
+ReadOnlyPaths=/opt/our-runner /etc/our-runner
+StateDirectoryMode=0700
+
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

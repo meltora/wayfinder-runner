@@ -1,0 +1,43 @@
+control_plane_url: wss://control-plane.example.com/v1/runners/stream
+state_dir: /var/lib/our-runner
+transport: websocket
+isolation: docker
+supervisor: auto
+provider: codex
+# OpenCode is a provider-neutral harness. To use it, set provider: opencode.
+# agent_model is optional; when omitted, OpenCode uses the customer's imported
+# or global default. When set, it must be an OpenCode provider/model identifier.
+# agent_model: customer-provider/customer-model
+job_image: registry.example.com/our-runner/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+job_memory_mb: 4096
+job_cpus: 2
+job_pids: 512
+artifact_spool_mb: 1024
+journal_retention_days: 30
+journal_max_mb: 512
+job_network: none
+# Cloud-backed Codex/Claude jobs require a pre-created, egress-enforced Docker
+# network labeled com.ourplatform.egress-enforced=true and
+# com.ourplatform.egress-policy=<policy ID>:
+# job_network: restricted
+# job_network_name: runner-egress
+# egress_policy_id: provider-git-v1
+labels:
+  pool: default
+
+# Repository URLs are installed by an administrator and referenced by opaque ID
+# in control-plane job specifications. Never place credentials in these URLs;
+# use the runner user's Git credential helper or SSH agent instead.
+# repositories:
+#   web-app:
+#     url: ssh://git@example.com/company/web-app.git
+#   shared-api:
+#     url: https://example.com/company/shared-api.git
+
+# Checks are administrator-owned argv arrays, not control-plane shell strings.
+# checks:
+#   web-unit:
+#     command: npm
+#     args: [test, --, --runInBand]
+#     timeout_seconds: 900
+#     repository_id: web-app

@@ -1,0 +1,11 @@
+bin/
+dist/
+.release/
+our-runner
+mock-cp
+*.db
+*.db-wal
+*.db-shm
+coverage*.out
+.DS_Store
+internal/isolation/testdata/codex-home/.codex/tmp/

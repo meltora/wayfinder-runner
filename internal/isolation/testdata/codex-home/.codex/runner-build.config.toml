@@ -1,0 +1,12 @@
+default_permissions = "runner-job"
+approval_policy = "never"
+
+[permissions.runner-job]
+description = "Runner-owned least-privilege job profile."
+extends = ":workspace"
+
+[permissions.runner-job.filesystem]
+"/home/runner/.codex" = "deny"
+
+[permissions.runner-job.network]
+enabled = false

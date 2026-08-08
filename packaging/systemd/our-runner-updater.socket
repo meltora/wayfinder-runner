@@ -1,0 +1,16 @@
+[Unit]
+Description=Autonomous Delivery Platform Runner Update Socket
+Documentation=https://github.com/example/app-runner
+
+[Socket]
+ListenStream=/run/our-runner-updater/control.sock
+SocketUser=root
+SocketGroup=our-runner
+SocketMode=0660
+DirectoryMode=0750
+RemoveOnStop=true
+FileDescriptorName=control
+Backlog=16
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,36 @@
+name: Rootless production smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rootless-docker:
+    runs-on: [self-hosted, linux, rootless-docker]
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Require rootless Docker
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker info --format '{{json .SecurityOptions}}' | grep -q 'rootless'
+      - name: Build job image
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/our-runner-linux ./cmd/our-runner
+          docker build --pull --tag our-runner-job:rootless-smoke --file packaging/job-image/Dockerfile .
+      - name: Verify rootless nested sandbox
+        env:
+          RUN_DOCKER_SANDBOX_PROBE: "1"
+          JOB_IMAGE: our-runner-job:rootless-smoke
+        run: go test -count=1 -run TestNestedSandboxContainerIntegration ./internal/isolation

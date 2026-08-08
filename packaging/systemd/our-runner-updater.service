@@ -1,0 +1,51 @@
+[Unit]
+Description=Autonomous Delivery Platform Runner Updater
+Documentation=https://github.com/example/app-runner
+Requires=our-runner-updater.socket
+After=network-online.target our-runner-updater.socket
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/our-runner/updater-current serve --config /etc/our-runner/updater.yaml
+Sockets=our-runner-updater.socket
+Restart=on-failure
+RestartSec=5
+UMask=0077
+StateDirectory=our-runner-updater
+StateDirectoryMode=0700
+MemoryMax=768M
+TasksMax=64
+LimitNOFILE=1024
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/our-runner /var/lib/our-runner-updater
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+ProcSubset=pid
+MemoryDenyWriteExecute=true
+LockPersonality=true
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_KILL
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RemoveIPC=true
+
+[Install]
+WantedBy=multi-user.target

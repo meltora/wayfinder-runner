@@ -1,0 +1,76 @@
+version: 2
+project_name: our-runner
+
+builds:
+  - id: our-runner-linux
+    main: ./cmd/our-runner
+    binary: our-runner
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/example/app-runner/internal/daemon.Version={{.Version}}
+  - id: our-runner-darwin-development
+    main: ./cmd/our-runner
+    binary: our-runner
+    env: [CGO_ENABLED=0]
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/example/app-runner/internal/daemon.Version={{.Version}}
+  - id: our-runner-updater-linux
+    main: ./cmd/our-runner-updater
+    binary: our-runner-updater
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: linux
+    ids: [our-runner-linux, our-runner-updater-linux]
+    formats: [tar.gz]
+    files:
+      - packaging/systemd/our-runner.service
+      - packaging/systemd/our-runner-updater.service
+      - packaging/systemd/our-runner-updater.socket
+      - packaging/tmpfiles/our-runner-updater.conf
+      - packaging/install.sh
+      - packaging/updater.yaml
+      - packaging/update-trust.json
+      - config.example.yaml
+      - README.md
+  - id: darwin-development
+    ids: [our-runner-darwin-development]
+    formats: [tar.gz]
+    files:
+      - README.md
+  - id: linux-update
+    ids: [our-runner-linux, our-runner-updater-linux]
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}-update_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - none*
+
+checksum:
+  name_template: "checksums.txt"
+  extra_files:
+    - glob: .release/install.sh
+      name_template: install.sh
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args: [sign-blob, "--bundle=${signature}", "${artifact}", "--yes"]
+    artifacts: checksum
+
+release:
+  draft: true
+  extra_files:
+    - glob: .release/install.sh
+      name_template: install.sh

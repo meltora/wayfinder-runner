@@ -1,0 +1,122 @@
+package v1
+
+import "time"
+
+type JobKind string
+
+const (
+	JobKindPlan  JobKind = "plan"
+	JobKindBuild JobKind = "build"
+)
+
+type JobSpec struct {
+	JobID          string          `json:"job_id"`
+	AttemptID      string          `json:"attempt_id"`
+	Kind           JobKind         `json:"kind"`
+	FencingToken   uint64          `json:"fencing_token"`
+	LeaseExpiresAt time.Time       `json:"lease_expires_at"`
+	Repositories   []JobRepository `json:"repositories"`
+	Ticket         TicketContext   `json:"ticket"`
+	AgentPack      *AgentPackRef   `json:"agent_pack,omitempty"`
+
+	ApprovedPlanRevision int      `json:"approved_plan_revision,omitempty"`
+	RequiredChecks       []string `json:"required_checks,omitempty"`
+	PushBranch           bool     `json:"push_branch,omitempty"`
+	PRTitle              string   `json:"pr_title,omitempty"`
+	ReviewComment        string   `json:"review_comment,omitempty"`
+	ContinuationCount    int      `json:"continuation_count,omitempty"`
+	ResumeSessionID      string   `json:"resume_session_id,omitempty"`
+}
+
+type JobRepository struct {
+	RepositoryID string `json:"repository_id"`
+	BaseBranch   string `json:"base_branch,omitempty"`
+	Primary      bool   `json:"primary,omitempty"`
+}
+
+type TicketContext struct {
+	Key                string `json:"key"`
+	Summary            string `json:"summary"`
+	Description        string `json:"description"`
+	AcceptanceCriteria string `json:"acceptance_criteria,omitempty"`
+}
+
+type AgentPackRef struct {
+	Version string `json:"version"`
+	Digest  string `json:"digest"`
+	URL     string `json:"url"`
+	KeyID   string `json:"key_id"`
+}
+
+type CommandPayload struct {
+	Command        string     `json:"command"`
+	Job            *JobSpec   `json:"job,omitempty"`
+	JobID          string     `json:"job_id,omitempty"`
+	AttemptID      string     `json:"attempt_id,omitempty"`
+	FencingToken   uint64     `json:"fencing_token,omitempty"`
+	LeaseExpiresAt time.Time  `json:"lease_expires_at,omitempty"`
+	Reason         string     `json:"reason,omitempty"`
+	QuestionID     string     `json:"question_id,omitempty"`
+	Decision       string     `json:"decision,omitempty"`
+	DecidedBy      string     `json:"decided_by,omitempty"`
+	UpdateID       string     `json:"update_id,omitempty"`
+	DrainDeadline  *time.Time `json:"drain_deadline,omitempty"`
+}
+
+const (
+	CmdStartJob         = "start_job"
+	CmdCancelJob        = "cancel_job"
+	CmdEmergencyStop    = "emergency_stop"
+	CmdResumeRunner     = "resume_runner"
+	CmdReviewComment    = "review_comment"
+	CmdUpdate           = "update"
+	CmdDecisionResponse = "decision_response"
+	CmdRotateCert       = "rotate_cert"
+	CmdRenewLease       = "renew_lease"
+)
+
+type PlanRevision struct {
+	JobID         string    `json:"job_id"`
+	AttemptID     string    `json:"attempt_id"`
+	FencingToken  uint64    `json:"fencing_token"`
+	BaseRevision  int       `json:"base_revision"`
+	Revision      int       `json:"revision"`
+	Summary       string    `json:"summary"`
+	Requirements  []string  `json:"requirements,omitempty"`
+	Approach      string    `json:"approach"`
+	ExpectedFiles []string  `json:"expected_files,omitempty"`
+	Risks         []string  `json:"risks,omitempty"`
+	Assumptions   []string  `json:"assumptions,omitempty"`
+	TestStrategy  string    `json:"test_strategy,omitempty"`
+	PublishedAt   time.Time `json:"published_at"`
+}
+
+type ProgressReport struct {
+	JobID        string `json:"job_id"`
+	AttemptID    string `json:"attempt_id"`
+	FencingToken uint64 `json:"fencing_token"`
+	Milestone    string `json:"milestone"`
+	CurrentTask  string `json:"current_task,omitempty"`
+	NextAction   string `json:"next_action,omitempty"`
+}
+
+type Checkpoint struct {
+	JobID             string    `json:"job_id"`
+	AttemptID         string    `json:"attempt_id"`
+	FencingToken      uint64    `json:"fencing_token"`
+	PlanStep          string    `json:"plan_step,omitempty"`
+	BranchState       string    `json:"branch_state,omitempty"`
+	NextAction        string    `json:"next_action,omitempty"`
+	ProviderSessionID string    `json:"provider_session_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ArtifactRef struct {
+	JobID        string `json:"job_id"`
+	AttemptID    string `json:"attempt_id"`
+	FencingToken uint64 `json:"fencing_token"`
+	Name         string `json:"name"`
+	ContentType  string `json:"content_type"`
+	DigestSHA256 string `json:"digest_sha256"`
+	SizeBytes    int64  `json:"size_bytes"`
+}
