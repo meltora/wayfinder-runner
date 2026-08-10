@@ -19,13 +19,14 @@ type JobSpec struct {
 	Ticket         TicketContext   `json:"ticket"`
 	AgentPack      *AgentPackRef   `json:"agent_pack,omitempty"`
 
-	ApprovedPlanRevision int      `json:"approved_plan_revision,omitempty"`
-	RequiredChecks       []string `json:"required_checks,omitempty"`
-	PushBranch           bool     `json:"push_branch,omitempty"`
-	PRTitle              string   `json:"pr_title,omitempty"`
-	ReviewComment        string   `json:"review_comment,omitempty"`
-	ContinuationCount    int      `json:"continuation_count,omitempty"`
-	ResumeSessionID      string   `json:"resume_session_id,omitempty"`
+	ApprovedPlanRevision         int                  `json:"approved_plan_revision,omitempty"`
+	RequiredChecks               []string             `json:"required_checks,omitempty"`
+	PushBranch                   bool                 `json:"push_branch,omitempty"`
+	PRTitle                      string               `json:"pr_title,omitempty"`
+	ReviewComment                string               `json:"review_comment,omitempty"`
+	ContinuationCount            int                  `json:"continuation_count,omitempty"`
+	ResumeSessionID              string               `json:"resume_session_id,omitempty"`
+	ProviderCapacityResumePolicy CapacityResumePolicy `json:"provider_capacity_resume_policy,omitempty"`
 }
 
 type JobRepository struct {

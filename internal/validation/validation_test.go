@@ -60,6 +60,7 @@ func TestJobSpecAcceptsValidPlanAndRejectsEveryUntrustedBoundary(t *testing.T) {
 		},
 		"continuation":    func(j *v1.JobSpec) { j.ContinuationCount = 101 },
 		"resume id":       func(j *v1.JobSpec) { j.ResumeSessionID = "bad session" },
+		"resume policy":   func(j *v1.JobSpec) { j.ProviderCapacityResumePolicy = "eventually" },
 		"too many checks": func(j *v1.JobSpec) { j.RequiredChecks = make([]string, 65) },
 		"bad check":       func(j *v1.JobSpec) { j.RequiredChecks = []string{"bad/check"} },
 		"duplicate check": func(j *v1.JobSpec) { j.RequiredChecks = []string{"unit", "unit"} },

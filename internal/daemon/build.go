@@ -16,7 +16,11 @@ import (
 	"github.com/example/app-runner/internal/repo"
 )
 
-func (jr *jobRunner) finalizeBuild(ctx context.Context, rm *repo.Manager) (string, map[string]any, error) {
+func (jr *jobRunner) finalizeBuild(
+	ctx context.Context,
+	rm *repo.Manager,
+	publishReviewReady bool,
+) (string, map[string]any, error) {
 	job := jr.job
 	extra := map[string]any{}
 	commitSet := make(map[string]string, len(jr.repositories))
@@ -33,9 +37,7 @@ func (jr *jobRunner) finalizeBuild(ctx context.Context, rm *repo.Manager) (strin
 	}
 	extra["commit_set"] = commitSet
 
-	if !jr.runRequiredChecks(ctx, commitSet) {
-		return "failed", map[string]any{"error": "required checks failed", "commit_set": commitSet}, nil
-	}
+	checksPassed := jr.runRequiredChecks(ctx, commitSet)
 
 	for _, repository := range jr.repositories {
 		if err := jr.collectPatch(ctx, repository, commitSet[repository.ID]); err != nil {
@@ -48,12 +50,18 @@ func (jr *jobRunner) finalizeBuild(ctx context.Context, rm *repo.Manager) (strin
 			if err := jr.pushBranch(ctx, repository, rm, commitSet[repository.ID]); err != nil {
 				return "failed", nil, fmt.Errorf("push %s: %w", repository.ID, err)
 			}
-			_ = jr.sendJobEvent(ctx, "pr_ready", map[string]any{
-				"repository_id": repository.ID, "branch": repository.Branch,
-				"head_sha": commitSet[repository.ID], "title": job.PRTitle,
-			})
+			if checksPassed && publishReviewReady {
+				_ = jr.sendJobEvent(ctx, "pr_ready", map[string]any{
+					"repository_id": repository.ID, "branch": repository.Branch,
+					"head_sha": commitSet[repository.ID], "title": job.PRTitle,
+				})
+			}
 		}
 		extra["pushed"] = true
+	}
+	if !checksPassed {
+		extra["error"] = "required checks failed"
+		return "failed", extra, nil
 	}
 	return "succeeded", extra, nil
 }

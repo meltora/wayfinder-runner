@@ -106,11 +106,37 @@ func (m *Manager) CreateWorkspace(ctx context.Context, url, branch, baseRef, des
 	if _, err := m.runGitWithProtocols(ctx, "", true, "clone", "--no-hardlinks", "--no-checkout", mirror, dest); err != nil {
 		return err
 	}
-	if _, err := m.runGitWithProtocols(ctx, dest, true, "checkout", "-b", branch, baseRef); err != nil {
+	resolvedBase, err := m.resolveWorkspaceBase(ctx, dest, baseRef)
+	if err != nil {
+		_ = os.RemoveAll(dest)
+		return err
+	}
+	if _, err := m.runGitWithProtocols(ctx, dest, true, "checkout", "-b", branch, resolvedBase); err != nil {
 		_ = os.RemoveAll(dest)
 		return err
 	}
 	return nil
+}
+
+func (m *Manager) resolveWorkspaceBase(ctx context.Context, dest, baseRef string) (string, error) {
+	candidates := []string{baseRef}
+	if !strings.HasPrefix(baseRef, "refs/remotes/") {
+		branch := strings.TrimPrefix(baseRef, "refs/heads/")
+		candidates = append(candidates, "refs/remotes/origin/"+branch)
+	}
+	for _, candidate := range candidates {
+		if _, err := m.runGitWithProtocols(
+			ctx,
+			dest,
+			true,
+			"rev-parse",
+			"--verify",
+			candidate+"^{commit}",
+		); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("workspace base ref %q does not resolve to a commit", baseRef)
 }
 
 func (m *Manager) RemoveWorkspace(dest string) error {

@@ -56,6 +56,15 @@ printf '%s\n' \
 echo '{"type":"result","session_id":"sess-123","status":"success"}'
 `
 
+const fakeFailingBuildAgent = `#!/bin/sh
+echo 'package main
+
+func PartialFeature() bool { return true }
+' > partial.go
+echo '{"type":"error","status":"failed","error":{"data":{"message":"provider quota exhausted"}}}'
+exit 17
+`
+
 func TestBuildJobEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
@@ -154,6 +163,7 @@ func TestBuildJobCheckFailure(t *testing.T) {
 	fakeAgent := writeFakeAgent(t, strings.ReplaceAll(fakeBuildAgent, "$RUNNER_BIN", runnerBin))
 
 	cfg := directRunnerConfig(cp.WSURL(), stateDir)
+	cfg.ControlPlaneHTTPURL = cp.EnrollURL()
 	cfg.Provider = "claude"
 	cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
 	cfg.Repositories = map[string]config.RepositoryConfig{"repo-2": {URL: origin}}
@@ -172,6 +182,7 @@ func TestBuildJobCheckFailure(t *testing.T) {
 		JobID: "build-2", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-2", Primary: true}}, ApprovedPlanRevision: 1,
 		RequiredChecks: []string{"always-fail"},
+		PushBranch:     true,
 		Ticket:         v1.TicketContext{Key: "PROJ-10", Summary: "Will fail checks"},
 	}
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
@@ -185,6 +196,12 @@ func TestBuildJobCheckFailure(t *testing.T) {
 	if payload["state"] != "failed" {
 		t.Fatalf("state = %v", payload["state"])
 	}
+	if payload["pushed"] != true {
+		t.Fatalf("failed attempt branch was not published: %v", payload)
+	}
+	if payload["branch"] != "job/build-2/att-1" || payload["head_sha"] == "" {
+		t.Fatalf("failed attempt provenance is incomplete: %v", payload)
+	}
 	failed := 0
 	for _, e := range cp.EventsByKind("test_results") {
 		if e.Payload.(map[string]any)["result"] == "failed" {
@@ -193,6 +210,100 @@ func TestBuildJobCheckFailure(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Fatalf("failed check events = %d", failed)
+	}
+	if len(cp.EventsByKind("artifact_registered")) != 1 {
+		t.Fatalf("failed attempt patch artifacts = %d", len(cp.EventsByKind("artifact_registered")))
+	}
+	if len(cp.EventsByKind("pr_ready")) != 0 {
+		t.Fatal("failed checks emitted pr_ready")
+	}
+	cmd := exec.Command("git", "--git-dir", origin, "show", "job/build-2/att-1:feature.go")
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "Feature") {
+		t.Fatalf("failed attempt branch is not recoverable: %v\n%s", err, out)
+	}
+}
+
+func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	cp, err := mockcp.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer cp.Close()
+
+	stateDir := t.TempDir()
+	enrollRunner(t, cp, stateDir)
+	origin := seedBareOrigin(t)
+	fakeAgent := writeFakeAgent(t, fakeFailingBuildAgent)
+
+	cfg := directRunnerConfig(cp.WSURL(), stateDir)
+	cfg.ControlPlaneHTTPURL = cp.EnrollURL()
+	cfg.Provider = "claude"
+	cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
+	cfg.Repositories = map[string]config.RepositoryConfig{"repo-agent-failure": {URL: origin}}
+	cfg.Checks = map[string]config.CheckConfig{
+		"partial-file": {Command: "test", Args: []string{"-f", "partial.go"}},
+	}
+	d, err := daemon.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+
+	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
+
+	job := v1.JobSpec{
+		JobID: "build-agent-failure", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
+		Repositories: []v1.JobRepository{{RepositoryID: "repo-agent-failure", Primary: true}}, ApprovedPlanRevision: 1,
+		RequiredChecks: []string{"partial-file"}, PushBranch: true,
+		ProviderCapacityResumePolicy: v1.CapacityResumeAutomatic,
+		Ticket:                       v1.TicketContext{Key: "PROJ-11", Summary: "Preserve partial work"},
+	}
+	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, "job finished", 60*time.Second, func() bool {
+		return len(cp.EventsByKind("job_finished")) >= 1
+	})
+	payload := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
+	if payload["state"] != "waiting_for_provider_capacity" || payload["pushed"] != true {
+		t.Fatalf("agent failure provenance was not published: %v", payload)
+	}
+	if payload["failure_class"] != "provider_capacity_exhausted" || payload["resume_policy"] != "automatic" {
+		t.Fatalf("capacity failure was not normalized on job completion: %v", payload)
+	}
+	if !strings.Contains(payload["error"].(string), "provider quota exhausted") {
+		t.Fatalf("provider failure detail was not preserved: %v", payload)
+	}
+	if payload["branch"] != "job/build-agent-failure/att-1" || payload["head_sha"] == "" {
+		t.Fatalf("agent failure provenance is incomplete: %v", payload)
+	}
+	if len(cp.EventsByKind("artifact_registered")) != 1 {
+		t.Fatalf("agent failure patch artifacts = %d", len(cp.EventsByKind("artifact_registered")))
+	}
+	if len(cp.EventsByKind("pr_ready")) != 0 {
+		t.Fatal("agent failure emitted pr_ready")
+	}
+	capacityEvents := cp.EventsByKind("provider_capacity_exhausted")
+	if len(capacityEvents) != 1 {
+		t.Fatalf("provider capacity events = %d", len(capacityEvents))
+	}
+	capacity := capacityEvents[0].Payload.(map[string]any)
+	if capacity["adapter"] != "claude" || capacity["provider"] != "claude" ||
+		capacity["reason"] != "quota_exhausted" || capacity["resume_policy"] != "automatic" {
+		t.Fatalf("provider capacity payload = %v", capacity)
+	}
+	cmd := exec.Command("git", "--git-dir", origin, "show", "job/build-agent-failure/att-1:partial.go")
+	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "PartialFeature") {
+		t.Fatalf("agent failure branch is not recoverable: %v\n%s", err, out)
 	}
 }
 

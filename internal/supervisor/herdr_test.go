@@ -18,6 +18,7 @@ type fakeHerdr struct {
 	mu       sync.Mutex
 	requests []herdrRequest
 	sentText string
+	sentKeys []string
 }
 
 func startFakeHerdr(t *testing.T) *fakeHerdr {
@@ -66,10 +67,18 @@ func (f *fakeHerdr) handle(conn net.Conn) {
 			result = map[string]any{"workspace": map[string]any{"workspace_id": "w9"}}
 		case "pane.list":
 			result = map[string]any{"panes": []map[string]any{{"pane_id": "w9:p1"}}}
-		case "pane.send_text":
+		case "pane.send_text", "pane.send_input":
 			params, _ := req.Params.(map[string]any)
 			f.mu.Lock()
 			f.sentText, _ = params["text"].(string)
+			if rawKeys, ok := params["keys"].([]any); ok {
+				f.sentKeys = make([]string, 0, len(rawKeys))
+				for _, rawKey := range rawKeys {
+					if key, ok := rawKey.(string); ok {
+						f.sentKeys = append(f.sentKeys, key)
+					}
+				}
+			}
 			f.mu.Unlock()
 			result = map[string]any{"type": "ok"}
 		case "pane.get":
@@ -114,21 +123,36 @@ func TestHerdrStartSendsCommand(t *testing.T) {
 	}
 	fake.mu.Lock()
 	text := fake.sentText
+	keys := append([]string(nil), fake.sentKeys...)
 	fake.mu.Unlock()
-	if !strings.Contains(text, "PLATFORM_MCP_TOKEN=abc") {
-		t.Fatalf("platform env not forwarded: %q", text)
+	launch, err := os.ReadFile(hp.launchFile)
+	if err != nil {
+		t.Fatalf("read launch script: %v", err)
 	}
-	if !strings.Contains(text, "HOME=/x") {
-		t.Fatalf("required process env not forwarded: %q", text)
+	launchText := string(launch)
+	if !strings.Contains(launchText, "PLATFORM_MCP_TOKEN=abc") {
+		t.Fatalf("platform env not forwarded: %q", launchText)
 	}
-	if strings.Contains(text, "UNAPPROVED_SECRET") {
-		t.Fatalf("non-platform env leaked: %q", text)
+	if !strings.Contains(launchText, "HOME=/x") {
+		t.Fatalf("required process env not forwarded: %q", launchText)
 	}
-	if !strings.Contains(text, "'/bin/echo' 'hello world'") {
-		t.Fatalf("command not quoted: %q", text)
+	if strings.Contains(launchText, "UNAPPROVED_SECRET") {
+		t.Fatalf("non-platform env leaked: %q", launchText)
+	}
+	if !strings.Contains(launchText, "'/bin/echo' 'hello world'") {
+		t.Fatalf("command not quoted: %q", launchText)
+	}
+	if strings.Contains(text, "PLATFORM_MCP_TOKEN") || strings.Contains(text, "hello world") {
+		t.Fatalf("sensitive launch details pasted into terminal: %q", text)
+	}
+	if text != shellQuote(hp.launchFile) {
+		t.Fatalf("submitted command = %q, want launch script %q", text, hp.launchFile)
+	}
+	if len(keys) != 1 || keys[0] != "enter" {
+		t.Fatalf("submission keys = %v", keys)
 	}
 	methods := fake.methodsCalled()
-	want := []string{"workspace.create", "pane.list", "pane.send_text", "pane.send_keys"}
+	want := []string{"workspace.create", "pane.list", "pane.send_input"}
 	if len(methods) != len(want) {
 		t.Fatalf("methods = %v", methods)
 	}
@@ -216,6 +240,36 @@ func TestHerdrWaitExitCode(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Wait did not return")
+	}
+}
+
+func TestHerdrWaitPollsUntilExitFileExists(t *testing.T) {
+	fake := startFakeHerdr(t)
+	proc, err := NewHerdr(fake.ln.Addr().String()).Start(context.Background(), Spec{
+		Name: "delayed", Command: "/bin/sh", Dir: t.TempDir(), RuntimeDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hp := proc.(*herdrProc)
+	done := make(chan error, 1)
+	go func() { done <- proc.Wait() }()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Wait returned before the process wrote its exit status: %v", err)
+	case <-time.After(350 * time.Millisecond):
+	}
+	if err := os.WriteFile(hp.exitFile, []byte("0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Wait: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not observe the delayed exit status")
 	}
 }
 

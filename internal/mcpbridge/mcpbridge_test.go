@@ -90,6 +90,36 @@ func TestStdioServerUnknownTool(t *testing.T) {
 	}
 }
 
+func TestStdioServerAcceptsReservedToolCallMetadataOnly(t *testing.T) {
+	var called atomic.Bool
+	server := &Server{Caller: func(_ context.Context, tool string, args json.RawMessage) (any, error) {
+		called.Store(true)
+		if tool != "platform_get_job_context" || string(args) != "{}" {
+			t.Fatalf("tool=%q args=%s", tool, args)
+		}
+		return map[string]any{"ok": true}, nil
+	}}
+	input := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"platform_get_job_context","arguments":{},"_meta":{"progressToken":"token-1"}}}` + "\n"
+	var out bytes.Buffer
+	if err := server.Serve(context.Background(), strings.NewReader(input), &out); err != nil {
+		t.Fatal(err)
+	}
+	var response Response
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil || response.Error != nil || !called.Load() {
+		t.Fatalf("response=%+v called=%v decode=%v", response, called.Load(), err)
+	}
+
+	called.Store(false)
+	out.Reset()
+	input = `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"platform_get_job_context","arguments":{},"unexpected":true}}` + "\n"
+	if err := server.Serve(context.Background(), strings.NewReader(input), &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil || response.Error == nil || response.Error.Code != ErrParams || called.Load() {
+		t.Fatalf("response=%+v called=%v decode=%v", response, called.Load(), err)
+	}
+}
+
 func TestUnixBridgeRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "job.sock")

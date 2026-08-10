@@ -57,8 +57,9 @@ func (s *Server) handle(ctx context.Context, req Request) *Response {
 		return &Response{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"tools": Tools}}
 	case "tools/call":
 		var params struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
+			Name      string                     `json:"name"`
+			Arguments json.RawMessage            `json:"arguments"`
+			Meta      map[string]json.RawMessage `json:"_meta,omitempty"`
 		}
 		if err := decodeStrict(req.Params, &params); err != nil {
 			return &Response{JSONRPC: "2.0", ID: req.ID, Error: &Error{Code: ErrParams, Message: err.Error()}}

@@ -121,6 +121,11 @@ func JobSpec(job v1.JobSpec) error {
 			return err
 		}
 	}
+	if job.ProviderCapacityResumePolicy != "" &&
+		job.ProviderCapacityResumePolicy != v1.CapacityResumeManual &&
+		job.ProviderCapacityResumePolicy != v1.CapacityResumeAutomatic {
+		return fmt.Errorf("provider_capacity_resume_policy must be manual or automatic")
+	}
 	if len(job.RequiredChecks) > 64 {
 		return fmt.Errorf("job exceeds required-check limit")
 	}

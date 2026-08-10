@@ -59,12 +59,31 @@ func TestDirectProcessInterruptAndKill(t *testing.T) {
 }
 
 func TestForwardSessionEnvironmentPolicy(t *testing.T) {
-	for _, entry := range []string{"PLATFORM_MCP_SOCKET=/x", "RUNNER_MODE=job", "CODEX_PROFILE=runner", "PATH=/bin"} {
+	for _, entry := range []string{
+		"PLATFORM_MCP_SOCKET=/x",
+		"RUNNER_MODE=job",
+		"CODEX_PROFILE=runner",
+		"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1",
+		"OPENCODE_CONFIG_CONTENT={}",
+		"OPENCODE_CONFIG_DIR=/agent-pack",
+		"OPENCODE_DISABLE_AUTOUPDATE=1",
+		"OPENCODE_DISABLE_SHARE=1",
+		"OPENCODE_DISABLE_LSP_DOWNLOAD=1",
+		"OPENCODE_DISABLE_DEFAULT_PLUGINS=1",
+		"OPENCODE_DISABLE_PROJECT_CONFIG=1",
+		"PATH=/bin",
+	} {
 		if !forwardSessionEnvironment(entry) {
 			t.Fatalf("required environment %q rejected", entry)
 		}
 	}
-	for _, entry := range []string{"", "SECRET=value", "MALFORMED"} {
+	for _, entry := range []string{
+		"",
+		"SECRET=value",
+		"MALFORMED",
+		"OPENCODE_API_KEY=secret",
+		"OPENCODE_DISABLE_UNREVIEWED_FEATURE=1",
+	} {
 		if forwardSessionEnvironment(entry) {
 			t.Fatalf("unsafe environment %q forwarded", entry)
 		}

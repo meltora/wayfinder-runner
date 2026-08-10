@@ -78,7 +78,9 @@ func TestOpenCodeBuildSpecConfiguresOnlyPlatformMCP(t *testing.T) {
 		t.Fatalf("BuildSpec: %v", err)
 	}
 	joined := strings.Join(spec.Args, " ")
-	if spec.Command != "/opt/opencode" || !strings.Contains(joined, "--session session-1") {
+	if spec.Command != "/opt/opencode" ||
+		!strings.Contains(joined, "--session session-1") ||
+		!strings.Contains(joined, "--fork") {
 		t.Fatalf("spec = %+v", spec)
 	}
 	config := openCodeConfigFromEnv(t, spec.Env)

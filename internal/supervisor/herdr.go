@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -126,6 +127,7 @@ type herdrProc struct {
 	paneID     string
 	workspace  string
 	exitFile   string
+	launchFile string
 	sessionRef string
 	ctx        context.Context
 	done       chan struct{}
@@ -179,15 +181,18 @@ func (h *HerdrSupervisor) Start(ctx context.Context, spec Spec) (Process, error)
 	}
 
 	if spec.RuntimeDir == "" {
+		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
 		_ = conn.close()
 		return nil, fmt.Errorf("herdr requires a runner-owned runtime directory")
 	}
 	if err := os.MkdirAll(spec.RuntimeDir, 0o700); err != nil {
+		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
 		_ = conn.close()
 		return nil, err
 	}
 	exitHandle, err := os.CreateTemp(spec.RuntimeDir, ".herdr-exit-*")
 	if err != nil {
+		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
 		_ = conn.close()
 		return nil, err
 	}
@@ -195,34 +200,73 @@ func (h *HerdrSupervisor) Start(ctx context.Context, spec Spec) (Process, error)
 	_ = exitHandle.Close()
 	_ = os.Remove(exitFile)
 
-	var cmdStr strings.Builder
-	for _, e := range spec.Env {
-		if forwardSessionEnvironment(e) {
-			fmt.Fprintf(&cmdStr, "export %s; ", shellQuote(e))
-		}
+	launchFile, err := writeHerdrLaunchScript(spec, exitFile)
+	if err != nil {
+		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
+		_ = conn.close()
+		return nil, err
 	}
-	fmt.Fprintf(&cmdStr, "cd %s && %s", shellQuote(spec.Dir), shellQuote(spec.Command))
-	for _, a := range spec.Args {
-		cmdStr.WriteString(" " + shellQuote(a))
-	}
-	fmt.Fprintf(&cmdStr, " ; echo $? > %s", shellQuote(exitFile))
 
-	if _, err := conn.call("pane.send_text", map[string]any{
-		"pane_id": paneID, "text": cmdStr.String(),
+	if _, err := conn.call("pane.send_input", map[string]any{
+		"pane_id": paneID, "text": shellQuote(launchFile), "keys": []string{"enter"},
 	}); err != nil {
+		_ = os.Remove(launchFile)
+		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
 		_ = conn.close()
-		return nil, fmt.Errorf("pane.send_text: %w", err)
-	}
-	if _, err := conn.call("pane.send_keys", map[string]any{
-		"pane_id": paneID, "keys": []string{"enter"},
-	}); err != nil {
-		_ = conn.close()
-		return nil, fmt.Errorf("pane.send_keys: %w", err)
+		return nil, fmt.Errorf("pane.send_input: %w", err)
 	}
 	return &herdrProc{
-		conn: conn, paneID: paneID, workspace: workspaceID, exitFile: exitFile,
+		conn: conn, paneID: paneID, workspace: workspaceID, exitFile: exitFile, launchFile: launchFile,
 		ctx: ctx, done: make(chan struct{}),
 	}, nil
+}
+
+func writeHerdrLaunchScript(spec Spec, exitFile string) (string, error) {
+	file, err := os.CreateTemp(spec.RuntimeDir, ".herdr-launch-*")
+	if err != nil {
+		return "", fmt.Errorf("create Herdr launch script: %w", err)
+	}
+	path := file.Name()
+	keep := false
+	defer func() {
+		_ = file.Close()
+		if !keep {
+			_ = os.Remove(path)
+		}
+	}()
+	if err := file.Chmod(0o700); err != nil {
+		return "", fmt.Errorf("secure Herdr launch script: %w", err)
+	}
+
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\n")
+	for _, entry := range spec.Env {
+		if forwardSessionEnvironment(entry) {
+			fmt.Fprintf(&script, "export %s\n", shellQuote(entry))
+		}
+	}
+	fmt.Fprintf(&script, "cd %s\n", shellQuote(spec.Dir))
+	script.WriteString("status=$?\n")
+	script.WriteString("if [ \"$status\" -eq 0 ]; then\n  ")
+	script.WriteString(shellQuote(spec.Command))
+	for _, arg := range spec.Args {
+		script.WriteString(" " + shellQuote(arg))
+	}
+	script.WriteString("\n  status=$?\nfi\n")
+	fmt.Fprintf(&script, "printf '%%s\\n' \"$status\" > %s\n", shellQuote(exitFile))
+	script.WriteString("exit \"$status\"\n")
+
+	if _, err := file.WriteString(script.String()); err != nil {
+		return "", fmt.Errorf("write Herdr launch script: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return "", fmt.Errorf("sync Herdr launch script: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("close Herdr launch script: %w", err)
+	}
+	keep = true
+	return path, nil
 }
 
 func (h *HerdrSupervisor) findPane(conn herdrConn, workspaceID string) (string, error) {
@@ -268,8 +312,10 @@ func (p *herdrProc) PID() int { return 0 }
 
 func (p *herdrProc) Wait() error {
 	defer func() {
+		_, _ = p.conn.call("workspace.close", map[string]any{"workspace_id": p.workspace})
 		_ = p.conn.close()
 		_ = os.Remove(p.exitFile)
+		_ = os.Remove(p.launchFile)
 	}()
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -281,7 +327,7 @@ func (p *herdrProc) Wait() error {
 			return context.Canceled
 		case <-ticker.C:
 			data, err := readExitCode(p.exitFile)
-			if os.IsNotExist(err) {
+			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			if err != nil {
@@ -289,7 +335,6 @@ func (p *herdrProc) Wait() error {
 			}
 			code := strings.TrimSpace(string(data))
 			_, _ = p.SessionRef()
-			_, _ = p.conn.call("workspace.close", map[string]any{"workspace_id": p.workspace})
 			if code != "0" {
 				return fmt.Errorf("exit status %s", code)
 			}
@@ -305,6 +350,8 @@ func (p *herdrProc) Interrupt() error {
 
 func (p *herdrProc) Kill() error {
 	p.stopOnce.Do(func() { close(p.done) })
+	_ = os.Remove(p.exitFile)
+	_ = os.Remove(p.launchFile)
 	defer func() { _ = p.conn.close() }()
 	_, _ = p.conn.call("pane.close", map[string]any{"pane_id": p.paneID})
 	_, err := p.conn.call("workspace.close", map[string]any{"workspace_id": p.workspace})

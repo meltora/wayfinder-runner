@@ -72,7 +72,7 @@ func (o *OpenCode) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	// OpenCode session database. Direct development runs can resume the host's
 	// local session; hardened jobs start from the complete control-plane prompt.
 	if p.ResumeSessionID != "" && !p.HardenedRuntime {
-		args = append(args, "--session", p.ResumeSessionID)
+		args = append(args, "--session", p.ResumeSessionID, "--fork")
 	}
 	args = append(args, p.Prompt)
 

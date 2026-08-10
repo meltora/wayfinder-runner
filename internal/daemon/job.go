@@ -19,6 +19,7 @@ import (
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/agentpack"
 	"github.com/example/app-runner/internal/collector"
+	"github.com/example/app-runner/internal/hookspool"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/mcpbridge"
@@ -38,12 +39,14 @@ type jobRunner struct {
 	proc     supervisor.Process
 	logger   *slog.Logger
 
-	ctx       context.Context
-	cancel    context.CancelFunc
-	procMu    sync.Mutex
-	cancelled bool
-	leaseLost bool
-	sessionID string
+	ctx             context.Context
+	cancel          context.CancelFunc
+	procMu          sync.Mutex
+	cancelled       bool
+	leaseLost       bool
+	sessionID       string
+	providerError   string
+	capacityFailure *provider.CapacityFailure
 
 	decisionMu sync.Mutex
 	decisions  map[string]chan v1.CommandPayload
@@ -461,10 +464,15 @@ func (jr *jobRunner) run() {
 	}
 	jr.proc = proc
 	jr.procMu.Unlock()
-	go jr.consumeOutput(outR)
+	outputConsumed := make(chan struct{})
+	go func() {
+		defer close(outputConsumed)
+		jr.consumeOutput(outR)
+	}()
 
 	exitErr := proc.Wait()
 	_ = outW.Close()
+	<-outputConsumed
 	if reporter, ok := proc.(supervisor.SessionReporter); ok {
 		if ref, err := reporter.SessionRef(); err == nil && ref != "" {
 			jr.procMu.Lock()
@@ -472,7 +480,8 @@ func (jr *jobRunner) run() {
 			jr.procMu.Unlock()
 		}
 	}
-	if exitErr != nil {
+	capacityFailure, capacityExhausted := jr.currentCapacityFailure()
+	if exitErr != nil || capacityExhausted {
 		jr.procMu.Lock()
 		cancelled := jr.cancelled
 		leaseLost := jr.leaseLost
@@ -482,16 +491,48 @@ func (jr *jobRunner) run() {
 			state = "quarantined"
 		} else if cancelled {
 			state = "cancelled"
+		} else if capacityExhausted {
+			state = "waiting_for_provider_capacity"
 		}
-		jr.logger.Error("agent exited", "err", exitErr)
-		finish(state, map[string]any{"error": "agent exited: " + exitErr.Error()})
+		jr.logger.Error("agent exited", "err", exitErr, "capacity_exhausted", capacityExhausted)
+		agentError := "provider capacity exhausted"
+		if exitErr != nil {
+			agentError = "agent exited: " + exitErr.Error()
+		}
+		if providerError := jr.currentProviderError(); providerError != "" {
+			agentError += "; provider: " + providerError
+		}
+		extra := map[string]any{"error": agentError}
+		if job.Kind == v1.JobKindBuild && (state == "failed" || state == "waiting_for_provider_capacity") {
+			rm := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
+			rm.AllowLocal = d.cfg.AllowUnsafeDirect
+			_, buildExtra, finalizationErr := jr.finalizeBuild(ctx, rm, false)
+			if buildExtra != nil {
+				for key, value := range buildExtra {
+					extra[key] = value
+				}
+			}
+			if finalizationErr != nil {
+				extra["finalization_error"] = finalizationErr.Error()
+			}
+		}
+		if state == "waiting_for_provider_capacity" {
+			extra["failure_class"] = "provider_capacity_exhausted"
+			extra["resume_policy"] = jr.effectiveCapacityResumePolicy()
+			capacityEvent := jr.providerCapacityEvent(capacityFailure)
+			if err := jr.d.sendEvent(ctx, capacityEvent); err != nil {
+				extra["capacity_event_error"] = "provider capacity event could not be recorded"
+				jr.logger.Error("record provider capacity event", "err", err)
+			}
+		}
+		finish(state, extra)
 		return
 	}
 
 	if job.Kind == v1.JobKindBuild {
 		rm := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
 		rm.AllowLocal = d.cfg.AllowUnsafeDirect
-		state, extra, err := jr.finalizeBuild(ctx, rm)
+		state, extra, err := jr.finalizeBuild(ctx, rm, true)
 		if err != nil {
 			finish("failed", map[string]any{"error": err.Error()})
 			return
@@ -753,6 +794,17 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 				jr.sessionID = sid
 				jr.procMu.Unlock()
 			}
+			if providerError := providerErrorMessage(m); providerError != "" {
+				jr.procMu.Lock()
+				jr.providerError = providerError
+				jr.procMu.Unlock()
+			}
+			if capacityFailure, ok := provider.ClassifyCapacityFailure(jr.d.cfg.Provider, m, time.Now()); ok {
+				jr.procMu.Lock()
+				failureCopy := capacityFailure
+				jr.capacityFailure = &failureCopy
+				jr.procMu.Unlock()
+			}
 			jr.logger.Info("agent event", "type", safeLogValue(m["type"]), "status", safeLogValue(m["status"]))
 		} else {
 			jr.logger.Debug("unstructured agent output suppressed", "bytes", len(line))
@@ -772,6 +824,14 @@ func providerSessionID(event map[string]any) string {
 	return ""
 }
 
+func providerErrorMessage(event map[string]any) string {
+	message := provider.ErrorMessage(event)
+	message = strings.NewReplacer("\r", " ", "\n", " ", "\x00", "").Replace(message)
+	redacted := hookspool.Redact(map[string]any{"detail": message})["detail"]
+	message, _ = redacted.(string)
+	return truncate(strings.TrimSpace(message), 512)
+}
+
 func safeLogValue(value any) string {
 	s, _ := value.(string)
 	s = strings.NewReplacer("\r", " ", "\n", " ", "\x00", "").Replace(s)
@@ -782,6 +842,54 @@ func (jr *jobRunner) currentSessionID() string {
 	jr.procMu.Lock()
 	defer jr.procMu.Unlock()
 	return jr.sessionID
+}
+
+func (jr *jobRunner) currentProviderError() string {
+	jr.procMu.Lock()
+	defer jr.procMu.Unlock()
+	return jr.providerError
+}
+
+func (jr *jobRunner) currentCapacityFailure() (provider.CapacityFailure, bool) {
+	jr.procMu.Lock()
+	defer jr.procMu.Unlock()
+	if jr.capacityFailure == nil {
+		return provider.CapacityFailure{}, false
+	}
+	return *jr.capacityFailure, true
+}
+
+func (jr *jobRunner) effectiveCapacityResumePolicy() string {
+	if jr.job.ProviderCapacityResumePolicy == v1.CapacityResumeAutomatic {
+		return string(v1.CapacityResumeAutomatic)
+	}
+	return string(v1.CapacityResumeManual)
+}
+
+func (jr *jobRunner) providerCapacityEvent(failure provider.CapacityFailure) v1.ProviderCapacityExhaustedEvent {
+	event := v1.ProviderCapacityExhaustedEvent{
+		Kind:         "provider_capacity_exhausted",
+		JobID:        jr.job.JobID,
+		AttemptID:    jr.job.AttemptID,
+		FencingToken: jr.job.FencingToken,
+		Adapter:      jr.d.cfg.Provider,
+		Provider:     provider.ProviderIdentity(jr.d.cfg.Provider, jr.d.cfg.AgentModel),
+		Model:        jr.d.cfg.AgentModel,
+		Reason:       string(failure.Reason),
+		ResumePolicy: jr.job.ProviderCapacityResumePolicy,
+		Message:      jr.currentProviderError(),
+	}
+	if event.ResumePolicy == "" {
+		event.ResumePolicy = v1.CapacityResumeManual
+	}
+	if !failure.RetryAt.IsZero() {
+		retryAt := failure.RetryAt.UTC()
+		event.RetryAt = &retryAt
+	}
+	if sessionID := jr.currentSessionID(); sessionID != "" {
+		event.ProviderSessionID = sessionID
+	}
+	return event
 }
 
 func truncate(s string, n int) string {

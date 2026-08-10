@@ -128,6 +128,38 @@ func TestSelfContainedWorkspaceDoesNotReferenceRunnerMirror(t *testing.T) {
 	}
 }
 
+func TestCreateWorkspaceResolvesPreviouslyPushedRemoteJobBranch(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	git(t, origin, "checkout", "-b", "job/previous/attempt-1")
+	if err := os.WriteFile(filepath.Join(origin, "feature.txt"), []byte("previous attempt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, origin, "add", "feature.txt")
+	git(t, origin, "commit", "-m", "previous attempt")
+	git(t, origin, "checkout", "main")
+
+	m := NewManager(filepath.Join(t.TempDir(), "repos"))
+	m.AllowLocal = true
+	if _, err := m.Register(ctx, origin); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "workspace")
+	if err := m.CreateWorkspace(
+		ctx,
+		origin,
+		"job/current/attempt-2",
+		"job/previous/attempt-1",
+		dest,
+	); err != nil {
+		t.Fatalf("CreateWorkspace from remote job branch: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(dest, "feature.txt"))
+	if err != nil || string(content) != "previous attempt\n" {
+		t.Fatalf("workspace did not use previous attempt: %q, %v", content, err)
+	}
+}
+
 func TestWorkspaceDiffAndRemoval(t *testing.T) {
 	ctx := context.Background()
 	origin := seedOrigin(t)

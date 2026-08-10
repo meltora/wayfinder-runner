@@ -2,7 +2,7 @@ bin/
 dist/
 .release/
 our-runner
-mock-cp
+/mock-cp
 *.db
 *.db-wal
 *.db-shm
