@@ -248,6 +248,7 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 	cfg.Repositories = map[string]config.RepositoryConfig{"repo-agent-failure": {URL: origin}}
 	cfg.Checks = map[string]config.CheckConfig{
 		"partial-file": {Command: "test", Args: []string{"-f", "partial.go"}},
+		"always-fail":  {Command: "false"},
 	}
 	d, err := daemon.New(cfg, nil)
 	if err != nil {
@@ -262,7 +263,7 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 	job := v1.JobSpec{
 		JobID: "build-agent-failure", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-agent-failure", Primary: true}}, ApprovedPlanRevision: 1,
-		RequiredChecks: []string{"partial-file"}, PushBranch: true,
+		RequiredChecks: []string{"partial-file", "always-fail"}, PushBranch: true,
 		ProviderCapacityResumePolicy: v1.CapacityResumeAutomatic,
 		Ticket:                       v1.TicketContext{Key: "PROJ-11", Summary: "Preserve partial work"},
 	}
@@ -282,6 +283,9 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 	}
 	if !strings.Contains(payload["error"].(string), "provider quota exhausted") {
 		t.Fatalf("provider failure detail was not preserved: %v", payload)
+	}
+	if payload["checks_error"] != "required checks failed" {
+		t.Fatalf("partial-work check failure was not separated: %v", payload)
 	}
 	if payload["branch"] != "job/build-agent-failure/att-1" || payload["head_sha"] == "" {
 		t.Fatalf("agent failure provenance is incomplete: %v", payload)

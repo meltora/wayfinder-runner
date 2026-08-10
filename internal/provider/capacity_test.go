@@ -86,6 +86,23 @@ func TestClassifyCapacityFailureDoesNotConfuseTransientOrUntrustedOutput(t *test
 	}
 }
 
+func TestClassifyCapacityFailureFromOpenCodeKimiUsageLimit(t *testing.T) {
+	event := map[string]any{
+		"type": "error",
+		"error": map[string]any{
+			"name": "APIError",
+			"data": map[string]any{
+				"message":    "You've reached your usage limit for this billing cycle. Your quota will be refreshed in the next cycle.",
+				"statusCode": float64(403),
+			},
+		},
+	}
+	failure, ok := ClassifyCapacityFailure("opencode", event, time.Now())
+	if !ok || failure.Reason != CapacityReasonQuotaExhausted {
+		t.Fatalf("failure=%+v ok=%v", failure, ok)
+	}
+}
+
 func TestProviderIdentityDistinguishesAdapterFromDelegatedProvider(t *testing.T) {
 	if got := ProviderIdentity("opencode", "kimi-for-coding/k3"); got != "kimi-for-coding" {
 		t.Fatalf("delegated provider = %q", got)

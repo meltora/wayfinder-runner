@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -14,11 +15,12 @@ import (
 )
 
 type fakeHerdr struct {
-	ln       net.Listener
-	mu       sync.Mutex
-	requests []herdrRequest
-	sentText string
-	sentKeys []string
+	ln         net.Listener
+	mu         sync.Mutex
+	requests   []herdrRequest
+	sentText   string
+	sentKeys   []string
+	failMethod string
 }
 
 func startFakeHerdr(t *testing.T) *fakeHerdr {
@@ -60,7 +62,12 @@ func (f *fakeHerdr) handle(conn net.Conn) {
 		}
 		f.mu.Lock()
 		f.requests = append(f.requests, req)
+		failMethod := f.failMethod
 		f.mu.Unlock()
+		if req.Method == failMethod {
+			_ = enc.Encode(herdrResponse{ID: req.ID, Error: &herdrError{Code: "failed", Message: "injected"}})
+			continue
+		}
 		var result any
 		switch req.Method {
 		case "workspace.create":
@@ -180,6 +187,23 @@ func TestHerdrKillClosesPane(t *testing.T) {
 	}
 }
 
+func TestHerdrKillPropagatesCleanupFailure(t *testing.T) {
+	fake := startFakeHerdr(t)
+	sup := NewHerdr(fake.ln.Addr().String())
+	proc, err := sup.Start(context.Background(), Spec{
+		Name: "cleanup-error", Command: "/bin/sh", Dir: t.TempDir(), RuntimeDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.failMethod = "workspace.close"
+	fake.mu.Unlock()
+	if err := proc.Kill(); err == nil || !strings.Contains(err.Error(), "injected") {
+		t.Fatalf("Kill=%v", err)
+	}
+}
+
 func TestHerdrProcessMetadataInterruptAndSessionReporting(t *testing.T) {
 	fake := startFakeHerdr(t)
 	sup := NewHerdr(fake.ln.Addr().String())
@@ -240,6 +264,67 @@ func TestHerdrWaitExitCode(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Wait did not return")
+	}
+}
+
+func TestHerdrStreamsProviderOutput(t *testing.T) {
+	fake := startFakeHerdr(t)
+	var output bytes.Buffer
+	proc, err := NewHerdr(fake.ln.Addr().String()).Start(context.Background(), Spec{
+		Name:       "output",
+		Command:    "/bin/sh",
+		Dir:        t.TempDir(),
+		RuntimeDir: t.TempDir(),
+		Stdout:     &output,
+		Stderr:     &output,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hp := proc.(*herdrProc)
+	providerEvent := []byte(`{"type":"error","error":{"data":{"message":"usage limit reached"}}}` + "\n")
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- os.WriteFile(hp.outputPath, providerEvent, 0o600)
+	}()
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write provider output: %v", err)
+	}
+	if err := os.WriteFile(hp.exitFile, []byte("1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.Wait(); err == nil || !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("Wait=%v", err)
+	}
+	if got := output.String(); got != string(providerEvent) {
+		t.Fatalf("output=%q, want %q", got, providerEvent)
+	}
+	if _, err := os.Lstat(hp.outputPath); !os.IsNotExist(err) {
+		t.Fatalf("output fifo was not removed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Dir(hp.outputPath)); !os.IsNotExist(err) {
+		t.Fatalf("private output directory was not removed: %v", err)
+	}
+}
+
+func TestCombineHerdrOutputWritersPreservesDistinctSinks(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	writer := combineHerdrOutputWriters(&stdout, &stderr)
+	if _, err := writer.Write([]byte("event\n")); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "event\n" || stderr.String() != "event\n" {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	writer = combineHerdrOutputWriters(&stdout, &stdout)
+	if _, err := writer.Write([]byte("once\n")); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "once\n" {
+		t.Fatalf("same writer received duplicate output: %q", stdout.String())
 	}
 }
 

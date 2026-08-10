@@ -509,6 +509,10 @@ func (jr *jobRunner) run() {
 			_, buildExtra, finalizationErr := jr.finalizeBuild(ctx, rm, false)
 			if buildExtra != nil {
 				for key, value := range buildExtra {
+					if key == "error" {
+						extra["checks_error"] = value
+						continue
+					}
 					extra[key] = value
 				}
 			}
@@ -812,6 +816,12 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 	}
 	if err := sc.Err(); err != nil {
 		jr.logger.Warn("agent output stream", "err", err)
+		// A provider can emit a line larger than our parser boundary. Keep the
+		// boundary fail-closed and close the pipe so the supervised writer cannot
+		// wedge job finalization while emitting unbounded output.
+		if closer, ok := r.(io.Closer); ok {
+			_ = closer.Close()
+		}
 	}
 }
 

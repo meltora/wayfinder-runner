@@ -10,9 +10,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/example/app-runner/internal/safeio"
@@ -123,15 +125,25 @@ func (h *HerdrSupervisor) Available() bool {
 }
 
 type herdrProc struct {
-	conn       herdrConn
-	paneID     string
-	workspace  string
-	exitFile   string
-	launchFile string
-	sessionRef string
-	ctx        context.Context
-	done       chan struct{}
-	stopOnce   sync.Once
+	conn            herdrConn
+	paneID          string
+	workspace       string
+	exitFile        string
+	outputPath      string
+	outputDone      chan error
+	outputGuard     *os.File
+	outputReader    *os.File
+	launchFile      string
+	sessionRef      string
+	ctx             context.Context
+	done            chan struct{}
+	stopOnce        sync.Once
+	closeOnce       sync.Once
+	outputOnce      sync.Once
+	outputErr       error
+	outputCloseOnce sync.Once
+	outputCloseErr  error
+	closeErr        error
 }
 
 func (p *herdrProc) SessionRef() (string, error) {
@@ -199,9 +211,25 @@ func (h *HerdrSupervisor) Start(ctx context.Context, spec Spec) (Process, error)
 	exitFile := exitHandle.Name()
 	_ = exitHandle.Close()
 	_ = os.Remove(exitFile)
-
-	launchFile, err := writeHerdrLaunchScript(spec, exitFile)
+	outputPath, err := createHerdrOutputFIFO(spec.RuntimeDir)
 	if err != nil {
+		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
+		_ = conn.close()
+		return nil, err
+	}
+
+	launchFile, err := writeHerdrLaunchScript(spec, exitFile, outputPath)
+	if err != nil {
+		removeHerdrOutputFIFO(outputPath)
+		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
+		_ = conn.close()
+		return nil, err
+	}
+	outputWriter := combineHerdrOutputWriters(spec.Stdout, spec.Stderr)
+	outputGuard, outputReader, outputDone, err := prepareHerdrOutput(outputPath, outputWriter)
+	if err != nil {
+		_ = os.Remove(launchFile)
+		removeHerdrOutputFIFO(outputPath)
 		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
 		_ = conn.close()
 		return nil, err
@@ -210,18 +238,98 @@ func (h *HerdrSupervisor) Start(ctx context.Context, spec Spec) (Process, error)
 	if _, err := conn.call("pane.send_input", map[string]any{
 		"pane_id": paneID, "text": shellQuote(launchFile), "keys": []string{"enter"},
 	}); err != nil {
+		_ = outputGuard.Close()
+		_ = outputReader.Close()
+		<-outputDone
 		_ = os.Remove(launchFile)
+		removeHerdrOutputFIFO(outputPath)
 		_, _ = conn.call("workspace.close", map[string]any{"workspace_id": workspaceID})
 		_ = conn.close()
 		return nil, fmt.Errorf("pane.send_input: %w", err)
 	}
 	return &herdrProc{
 		conn: conn, paneID: paneID, workspace: workspaceID, exitFile: exitFile, launchFile: launchFile,
+		outputPath: outputPath, outputDone: outputDone, outputGuard: outputGuard, outputReader: outputReader,
 		ctx: ctx, done: make(chan struct{}),
 	}, nil
 }
 
-func writeHerdrLaunchScript(spec Spec, exitFile string) (string, error) {
+func createHerdrOutputFIFO(runtimeDir string) (string, error) {
+	dir, err := os.MkdirTemp(runtimeDir, ".herdr-output-*")
+	if err != nil {
+		return "", fmt.Errorf("create private Herdr output directory: %w", err)
+	}
+	path := filepath.Join(dir, "stream.fifo")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		_ = os.Remove(dir)
+		return "", fmt.Errorf("create Herdr output fifo: %w", err)
+	}
+	return path, nil
+}
+
+func removeHerdrOutputFIFO(path string) {
+	if path == "" {
+		return
+	}
+	_ = os.Remove(path)
+	_ = os.Remove(filepath.Dir(path))
+}
+
+func combineHerdrOutputWriters(stdout, stderr io.Writer) io.Writer {
+	switch {
+	case stdout == nil && stderr == nil:
+		return io.Discard
+	case stdout == nil:
+		return stderr
+	case stderr == nil || sameWriter(stdout, stderr):
+		return stdout
+	default:
+		return io.MultiWriter(stdout, stderr)
+	}
+}
+
+func sameWriter(left, right io.Writer) bool {
+	leftValue := reflect.ValueOf(left)
+	rightValue := reflect.ValueOf(right)
+	return leftValue.IsValid() && rightValue.IsValid() &&
+		leftValue.Type() == rightValue.Type() && leftValue.Comparable() &&
+		leftValue.Interface() == rightValue.Interface()
+}
+
+func prepareHerdrOutput(path string, writer io.Writer) (*os.File, *os.File, chan error, error) {
+	guard, err := openHerdrOutput(path, os.O_RDWR|syscall.O_NONBLOCK)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("open Herdr output guard: %w", err)
+	}
+	reader, err := openHerdrOutput(path, os.O_RDONLY)
+	if err != nil {
+		_ = guard.Close()
+		return nil, nil, nil, fmt.Errorf("open Herdr output reader: %w", err)
+	}
+	done := make(chan error, 1)
+	go streamHerdrOutput(reader, writer, done)
+	return guard, reader, done, nil
+}
+
+func streamHerdrOutput(file *os.File, writer io.Writer, done chan<- error) {
+	if writer == nil {
+		writer = io.Discard
+	}
+	_, copyErr := io.Copy(writer, file)
+	closeErr := file.Close()
+	done <- errors.Join(copyErr, closeErr)
+}
+
+func openHerdrOutput(path string, flag int) (*os.File, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.OpenFile(filepath.Base(path), flag, 0)
+}
+
+func writeHerdrLaunchScript(spec Spec, exitFile, outputPath string) (string, error) {
 	file, err := os.CreateTemp(spec.RuntimeDir, ".herdr-launch-*")
 	if err != nil {
 		return "", fmt.Errorf("create Herdr launch script: %w", err)
@@ -245,14 +353,15 @@ func writeHerdrLaunchScript(spec Spec, exitFile string) (string, error) {
 			fmt.Fprintf(&script, "export %s\n", shellQuote(entry))
 		}
 	}
-	fmt.Fprintf(&script, "cd %s\n", shellQuote(spec.Dir))
-	script.WriteString("status=$?\n")
-	script.WriteString("if [ \"$status\" -eq 0 ]; then\n  ")
+	script.WriteString("(\n  cd ")
+	script.WriteString(shellQuote(spec.Dir))
+	script.WriteString(" || exit $?\n  exec ")
 	script.WriteString(shellQuote(spec.Command))
 	for _, arg := range spec.Args {
 		script.WriteString(" " + shellQuote(arg))
 	}
-	script.WriteString("\n  status=$?\nfi\n")
+	fmt.Fprintf(&script, "\n) > %s 2>&1\n", shellQuote(outputPath))
+	script.WriteString("status=$?\n")
 	fmt.Fprintf(&script, "printf '%%s\\n' \"$status\" > %s\n", shellQuote(exitFile))
 	script.WriteString("exit \"$status\"\n")
 
@@ -312,9 +421,10 @@ func (p *herdrProc) PID() int { return 0 }
 
 func (p *herdrProc) Wait() error {
 	defer func() {
-		_, _ = p.conn.call("workspace.close", map[string]any{"workspace_id": p.workspace})
+		_ = p.closeWorkspace()
 		_ = p.conn.close()
 		_ = os.Remove(p.exitFile)
+		removeHerdrOutputFIFO(p.outputPath)
 		_ = os.Remove(p.launchFile)
 	}()
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -322,8 +432,12 @@ func (p *herdrProc) Wait() error {
 	for {
 		select {
 		case <-p.ctx.Done():
+			_ = p.closeWorkspace()
+			_ = p.awaitOutput()
 			return p.ctx.Err()
 		case <-p.done:
+			_ = p.closeWorkspace()
+			_ = p.awaitOutput()
 			return context.Canceled
 		case <-ticker.C:
 			data, err := readExitCode(p.exitFile)
@@ -335,12 +449,47 @@ func (p *herdrProc) Wait() error {
 			}
 			code := strings.TrimSpace(string(data))
 			_, _ = p.SessionRef()
+			closeErr := p.closeWorkspace()
+			if err := errors.Join(closeErr, p.awaitOutput()); err != nil {
+				return fmt.Errorf("stream Herdr output: %w", err)
+			}
 			if code != "0" {
 				return fmt.Errorf("exit status %s", code)
 			}
 			return nil
 		}
 	}
+}
+
+func (p *herdrProc) closeWorkspace() error {
+	p.closeOnce.Do(func() {
+		_, workspaceErr := p.conn.call("workspace.close", map[string]any{"workspace_id": p.workspace})
+		p.closeErr = errors.Join(workspaceErr, p.closeOutputGuard())
+	})
+	return p.closeErr
+}
+
+func (p *herdrProc) closeOutputGuard() error {
+	p.outputCloseOnce.Do(func() {
+		if p.outputGuard != nil {
+			p.outputCloseErr = p.outputGuard.Close()
+		}
+	})
+	return p.outputCloseErr
+}
+
+func (p *herdrProc) awaitOutput() error {
+	p.outputOnce.Do(func() {
+		select {
+		case p.outputErr = <-p.outputDone:
+		case <-time.After(5 * time.Second):
+			p.outputErr = fmt.Errorf("timed out draining provider output")
+			if p.outputReader != nil {
+				_ = p.outputReader.Close()
+			}
+		}
+	})
+	return p.outputErr
 }
 
 func (p *herdrProc) Interrupt() error {
@@ -350,12 +499,14 @@ func (p *herdrProc) Interrupt() error {
 
 func (p *herdrProc) Kill() error {
 	p.stopOnce.Do(func() { close(p.done) })
+	_, paneErr := p.conn.call("pane.close", map[string]any{"pane_id": p.paneID})
+	workspaceErr := p.closeWorkspace()
+	outputErr := p.awaitOutput()
 	_ = os.Remove(p.exitFile)
+	removeHerdrOutputFIFO(p.outputPath)
 	_ = os.Remove(p.launchFile)
 	defer func() { _ = p.conn.close() }()
-	_, _ = p.conn.call("pane.close", map[string]any{"pane_id": p.paneID})
-	_, err := p.conn.call("workspace.close", map[string]any{"workspace_id": p.workspace})
-	return err
+	return errors.Join(paneErr, workspaceErr, outputErr)
 }
 
 func readExitCode(path string) ([]byte, error) {
