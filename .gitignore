@@ -1,7 +1,7 @@
 bin/
 dist/
 .release/
-our-runner
+/our-runner
 /mock-cp
 *.db
 *.db-wal
