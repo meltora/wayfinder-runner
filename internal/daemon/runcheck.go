@@ -96,7 +96,7 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 	if exists, err := jr.d.journal.HasRecord(ctx, eventID); err != nil {
 		return nil, fmt.Errorf("inspect check evidence journal: %w", err)
 	} else if exists {
-		return nil, errors.New("check evidence for this idempotency key is already durably recorded; awaiting reconciliation")
+		return jr.recoverRunCheckResult(ctx, checkID, key)
 	}
 	runCtx, stopLeaseWatch := jr.leaseMonitoredContext(ctx)
 	defer stopLeaseWatch()

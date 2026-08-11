@@ -54,8 +54,9 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 		return nil, err
 	}
 	scopeTool := tool
+	checkID := ""
 	if tool == runCheckTool {
-		checkID := str(raw, "check_id")
+		checkID = str(raw, "check_id")
 		if err := validation.ID("check_id", checkID); err != nil {
 			return nil, err
 		}
@@ -93,6 +94,11 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 		return result, decodeErr
 	}
 	if state == journal.ToolCallPending {
+		if tool == runCheckTool {
+			result, encoded, recErr := jr.reconcilePendingRunCheck(ctx, scopeTool, checkID, key)
+			jr.finishToolMemo(scope, memo, encoded, recErr)
+			return result, recErr
+		}
 		err := fmt.Errorf("a previous execution of this tool call is pending reconciliation")
 		jr.finishToolMemo(scope, memo, nil, err)
 		return nil, err

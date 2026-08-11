@@ -169,6 +169,27 @@ func (j *Journal) HasRecord(ctx context.Context, id string) (bool, error) {
 	return j.recordExists(ctx, id)
 }
 
+// LoadRecord returns the full record with the given ID regardless of
+// acknowledgement state, so a caller can reconstruct durable outcomes after a
+// restart. ok is false when no record exists under the ID.
+func (j *Journal) LoadRecord(ctx context.Context, id string) (Record, bool, error) {
+	var r Record
+	var kind string
+	var created int64
+	err := j.db.QueryRowContext(ctx,
+		`SELECT id, kind, payload, created_at FROM records WHERE id=?`, id).
+		Scan(&r.ID, &kind, &r.Payload, &created)
+	if err == sql.ErrNoRows {
+		return Record{}, false, nil
+	}
+	if err != nil {
+		return Record{}, false, err
+	}
+	r.Kind = Kind(kind)
+	r.CreatedAt = time.Unix(created, 0)
+	return r, true, nil
+}
+
 func (j *Journal) recordExists(ctx context.Context, id string) (bool, error) {
 	var exists int
 	err := j.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM records WHERE id=?)`, id).Scan(&exists)

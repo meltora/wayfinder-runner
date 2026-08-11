@@ -96,7 +96,7 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string
 		if !ok {
 			_ = jr.sendJobEvent(ctx, "test_results", map[string]any{
 				"suite": checkID, "check_id": checkID, "result": "error",
-				"failures": []string{"required check is not registered on this runner"},
+				"failures":   []string{"required check is not registered on this runner"},
 				"commit_set": commitSet, "phase": "terminal", "source": "runner",
 			})
 			allOK = false
@@ -107,7 +107,7 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string
 			allOK = false
 			_ = jr.sendJobEvent(ctx, "test_results", map[string]any{
 				"suite": checkID, "check_id": checkID, "result": "error",
-				"failures": []string{"check repository is not part of the job"},
+				"failures":   []string{"check repository is not part of the job"},
 				"commit_set": commitSet, "phase": "terminal", "source": "runner",
 			})
 			continue
@@ -120,7 +120,7 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string
 			"suite": checkID, "check_id": checkID,
 			"result": outcome.Result, "duration_ms": outcome.Duration.Milliseconds(),
 			"repository_id": repository.ID,
-			"commit_sha": commitSet[repository.ID], "commit_set": commitSet,
+			"commit_sha":    commitSet[repository.ID], "commit_set": commitSet,
 			"phase": "terminal", "source": "runner",
 		}
 		if outcome.Result != "passed" {
