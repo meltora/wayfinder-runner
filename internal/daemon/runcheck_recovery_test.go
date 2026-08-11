@@ -15,6 +15,7 @@ import (
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/journal"
+	"github.com/example/app-runner/internal/lease"
 )
 
 func TestRunCheckRetryAfterEventPublishDoesNotReexecute(t *testing.T) {
@@ -286,6 +287,129 @@ func TestRunCheckRecoveryFailsClosedOnMalformedOrMismatchedEvidence(t *testing.T
 			}
 		})
 	}
+}
+
+func TestRunCheckRecoveryPreservesExactFencingTokenAboveFloat53(t *testing.T) {
+	jr, cap := runCheckFixture(t)
+	counter := filepath.Join(jr.repositories[0].WorkDir, ".exact-fence-count")
+	jr.d.cfg.Checks["counting"] = config.CheckConfig{
+		Command: "/bin/sh", Args: []string{"-c", "echo run >> \"" + counter + "\""},
+	}
+	jr.job.RequiredChecks = []string{"counting"}
+	const exactToken = uint64(9007199254740993)
+	setRunCheckFencingToken(t, jr, exactToken)
+	ctx := context.Background()
+	scopeTool := "platform_run_check:counting"
+	if state, _, err := jr.d.journal.BeginToolCall(ctx, jr.job.AttemptID, scopeTool, "rc-exact-fence"); err != nil || state != journal.ToolCallStarted {
+		t.Fatalf("begin tool call = %v, %v", state, err)
+	}
+	eventID := runCheckEventID(jr.job.AttemptID, "counting", "rc-exact-fence")
+	raw := rawRunCheckEvidence(jr, eventID, "counting", `"fencing_token":9007199254740993`, "")
+	if err := jr.d.journal.Append(ctx, journal.Record{
+		ID: eventID, Kind: journal.KindEvent, Payload: raw, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := call(t, jr, "platform_run_check", `{"check_id":"counting","idempotency_key":"rc-exact-fence"}`)
+	if err != nil {
+		t.Fatalf("evidence with the exact >2^53 fencing token must recover: %v", err)
+	}
+	want := map[string]any{
+		"check_id": "counting", "repository_id": "primary", "result": "passed",
+		"duration_ms": int64(12), "commit_sha": "abc123", "worktree_dirty": false,
+	}
+	if !reflect.DeepEqual(recovered.(map[string]any), want) {
+		t.Fatalf("recovered = %v, want %v", recovered, want)
+	}
+	if data, err := os.ReadFile(counter); !os.IsNotExist(err) {
+		t.Fatalf("recovery re-executed the check: %q, %v", data, err)
+	}
+	if got := len(cap.byKind("test_results")); got != 0 {
+		t.Fatalf("recovery created a second logical event: %d", got)
+	}
+	if state, _, err := jr.d.journal.BeginToolCall(ctx, jr.job.AttemptID, scopeTool, "rc-exact-fence"); err != nil || state != journal.ToolCallCompleted {
+		t.Fatalf("pending tool call was not completed by exact-token recovery: %v, %v", state, err)
+	}
+}
+
+func TestRunCheckRecoveryFailsClosedOnInexactOrMalformedFencingToken(t *testing.T) {
+	jr, _ := runCheckFixture(t)
+	jr.job.RequiredChecks = []string{"unit-check"}
+	setRunCheckFencingToken(t, jr, 9007199254740993)
+	ctx := context.Background()
+	scopeTool := "platform_run_check:unit-check"
+	cases := []struct {
+		name   string
+		token  string
+		suffix string
+	}{
+		{name: "adjacent token below at float53 rounding point", token: "9007199254740992"},
+		{name: "adjacent token above", token: "9007199254740994"},
+		{name: "fractional token", token: "9007199254740993.0"},
+		{name: "negative token", token: "-9007199254740993"},
+		{name: "exponent token", token: "9.007199254740993e15"},
+		{name: "uint64 overflow", token: "18446744073709551616"},
+		{name: "string token", token: `"9007199254740993"`},
+		{name: "missing token", token: ""},
+		{name: "trailing json data", token: "9007199254740993", suffix: ` {"trailing":true}`},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := fmt.Sprintf("rc-fence-%d", i)
+			eventID := runCheckEventID(jr.job.AttemptID, "unit-check", key)
+			state, _, err := jr.d.journal.BeginToolCall(ctx, jr.job.AttemptID, scopeTool, key)
+			if err != nil || state != journal.ToolCallStarted {
+				t.Fatalf("begin tool call = %v, %v", state, err)
+			}
+			tokenField := `"fencing_token":` + tc.token
+			if tc.token == "" {
+				tokenField = `"fencing_token_absent":0`
+			}
+			raw := rawRunCheckEvidence(jr, eventID, "unit-check", tokenField, tc.suffix)
+			if err := jr.d.journal.Append(ctx, journal.Record{
+				ID: eventID, Kind: journal.KindEvent, Payload: raw, CreatedAt: time.Now(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			args := fmt.Sprintf(`{"check_id":"unit-check","idempotency_key":%q}`, key)
+			if _, err := call(t, jr, "platform_run_check", args); err == nil {
+				t.Fatal("inexact or malformed fencing token evidence recovered a result")
+			}
+			if _, err := call(t, jr, "platform_run_check", args); err == nil {
+				t.Fatal("retry after failed fencing validation did not fail closed")
+			}
+			state, _, err = jr.d.journal.BeginToolCall(ctx, jr.job.AttemptID, scopeTool, key)
+			if err != nil || state != journal.ToolCallPending {
+				t.Fatalf("failed fencing validation must leave the call retryable: %v, %v", state, err)
+			}
+			exists, err := jr.d.journal.HasRecord(ctx, eventID)
+			if err != nil || !exists {
+				t.Fatalf("failed fencing validation deleted durable evidence: %v, %v", exists, err)
+			}
+		})
+	}
+}
+
+func setRunCheckFencingToken(t *testing.T, jr *jobRunner, token uint64) {
+	t.Helper()
+	jr.job.FencingToken = token
+	jr.d.leases.Release(jr.job.AttemptID)
+	if err := jr.d.leases.Acquire(lease.Lease{
+		JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, FencingToken: token,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rawRunCheckEvidence(jr *jobRunner, eventID, checkID, tokenField, suffix string) []byte {
+	return []byte(fmt.Sprintf(`{"version":%d,"type":"event","id":%q,"sent_at":%q,`+
+		`"payload":{"kind":"test_results","phase":"iterative","source":"runner",`+
+		`"suite":%q,"check_id":%q,"job_id":%q,"attempt_id":%q,%s,`+
+		`"result":"passed","repository_id":"primary","duration_ms":12,`+
+		`"commit_sha":"abc123","worktree_dirty":false}}%s`,
+		v1.ProtocolVersion, eventID, time.Now().UTC().Format(time.RFC3339Nano),
+		checkID, checkID, jr.job.JobID, jr.job.AttemptID, tokenField, suffix))
 }
 
 func TestRunCheckConcurrentRecoveryConverges(t *testing.T) {
