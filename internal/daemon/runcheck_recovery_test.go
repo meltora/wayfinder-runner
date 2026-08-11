@@ -15,6 +15,7 @@ import (
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/journal"
+	"github.com/example/app-runner/internal/lease"
 )
 
 func TestRunCheckRetryAfterEventPublishDoesNotReexecute(t *testing.T) {
@@ -285,6 +286,56 @@ func TestRunCheckRecoveryFailsClosedOnMalformedOrMismatchedEvidence(t *testing.T
 				}
 			}
 		})
+	}
+}
+
+func TestRunCheckRecoveryAcceptsExactLargeFencingToken(t *testing.T) {
+	jr, _ := runCheckFixture(t)
+	jr.job.RequiredChecks = []string{"unit-check"}
+	jr.job.FencingToken = (uint64(1) << 53) + 3
+	if !jr.d.leases.Release(jr.job.AttemptID) {
+		t.Fatal("release original lease")
+	}
+	if err := jr.d.leases.Acquire(lease.Lease{
+		JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, FencingToken: jr.job.FencingToken,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	key := "rc-large-token"
+	eventID := runCheckEventID(jr.job.AttemptID, "unit-check", key)
+	payload := map[string]any{
+		"kind":           "test_results",
+		"phase":          "iterative",
+		"source":         "runner",
+		"suite":          "unit-check",
+		"check_id":       "unit-check",
+		"job_id":         jr.job.JobID,
+		"attempt_id":     jr.job.AttemptID,
+		"fencing_token":  jr.job.FencingToken,
+		"result":         "passed",
+		"repository_id":  "primary",
+		"duration_ms":    1,
+		"commit_sha":     "abc123",
+		"worktree_dirty": false,
+	}
+	env := v1.Envelope{Version: v1.ProtocolVersion, Type: v1.TypeEvent, ID: eventID, SentAt: time.Now(), Payload: payload}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jr.d.journal.Append(ctx, journal.Record{
+		ID: eventID, Kind: journal.KindEvent, Payload: raw, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := jr.recoverRunCheckResult(ctx, "unit-check", key)
+	if err != nil {
+		t.Fatalf("recoverRunCheckResult rejected an exact large fencing token: %v", err)
+	}
+	if recovered["result"] != "passed" || recovered["duration_ms"] != int64(1) {
+		t.Fatalf("recovered = %v", recovered)
 	}
 }
 

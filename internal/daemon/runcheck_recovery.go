@@ -1,10 +1,11 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
+	"strconv"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/journal"
@@ -23,7 +24,9 @@ func (jr *jobRunner) recoverRunCheckResult(ctx context.Context, checkID, key str
 		return nil, fmt.Errorf("check evidence record has unexpected kind %q", record.Kind)
 	}
 	var env v1.Envelope
-	if err := json.Unmarshal(record.Payload, &env); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(record.Payload))
+	decoder.UseNumber()
+	if err := decoder.Decode(&env); err != nil {
 		return nil, fmt.Errorf("check evidence is malformed: %w", err)
 	}
 	if env.Version != v1.ProtocolVersion || env.Type != v1.TypeEvent || env.ID != eventID {
@@ -40,8 +43,8 @@ func (jr *jobRunner) recoverRunCheckResult(ctx context.Context, checkID, key str
 		payload["check_id"] != checkID || payload["suite"] != checkID {
 		return nil, fmt.Errorf("check evidence identity does not match this attempt and check")
 	}
-	token, ok := payload["fencing_token"].(float64)
-	if !ok || token != float64(jr.job.FencingToken) {
+	token, ok := jsonUint64(payload["fencing_token"])
+	if !ok || token != jr.job.FencingToken {
 		return nil, fmt.Errorf("check evidence fencing token does not match this attempt")
 	}
 	resultName, ok := payload["result"].(string)
@@ -52,8 +55,8 @@ func (jr *jobRunner) recoverRunCheckResult(ctx context.Context, checkID, key str
 	if !ok || repositoryID == "" {
 		return nil, fmt.Errorf("check evidence repository is malformed")
 	}
-	duration, ok := payload["duration_ms"].(float64)
-	if !ok || duration < 0 || duration != math.Trunc(duration) {
+	duration, ok := jsonInt64(payload["duration_ms"])
+	if !ok || duration < 0 {
 		return nil, fmt.Errorf("check evidence duration is malformed")
 	}
 	commitSHA, ok := payload["commit_sha"].(string)
@@ -68,7 +71,7 @@ func (jr *jobRunner) recoverRunCheckResult(ctx context.Context, checkID, key str
 		"check_id":       checkID,
 		"repository_id":  repositoryID,
 		"result":         resultName,
-		"duration_ms":    int64(duration),
+		"duration_ms":    duration,
 		"commit_sha":     commitSHA,
 		"worktree_dirty": dirty,
 	}
@@ -99,6 +102,42 @@ func (jr *jobRunner) recoverRunCheckResult(ctx context.Context, checkID, key str
 		result["error_classification"] = classStr
 	}
 	return result, nil
+}
+
+func jsonUint64(value any) (uint64, bool) {
+	switch n := value.(type) {
+	case json.Number:
+		parsed, err := strconv.ParseUint(string(n), 10, 64)
+		return parsed, err == nil
+	case uint64:
+		return n, true
+	case int64:
+		if n < 0 {
+			return 0, false
+		}
+		return uint64(n), true
+	case int:
+		if n < 0 {
+			return 0, false
+		}
+		return uint64(n), true
+	default:
+		return 0, false
+	}
+}
+
+func jsonInt64(value any) (int64, bool) {
+	switch n := value.(type) {
+	case json.Number:
+		parsed, err := strconv.ParseInt(string(n), 10, 64)
+		return parsed, err == nil
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	default:
+		return 0, false
+	}
 }
 
 func (jr *jobRunner) reconcilePendingRunCheck(ctx context.Context, scopeTool, checkID, key string) (any, []byte, error) {
