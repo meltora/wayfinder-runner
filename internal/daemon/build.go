@@ -240,6 +240,7 @@ func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, dir, comm
 	}
 	// #nosec G204 -- docker is fixed in production; direct mode is explicit unsafe development and admin checks use positional argv.
 	cmd := exec.CommandContext(ctx, wrappedCommand, wrappedArgs...)
+	configureProcessTree(cmd)
 	cmd.Dir = workDir
 	cmd.Env = commandEnvironment
 	var output cappedBuffer
