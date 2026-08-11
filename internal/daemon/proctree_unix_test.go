@@ -40,7 +40,9 @@ func TestRunWorkspaceCommandKillsDescendantProcesses(t *testing.T) {
 }
 
 func TestConfigureProcessTreeOwnsFreshGroup(t *testing.T) {
-	cmd := exec.Command("/bin/sh", "-c", "true")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", "true")
 	configureProcessTree(cmd)
 	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setpgid {
 		t.Fatal("command was not placed in its own process group")
