@@ -2,18 +2,30 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/validation"
 )
 
 const runCheckTool = "platform_run_check"
 
+const (
+	runCheckPerCheckExecBudget   = 10
+	runCheckPerAttemptExecBudget = 50
+)
+
 func (jr *jobRunner) runnableChecks() []string {
+	if jr.job.Kind != v1.JobKindBuild {
+		return nil
+	}
 	checks := make([]string, 0, len(jr.job.RequiredChecks))
 	for _, id := range jr.job.RequiredChecks {
 		check, ok := jr.d.cfg.Checks[id]
@@ -26,6 +38,15 @@ func (jr *jobRunner) runnableChecks() []string {
 		checks = append(checks, id)
 	}
 	return checks
+}
+
+// runCheckEventID derives a stable, non-secret identity for the iterative
+// evidence of one (attempt, check, idempotency key) triple. The stable ID lets
+// the journal close the duplicate window between event publication and
+// tool-result commit.
+func runCheckEventID(attemptID, checkID, key string) string {
+	sum := sha256.Sum256([]byte(attemptID + "\x00" + checkID + "\x00" + key))
+	return "runcheck-" + hex.EncodeToString(sum[:16])
 }
 
 func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (any, error) {
@@ -48,25 +69,42 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 	if !ok {
 		return nil, fmt.Errorf("check %q is not registered on this runner", checkID)
 	}
-	key := str(raw, "idempotency_key")
-	owner, found, err := jr.d.journal.ToolCallKeyOwner(ctx, jr.job.AttemptID, runCheckTool+":", key)
-	if err != nil {
-		return nil, fmt.Errorf("look up check idempotency binding: %w", err)
-	}
-	if found && owner != runCheckTool+":"+checkID {
-		return nil, fmt.Errorf("idempotency key is already bound to a different check")
-	}
 	repository, ok := jr.checkRepository(check.RepositoryID)
 	if !ok {
 		return nil, fmt.Errorf("check %q repository is not part of the job", checkID)
+	}
+	key := str(raw, "idempotency_key")
+	if err := validation.ID("idempotency_key", key); err != nil {
+		return nil, err
+	}
+	if _, err := jr.d.journal.ClaimCheckExecution(ctx, jr.job.AttemptID, key, checkID,
+		runCheckPerCheckExecBudget, runCheckPerAttemptExecBudget); err != nil {
+		if errors.Is(err, journal.ErrCheckClaimConflict) {
+			return nil, fmt.Errorf("idempotency key is already bound to a different check")
+		}
+		if errors.Is(err, journal.ErrCheckBudgetExhausted) {
+			return nil, errors.New("on-demand check execution budget is exhausted")
+		}
+		return nil, fmt.Errorf("claim check execution: %w", err)
 	}
 	jr.checkMu.Lock()
 	defer jr.checkMu.Unlock()
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
 		return nil, fmt.Errorf("lease validation before check execution: %w", err)
 	}
-	outcome := jr.executeConfiguredCheck(ctx, checkID, repository, check)
-	evidenceCtx, evidenceCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	eventID := runCheckEventID(jr.job.AttemptID, checkID, key)
+	if exists, err := jr.d.journal.HasRecord(ctx, eventID); err != nil {
+		return nil, fmt.Errorf("inspect check evidence journal: %w", err)
+	} else if exists {
+		return nil, errors.New("check evidence for this idempotency key is already durably recorded; awaiting reconciliation")
+	}
+	runCtx, stopLeaseWatch := jr.leaseMonitoredContext(ctx)
+	defer stopLeaseWatch()
+	outcome := jr.executeConfiguredCheck(runCtx, checkID, repository, check)
+	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
+		return nil, fmt.Errorf("lease validation after check execution: %w", err)
+	}
+	evidenceCtx, evidenceCancel := context.WithTimeout(jr.ctx, 30*time.Second)
 	defer evidenceCancel()
 	commitSHA, dirty, err := jr.repositoryEvidence(evidenceCtx, repository)
 	if err != nil {
@@ -77,7 +115,7 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 	}
 	event := map[string]any{
 		"suite":          checkID,
-		"command":        append([]string{check.Command}, check.Args...),
+		"check_id":       checkID,
 		"result":         outcome.Result,
 		"duration_ms":    outcome.Duration.Milliseconds(),
 		"repository_id":  repository.ID,
@@ -85,7 +123,6 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 		"worktree_dirty": dirty,
 		"phase":          "iterative",
 		"source":         "runner",
-		"truncated":      outcome.Truncated,
 	}
 	if outcome.Result != "passed" {
 		failures := []string{}
@@ -93,11 +130,16 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 			failures = append(failures, outcome.Output)
 		}
 		event["failures"] = failures
+		event["truncated"] = outcome.Truncated
 	}
 	if outcome.Class != "" {
 		event["error_classification"] = outcome.Class
 	}
-	if err := jr.sendJobEvent(ctx, "test_results", event); err != nil {
+	event["kind"] = "test_results"
+	event["job_id"] = jr.job.JobID
+	event["attempt_id"] = jr.job.AttemptID
+	event["fencing_token"] = jr.job.FencingToken
+	if _, err := jr.d.sendEventWithStableID(evidenceCtx, eventID, event); err != nil {
 		return nil, err
 	}
 	result := map[string]any{
@@ -105,15 +147,44 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 		"repository_id":  repository.ID,
 		"result":         outcome.Result,
 		"duration_ms":    outcome.Duration.Milliseconds(),
-		"output":         outcome.Output,
-		"truncated":      outcome.Truncated,
 		"commit_sha":     commitSHA,
 		"worktree_dirty": dirty,
+	}
+	if outcome.Result != "passed" {
+		result["output"] = outcome.Output
+		result["truncated"] = outcome.Truncated
 	}
 	if outcome.Class != "" {
 		result["error_classification"] = outcome.Class
 	}
 	return result, nil
+}
+
+// leaseMonitoredContext derives an execution context that is cancelled when
+// the caller context ends, when the job ends, or when the active lease or
+// fencing token is lost, so an on-demand check never outlives its authority.
+func (jr *jobRunner) leaseMonitoredContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	runCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(25 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-jr.ctx.Done():
+				cancel()
+				return
+			case <-ticker.C:
+				if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
+					jr.logger.Warn("lease lost during on-demand check; killing execution", "err", err)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return runCtx, cancel
 }
 
 func (jr *jobRunner) repositoryEvidence(ctx context.Context, repository checkedOutRepository) (string, bool, error) {

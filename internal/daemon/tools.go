@@ -192,15 +192,18 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		return map[string]any{"recorded": true}, nil
 
 	case "platform_get_job_context":
-		return map[string]any{
-			"job_id":          jr.job.JobID,
-			"attempt_id":      jr.job.AttemptID,
-			"kind":            jr.job.Kind,
-			"ticket":          jr.job.Ticket,
-			"repositories":    jr.job.Repositories,
-			"capabilities":    capabilitiesForJob(jr.job.Kind),
-			"runnable_checks": jr.runnableChecks(),
-		}, nil
+		result := map[string]any{
+			"job_id":       jr.job.JobID,
+			"attempt_id":   jr.job.AttemptID,
+			"kind":         jr.job.Kind,
+			"ticket":       jr.job.Ticket,
+			"repositories": jr.job.Repositories,
+			"capabilities": capabilitiesForJob(jr.job.Kind),
+		}
+		if checks := jr.runnableChecks(); checks != nil {
+			result["runnable_checks"] = checks
+		}
+		return result, nil
 
 	case "platform_publish_plan":
 		if err := requireToolText(raw, "summary", 16<<10); err != nil {

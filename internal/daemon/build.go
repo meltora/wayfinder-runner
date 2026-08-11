@@ -95,7 +95,7 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string
 		check, ok := jr.d.cfg.Checks[checkID]
 		if !ok {
 			_ = jr.sendJobEvent(ctx, "test_results", map[string]any{
-				"suite": checkID, "command": checkID, "result": "error",
+				"suite": checkID, "check_id": checkID, "result": "error",
 				"failures": []string{"required check is not registered on this runner"},
 				"commit_set": commitSet, "phase": "terminal", "source": "runner",
 			})
@@ -106,7 +106,7 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string
 		if !ok {
 			allOK = false
 			_ = jr.sendJobEvent(ctx, "test_results", map[string]any{
-				"suite": checkID, "result": "error",
+				"suite": checkID, "check_id": checkID, "result": "error",
 				"failures": []string{"check repository is not part of the job"},
 				"commit_set": commitSet, "phase": "terminal", "source": "runner",
 			})
@@ -116,16 +116,20 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string
 		if outcome.Result != "passed" {
 			allOK = false
 		}
-		failures := []string{}
-		if outcome.Result != "passed" {
-			failures = append(failures, outcome.Output)
-		}
 		event := map[string]any{
-			"suite": checkID, "command": append([]string{check.Command}, check.Args...),
+			"suite": checkID, "check_id": checkID,
 			"result": outcome.Result, "duration_ms": outcome.Duration.Milliseconds(),
-			"failures": failures, "repository_id": repository.ID,
+			"repository_id": repository.ID,
 			"commit_sha": commitSet[repository.ID], "commit_set": commitSet,
-			"phase": "terminal", "source": "runner", "truncated": outcome.Truncated,
+			"phase": "terminal", "source": "runner",
+		}
+		if outcome.Result != "passed" {
+			failures := []string{}
+			if outcome.Output != "" {
+				failures = append(failures, outcome.Output)
+			}
+			event["failures"] = failures
+			event["truncated"] = outcome.Truncated
 		}
 		if outcome.Class != "" {
 			event["error_classification"] = outcome.Class

@@ -15,6 +15,7 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/config"
+	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/lease"
 )
 
@@ -213,13 +214,13 @@ func TestRunCheckRepositoryResolutionAndWorktreeEvidence(t *testing.T) {
 	}
 }
 
-func TestRunCheckOutputIsBounded(t *testing.T) {
-	jr, _ := runCheckFixture(t)
-	jr.d.cfg.Checks["loud"] = config.CheckConfig{
-		Command: "/bin/sh", Args: []string{"-c", "head -c 65536 /dev/zero | tr '\\000' 'x'"},
+func TestRunCheckPassedResultSuppressesOutput(t *testing.T) {
+	jr, cap := runCheckFixture(t)
+	jr.d.cfg.Checks["chatty"] = config.CheckConfig{
+		Command: "/bin/sh", Args: []string{"-c", "echo all-good; echo detail >&2"},
 	}
-	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "loud")
-	res, err := call(t, jr, "platform_run_check", `{"check_id":"loud","idempotency_key":"rc-loud"}`)
+	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "chatty")
+	res, err := call(t, jr, "platform_run_check", `{"check_id":"chatty","idempotency_key":"rc-chatty"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,12 +228,65 @@ func TestRunCheckOutputIsBounded(t *testing.T) {
 	if m["result"] != "passed" {
 		t.Fatalf("result = %v", m)
 	}
+	if _, ok := m["output"]; ok {
+		t.Fatalf("passed result returned captured output: %v", m)
+	}
+	encoded, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "all-good") || strings.Contains(string(encoded), "detail") {
+		t.Fatalf("passed result leaked check output: %s", encoded)
+	}
+	events := cap.byKind("test_results")
+	if len(events) != 1 {
+		t.Fatalf("events = %d", len(events))
+	}
+	for _, key := range []string{"output", "failures", "command", "args", "argv"} {
+		if _, ok := events[0][key]; ok {
+			t.Fatalf("passed event contains %q: %v", key, events[0])
+		}
+	}
+	eventJSON, err := json.Marshal(events[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(eventJSON), "all-good") || strings.Contains(string(eventJSON), "detail") {
+		t.Fatalf("passed event leaked check output: %s", eventJSON)
+	}
+}
+
+func TestRunCheckOutputIsBounded(t *testing.T) {
+	jr, cap := runCheckFixture(t)
+	jr.d.cfg.Checks["loud"] = config.CheckConfig{
+		Command: "/bin/sh", Args: []string{"-c", "head -c 65536 /dev/zero | tr '\\000' 'x'; exit 1"},
+	}
+	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "loud")
+	res, err := call(t, jr, "platform_run_check", `{"check_id":"loud","idempotency_key":"rc-loud"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.(map[string]any)
+	if m["result"] != "failed" {
+		t.Fatalf("result = %v", m)
+	}
 	if m["truncated"] != true {
 		t.Fatalf("truncation was not explicit: %v", m)
 	}
 	output, _ := m["output"].(string)
+	if output == "" {
+		t.Fatalf("failed result dropped its bounded output: %v", m)
+	}
 	if len(output) > 8192 {
 		t.Fatalf("output was not bounded: %d bytes", len(output))
+	}
+	events := cap.byKind("test_results")
+	if len(events) != 1 {
+		t.Fatalf("events = %d", len(events))
+	}
+	failures, _ := events[0]["failures"].([]string)
+	if len(failures) != 1 || len(failures[0]) > 8192 {
+		t.Fatalf("event failure output was not bounded: %v", events[0])
 	}
 }
 
@@ -251,10 +305,25 @@ func TestRunCheckOutputIsRedacted(t *testing.T) {
 	if m["result"] != "failed" {
 		t.Fatalf("result = %v", m)
 	}
+	if _, ok := m["command"]; ok {
+		t.Fatalf("tool result disclosed configured command: %v", m)
+	}
 	if output, _ := m["output"].(string); strings.Contains(output, secret) {
 		t.Fatalf("secret leaked in tool result: %q", output)
 	}
-	for _, e := range cap.byKind("test_results") {
+	events := cap.byKind("test_results")
+	if len(events) != 1 {
+		t.Fatalf("events = %d", len(events))
+	}
+	for _, e := range events {
+		for _, key := range []string{"command", "args", "argv"} {
+			if _, ok := e[key]; ok {
+				t.Fatalf("event disclosed administrator-configured %q: %v", key, e)
+			}
+		}
+		if e["suite"] != "leaky" || e["check_id"] != "leaky" {
+			t.Fatalf("event identity must be only the opaque check ID: %v", e)
+		}
 		encoded, err := json.Marshal(e)
 		if err != nil {
 			t.Fatal(err)
@@ -379,19 +448,55 @@ func TestRunCheckStaleLeasePreventsEvidence(t *testing.T) {
 	}
 }
 
-func TestRunCheckLeaseLostDuringExecutionEmitsNoEvidence(t *testing.T) {
+func TestRunCheckLeaseLostDuringExecutionKillsProcessAndEmitsNoEvidence(t *testing.T) {
 	jr, cap := runCheckFixture(t)
-	jr.d.cfg.Checks["slow"] = config.CheckConfig{Command: "sleep", Args: []string{"2"}}
+	done := filepath.Join(jr.repositories[0].WorkDir, ".runcheck-finished")
+	jr.d.cfg.Checks["slow"] = config.CheckConfig{
+		Command: "/bin/sh", Args: []string{"-c", "sleep 30; touch \"" + done + "\""},
+	}
 	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "slow")
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		jr.d.leases.Release(jr.job.AttemptID)
 	}()
+	start := time.Now()
 	if _, err := jr.executeRunCheck(context.Background(), map[string]any{"check_id": "slow", "idempotency_key": "rc-midlease"}); err == nil {
 		t.Fatal("evidence emitted after the lease was lost")
 	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("check process was not killed promptly after lease loss: %v", elapsed)
+	}
+	if _, err := os.Stat(done); !os.IsNotExist(err) {
+		t.Fatal("check ran to completion after the lease was lost")
+	}
 	if got := len(cap.byKind("test_results")); got != 0 {
 		t.Fatalf("evidence emitted with a lost lease: %d", got)
+	}
+}
+
+func TestRunCheckJobCancellationStopsExecutionAndEvidence(t *testing.T) {
+	jr, cap := runCheckFixture(t)
+	done := filepath.Join(jr.repositories[0].WorkDir, ".runcheck-finished")
+	jr.d.cfg.Checks["slow"] = config.CheckConfig{
+		Command: "/bin/sh", Args: []string{"-c", "sleep 30; touch \"" + done + "\""},
+	}
+	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "slow")
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		jr.cancel()
+	}()
+	start := time.Now()
+	if _, err := jr.executeRunCheck(context.Background(), map[string]any{"check_id": "slow", "idempotency_key": "rc-jobcancel"}); err == nil {
+		t.Fatal("check returned success after job cancellation")
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("check process was not killed promptly after job cancellation: %v", elapsed)
+	}
+	if _, err := os.Stat(done); !os.IsNotExist(err) {
+		t.Fatal("check ran to completion after job cancellation")
+	}
+	if got := len(cap.byKind("test_results")); got != 0 {
+		t.Fatalf("evidence collected after job cancellation: %d", got)
 	}
 }
 
@@ -493,8 +598,226 @@ func TestRunCheckIterativeResultNeverSatisfiesTerminalChecks(t *testing.T) {
 		if e["source"] != "runner" {
 			t.Fatalf("event source = %v", e["source"])
 		}
+		for _, key := range []string{"command", "args", "argv"} {
+			if _, ok := e[key]; ok {
+				t.Fatalf("event disclosed administrator-configured %q: %v", key, e)
+			}
+		}
 	}
 	if phases["iterative"] != 1 || phases["terminal"] != 1 {
 		t.Fatalf("event phases = %v", phases)
+	}
+}
+
+func reopenRunCheckJournal(t *testing.T, jr *jobRunner) {
+	t.Helper()
+	if err := jr.d.journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := journal.Open(filepath.Join(jr.d.cfg.StateDir, "journal.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jr.d.journal = reopened
+}
+
+func resetRunCheckMemo(jr *jobRunner) {
+	jr.idempotencyMu.Lock()
+	jr.seenIdempotency = map[string]*toolCallMemo{}
+	jr.idempotencyMu.Unlock()
+}
+
+func TestRunCheckConcurrentCrossCheckKeyClaimConverges(t *testing.T) {
+	jr, cap := runCheckFixture(t)
+	counter := filepath.Join(jr.repositories[0].WorkDir, ".claim-count")
+	script := "echo run >> \"" + counter + "\""
+	jr.d.cfg.Checks["unit-check"] = config.CheckConfig{Command: "/bin/sh", Args: []string{"-c", script}}
+	jr.d.cfg.Checks["check-b"] = config.CheckConfig{Command: "/bin/sh", Args: []string{"-c", script}}
+	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "check-b")
+	barrier := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, checkID := range []string{"unit-check", "check-b"} {
+		wg.Add(1)
+		go func(i int, checkID string) {
+			defer wg.Done()
+			<-barrier
+			_, errs[i] = jr.executeRunCheck(context.Background(), map[string]any{
+				"check_id": checkID, "idempotency_key": "rc-shared",
+			})
+		}(i, checkID)
+	}
+	close(barrier)
+	wg.Wait()
+	successes := 0
+	for _, err := range errs {
+		if err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("exactly one cross-check claim may execute: %v", errs)
+	}
+	data, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "run"); got != 1 {
+		t.Fatalf("executions = %d, want exactly 1", got)
+	}
+	if got := len(cap.byKind("test_results")); got != 1 {
+		t.Fatalf("events = %d, want exactly 1", got)
+	}
+}
+
+func TestRunCheckClaimBindingSurvivesRestart(t *testing.T) {
+	jr, cap := runCheckFixture(t)
+	if _, err := call(t, jr, "platform_run_check", `{"check_id":"unit-check","idempotency_key":"rc-bind"}`); err != nil {
+		t.Fatal(err)
+	}
+	jr.d.cfg.Checks["check-b"] = config.CheckConfig{Command: "true"}
+	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "check-b")
+	reopenRunCheckJournal(t, jr)
+	resetRunCheckMemo(jr)
+	if _, err := call(t, jr, "platform_run_check", `{"check_id":"check-b","idempotency_key":"rc-bind"}`); err == nil {
+		t.Fatal("idempotency key was rebound to a different check after restart")
+	}
+	replay, err := call(t, jr, "platform_run_check", `{"check_id":"unit-check","idempotency_key":"rc-bind"}`)
+	if err != nil {
+		t.Fatalf("same-check replay after restart: %v", err)
+	}
+	if replay.(map[string]any)["result"] != "passed" {
+		t.Fatalf("replay = %v", replay)
+	}
+	if got := len(cap.byKind("test_results")); got != 1 {
+		t.Fatalf("restart replay duplicated evidence: %d", got)
+	}
+}
+
+func TestRunCheckRetryAfterEventPublishDoesNotReexecute(t *testing.T) {
+	jr, cap := runCheckFixture(t)
+	counter := filepath.Join(jr.repositories[0].WorkDir, ".crash-count")
+	jr.d.cfg.Checks["counting"] = config.CheckConfig{
+		Command: "/bin/sh", Args: []string{"-c", "echo run >> \"" + counter + "\""},
+	}
+	jr.job.RequiredChecks = []string{"counting"}
+	executions := func() int {
+		data, err := os.ReadFile(counter)
+		if os.IsNotExist(err) {
+			return 0
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(data), "run")
+	}
+	args := map[string]any{"check_id": "counting", "idempotency_key": "rc-crash"}
+	first, err := jr.executeRunCheck(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.(map[string]any)["result"] != "passed" {
+		t.Fatalf("first = %v", first)
+	}
+	eventID := runCheckEventID(jr.job.AttemptID, "counting", "rc-crash")
+	exists, err := jr.d.journal.HasRecord(context.Background(), eventID)
+	if err != nil || !exists {
+		t.Fatalf("iterative evidence was not durably recorded under its stable ID: %v, %v", exists, err)
+	}
+	if _, err := jr.executeRunCheck(context.Background(), args); err == nil {
+		t.Fatal("retry after event publication re-executed the check")
+	}
+	if executions() != 1 {
+		t.Fatalf("crash-window retry re-executed the check: %d", executions())
+	}
+	if got := len(cap.byKind("test_results")); got != 1 {
+		t.Fatalf("crash-window retry created a second logical event: %d", got)
+	}
+	if _, err := call(t, jr, "platform_run_check", `{"check_id":"counting","idempotency_key":"rc-crash"}`); err == nil {
+		t.Fatal("tool-path retry after event publication re-executed the check")
+	}
+	if executions() != 1 {
+		t.Fatalf("tool-path retry re-executed the check: %d", executions())
+	}
+	if got := len(cap.byKind("test_results")); got != 1 {
+		t.Fatalf("tool-path retry created a second logical event: %d", got)
+	}
+	recs, err := jr.d.journal.Unacked(context.Background(), journal.KindEvent, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].ID != eventID {
+		t.Fatalf("journal holds %d event records, want exactly the stable event %s", len(recs), eventID)
+	}
+}
+
+func TestRunCheckExecutionBudgetIsDurable(t *testing.T) {
+	jr, cap := runCheckFixture(t)
+	counter := filepath.Join(jr.repositories[0].WorkDir, ".budget-count")
+	jr.d.cfg.Checks["expensive"] = config.CheckConfig{
+		Command: "/bin/sh", Args: []string{"-c", "echo run >> \"" + counter + "\""},
+	}
+	jr.job.RequiredChecks = []string{"expensive"}
+	executions := func() int {
+		data, err := os.ReadFile(counter)
+		if os.IsNotExist(err) {
+			return 0
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(data), "run")
+	}
+	for i := 0; i < runCheckPerCheckExecBudget; i++ {
+		args := fmt.Sprintf(`{"check_id":"expensive","idempotency_key":"rc-budget-%d"}`, i)
+		if _, err := call(t, jr, "platform_run_check", args); err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+	}
+	if _, err := call(t, jr, "platform_run_check", `{"check_id":"expensive","idempotency_key":"rc-budget-over"}`); err == nil {
+		t.Fatal("per-check execution budget was not enforced")
+	}
+	if got := executions(); got != runCheckPerCheckExecBudget {
+		t.Fatalf("executions = %d, want %d", got, runCheckPerCheckExecBudget)
+	}
+	resetRunCheckMemo(jr)
+	replay, err := call(t, jr, "platform_run_check", `{"check_id":"expensive","idempotency_key":"rc-budget-0"}`)
+	if err != nil {
+		t.Fatalf("same-key replay must not consume a budget slot: %v", err)
+	}
+	if replay.(map[string]any)["result"] != "passed" {
+		t.Fatalf("replay = %v", replay)
+	}
+	if got := executions(); got != runCheckPerCheckExecBudget {
+		t.Fatalf("replay consumed budget: executions = %d", got)
+	}
+	reopenRunCheckJournal(t, jr)
+	if _, err := call(t, jr, "platform_run_check", `{"check_id":"expensive","idempotency_key":"rc-budget-after-restart"}`); err == nil {
+		t.Fatal("per-check execution budget was not durable across restart")
+	}
+	if got := executions(); got != runCheckPerCheckExecBudget {
+		t.Fatalf("executions after restart = %d, want %d", got, runCheckPerCheckExecBudget)
+	}
+	if got := len(cap.byKind("test_results")); got != runCheckPerCheckExecBudget {
+		t.Fatalf("events = %d, want %d", got, runCheckPerCheckExecBudget)
+	}
+}
+
+func TestPlanJobContextExposesNoRunnableChecks(t *testing.T) {
+	jr, _ := runCheckFixture(t)
+	jr.job.Kind = v1.JobKindPlan
+	jr.job.ApprovedPlanRevision = 0
+	res, err := call(t, jr, "platform_get_job_context", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.(map[string]any)
+	raw, advertised := m["runnable_checks"]
+	if !advertised {
+		return
+	}
+	checks, _ := raw.([]string)
+	if len(checks) != 0 {
+		t.Fatalf("plan job advertised runnable checks from stale input: %v", checks)
 	}
 }

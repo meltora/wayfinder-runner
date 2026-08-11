@@ -3,6 +3,7 @@ package journal
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -106,17 +107,25 @@ func (j *Journal) migrate() error {
 				acquired_at INTEGER NOT NULL,
 				expires_at INTEGER NOT NULL
 			);
-			CREATE TABLE IF NOT EXISTS tool_calls (
-				attempt_id TEXT NOT NULL,
-				tool TEXT NOT NULL,
-				idempotency_key TEXT NOT NULL,
-				status TEXT NOT NULL CHECK (status IN ('pending', 'completed')),
-				result BLOB,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL,
-				PRIMARY KEY (attempt_id, tool, idempotency_key)
-			);
-	`)
+		CREATE TABLE IF NOT EXISTS tool_calls (
+			attempt_id TEXT NOT NULL,
+			tool TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL,
+			status TEXT NOT NULL CHECK (status IN ('pending', 'completed')),
+			result BLOB,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY (attempt_id, tool, idempotency_key)
+		);
+		CREATE TABLE IF NOT EXISTS check_claims (
+			attempt_id TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL,
+			check_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (attempt_id, idempotency_key)
+		);
+		CREATE INDEX IF NOT EXISTS idx_check_claims_check ON check_claims(attempt_id, check_id);
+`)
 	return err
 }
 
@@ -152,6 +161,12 @@ func (j *Journal) AppendIfNew(ctx context.Context, r Record) (bool, error) {
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// HasRecord reports whether a record with the given ID is already durably
+// journaled, regardless of kind or acknowledgement state.
+func (j *Journal) HasRecord(ctx context.Context, id string) (bool, error) {
+	return j.recordExists(ctx, id)
 }
 
 func (j *Journal) recordExists(ctx context.Context, id string) (bool, error) {
@@ -306,22 +321,80 @@ func (j *Journal) BeginToolCall(ctx context.Context, attemptID, tool, key string
 	return ToolCallPending, nil, nil
 }
 
-// ToolCallKeyOwner returns the recorded tool name for an idempotency key
-// within a tool namespace prefix. It lets scoped tools fail closed when a key
-// is already bound to a different scope of the same tool.
-func (j *Journal) ToolCallKeyOwner(ctx context.Context, attemptID, toolPrefix, key string) (string, bool, error) {
-	var tool string
-	err := j.db.QueryRowContext(ctx, `
-		SELECT tool FROM tool_calls
-		WHERE attempt_id=? AND idempotency_key=? AND tool GLOB ?
-		ORDER BY created_at ASC LIMIT 1`, attemptID, key, toolPrefix+"*").Scan(&tool)
-	if err == sql.ErrNoRows {
-		return "", false, nil
+var (
+	ErrCheckClaimConflict   = errors.New("idempotency key is bound to a different check")
+	ErrCheckBudgetExhausted = errors.New("check execution budget exhausted")
+)
+
+// ClaimCheckExecution atomically binds (attemptID, idempotencyKey) within the
+// platform_run_check namespace to exactly one check ID and enforces durable
+// per-check and per-attempt execution budgets in the same transaction.
+// A same-check replay returns claimed=false and consumes no budget slot; a
+// cross-check replay fails with ErrCheckClaimConflict. Claims survive daemon
+// restarts so budgets cannot be reset by restarting.
+func (j *Journal) ClaimCheckExecution(ctx context.Context, attemptID, key, checkID string, perCheckLimit, perAttemptLimit int) (bool, error) {
+	if perCheckLimit < 1 || perAttemptLimit < 1 {
+		return false, fmt.Errorf("claim limits must be positive")
 	}
+	if err := j.ensureCapacity(ctx, len(attemptID)+len(key)+len(checkID)+64); err != nil {
+		return false, err
+	}
+	conn, err := j.db.Conn(ctx)
 	if err != nil {
-		return "", false, err
+		return false, err
 	}
-	return tool, true, nil
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+		}
+	}()
+	var owner string
+	err = conn.QueryRowContext(ctx,
+		`SELECT check_id FROM check_claims WHERE attempt_id=? AND idempotency_key=?`, attemptID, key).Scan(&owner)
+	if err != nil && err != sql.ErrNoRows {
+		return false, err
+	}
+	if err == nil {
+		if _, cerr := conn.ExecContext(ctx, `COMMIT`); cerr != nil {
+			return false, cerr
+		}
+		committed = true
+		if owner != checkID {
+			return false, ErrCheckClaimConflict
+		}
+		return false, nil
+	}
+	var perCheck int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM check_claims WHERE attempt_id=? AND check_id=?`, attemptID, checkID).Scan(&perCheck); err != nil {
+		return false, err
+	}
+	if perCheck >= perCheckLimit {
+		return false, ErrCheckBudgetExhausted
+	}
+	var perAttempt int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM check_claims WHERE attempt_id=?`, attemptID).Scan(&perAttempt); err != nil {
+		return false, err
+	}
+	if perAttempt >= perAttemptLimit {
+		return false, ErrCheckBudgetExhausted
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO check_claims (attempt_id, idempotency_key, check_id, created_at) VALUES (?, ?, ?, ?)`,
+		attemptID, key, checkID, time.Now().Unix()); err != nil {
+		return false, err
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return false, err
+	}
+	committed = true
+	return true, nil
 }
 
 func (j *Journal) CompleteToolCall(ctx context.Context, attemptID, tool, key string, result []byte) error {
