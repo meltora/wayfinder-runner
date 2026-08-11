@@ -432,6 +432,43 @@ func (d *Daemon) sendEventWithID(ctx context.Context, eventID string, payload an
 	return nil
 }
 
+// sendEventWithStableID durably records an event under a caller-derived stable
+// ID before delivering it. An ID that is already journaled is neither appended
+// again nor transmitted, so a retry after a crash between event publication
+// and tool-result commit cannot create a second logical event.
+func (d *Daemon) sendEventWithStableID(ctx context.Context, eventID string, payload map[string]any) (bool, error) {
+	if err := validation.ID("event_id", eventID); err != nil {
+		return false, err
+	}
+	env := v1.Envelope{
+		Version: v1.ProtocolVersion, Type: v1.TypeEvent, ID: eventID,
+		SentAt: time.Now(), RunnerID: d.runnerID, Payload: payload,
+	}
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return false, err
+	}
+	inserted, err := d.journal.AppendIfNew(ctx, journal.Record{
+		ID: env.ID, Kind: journal.KindEvent, Payload: raw, CreatedAt: time.Now(),
+	})
+	if err != nil {
+		return false, err
+	}
+	if !inserted {
+		return false, nil
+	}
+	if d.eventSink != nil {
+		return true, d.eventSink(ctx, payload)
+	}
+	if d.client == nil {
+		return true, nil
+	}
+	if err := d.client.SendEvent(ctx, env.ID, payload); err != nil {
+		d.logger.Debug("event durably queued for replay", "id", env.ID, "err", err)
+	}
+	return true, nil
+}
+
 func (d *Daemon) OnDisconnected(err error) {
 	d.controlReady.Store(false)
 	d.logger.Warn("disconnected", "err", err)

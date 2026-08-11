@@ -2,8 +2,11 @@ package journal
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -275,5 +278,147 @@ func TestUnackedPagination(t *testing.T) {
 	page, err := j.UnackedPage(context.Background(), KindEvent, 1, 1)
 	if err != nil || len(page) != 1 || page[0].ID != "b" {
 		t.Fatalf("page=%v err=%v", page, err)
+	}
+}
+
+func TestClaimCheckExecutionBindsKeyToExactlyOneCheck(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	claimed, err := j.ClaimCheckExecution(ctx, "attempt-1", "key-1", "check-a", 5, 10)
+	if err != nil || !claimed {
+		t.Fatalf("first claim = %v, %v", claimed, err)
+	}
+	claimed, err = j.ClaimCheckExecution(ctx, "attempt-1", "key-1", "check-a", 5, 10)
+	if err != nil || claimed {
+		t.Fatalf("same-check replay = %v, %v; must replay without a new claim", claimed, err)
+	}
+	if _, err = j.ClaimCheckExecution(ctx, "attempt-1", "key-1", "check-b", 5, 10); !errors.Is(err, ErrCheckClaimConflict) {
+		t.Fatalf("cross-check claim = %v, want ErrCheckClaimConflict", err)
+	}
+	claimed, err = j.ClaimCheckExecution(ctx, "attempt-2", "key-1", "check-b", 5, 10)
+	if err != nil || !claimed {
+		t.Fatalf("a different attempt owns its own namespace: %v, %v", claimed, err)
+	}
+}
+
+func TestClaimCheckExecutionEnforcesDurableBudgets(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	claim := func(key, checkID string) (bool, error) {
+		return j.ClaimCheckExecution(ctx, "attempt-1", key, checkID, 2, 3)
+	}
+	if claimed, err := claim("k1", "check-a"); err != nil || !claimed {
+		t.Fatalf("claim k1 = %v, %v", claimed, err)
+	}
+	if claimed, err := claim("k2", "check-a"); err != nil || !claimed {
+		t.Fatalf("claim k2 = %v, %v", claimed, err)
+	}
+	if _, err := claim("k3", "check-a"); !errors.Is(err, ErrCheckBudgetExhausted) {
+		t.Fatalf("per-check budget = %v, want ErrCheckBudgetExhausted", err)
+	}
+	if claimed, err := claim("k3", "check-b"); err != nil || !claimed {
+		t.Fatalf("per-attempt slot = %v, %v", claimed, err)
+	}
+	if _, err := claim("k4", "check-b"); !errors.Is(err, ErrCheckBudgetExhausted) {
+		t.Fatalf("per-attempt budget = %v, want ErrCheckBudgetExhausted", err)
+	}
+	if claimed, err := claim("k1", "check-a"); err != nil || claimed {
+		t.Fatalf("same-key replay consumed a budget slot: %v, %v", claimed, err)
+	}
+	if _, err := j.ClaimCheckExecution(ctx, "attempt-1", "k9", "check-a", 0, 3); err == nil {
+		t.Fatal("non-positive per-check limit accepted")
+	}
+	if _, err := j.ClaimCheckExecution(ctx, "attempt-1", "k9", "check-a", 2, 0); err == nil {
+		t.Fatal("non-positive per-attempt limit accepted")
+	}
+}
+
+func TestClaimCheckExecutionSurvivesRestart(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "journal.db")
+	ctx := context.Background()
+	j, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := j.ClaimCheckExecution(ctx, "attempt-1", "key-1", "check-a", 1, 5); err != nil || !claimed {
+		t.Fatalf("claim = %v, %v", claimed, err)
+	}
+	if err := j.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	if claimed, err := reopened.ClaimCheckExecution(ctx, "attempt-1", "key-1", "check-a", 1, 5); err != nil || claimed {
+		t.Fatalf("post-restart replay = %v, %v", claimed, err)
+	}
+	if _, err := reopened.ClaimCheckExecution(ctx, "attempt-1", "key-1", "check-b", 1, 5); !errors.Is(err, ErrCheckClaimConflict) {
+		t.Fatalf("post-restart conflict = %v, want ErrCheckClaimConflict", err)
+	}
+	if _, err := reopened.ClaimCheckExecution(ctx, "attempt-1", "key-2", "check-a", 1, 5); !errors.Is(err, ErrCheckBudgetExhausted) {
+		t.Fatalf("post-restart budget = %v, want ErrCheckBudgetExhausted", err)
+	}
+}
+
+func TestClaimCheckExecutionConcurrentClaimsConverge(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	const callers = 16
+	barrier := make(chan struct{})
+	var wg sync.WaitGroup
+	claimed := make([]bool, callers)
+	errs := make([]error, callers)
+	for i := range callers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-barrier
+			claimed[i], errs[i] = j.ClaimCheckExecution(ctx, "attempt-1", "shared-key", fmt.Sprintf("check-%d", i), 20, 20)
+		}(i)
+	}
+	close(barrier)
+	wg.Wait()
+	winners := 0
+	for i := range callers {
+		if claimed[i] {
+			winners++
+			continue
+		}
+		if !errors.Is(errs[i], ErrCheckClaimConflict) {
+			t.Fatalf("loser %d err = %v, want ErrCheckClaimConflict", i, errs[i])
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("concurrent cross-check claims produced %d owners, want exactly 1", winners)
+	}
+}
+
+func TestHasRecord(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	exists, err := j.HasRecord(ctx, "missing")
+	if err != nil || exists {
+		t.Fatalf("HasRecord missing = %v, %v", exists, err)
+	}
+	if err := j.Append(ctx, Record{ID: "stable-1", Kind: KindEvent, Payload: []byte(`{}`), CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = j.HasRecord(ctx, "stable-1")
+	if err != nil || !exists {
+		t.Fatalf("HasRecord present = %v, %v", exists, err)
+	}
+	if err := j.Ack(ctx, "stable-1"); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = j.HasRecord(ctx, "stable-1")
+	if err != nil || !exists {
+		t.Fatalf("HasRecord acked = %v, %v", exists, err)
 	}
 }
