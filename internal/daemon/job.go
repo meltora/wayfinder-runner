@@ -51,6 +51,8 @@ type jobRunner struct {
 	decisionMu sync.Mutex
 	decisions  map[string]chan v1.CommandPayload
 
+	checkMu sync.Mutex
+
 	idempotencyMu   sync.Mutex
 	seenIdempotency map[string]*toolCallMemo
 	repositoryURL   string

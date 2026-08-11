@@ -306,6 +306,24 @@ func (j *Journal) BeginToolCall(ctx context.Context, attemptID, tool, key string
 	return ToolCallPending, nil, nil
 }
 
+// ToolCallKeyOwner returns the recorded tool name for an idempotency key
+// within a tool namespace prefix. It lets scoped tools fail closed when a key
+// is already bound to a different scope of the same tool.
+func (j *Journal) ToolCallKeyOwner(ctx context.Context, attemptID, toolPrefix, key string) (string, bool, error) {
+	var tool string
+	err := j.db.QueryRowContext(ctx, `
+		SELECT tool FROM tool_calls
+		WHERE attempt_id=? AND idempotency_key=? AND tool GLOB ?
+		ORDER BY created_at ASC LIMIT 1`, attemptID, key, toolPrefix+"*").Scan(&tool)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return tool, true, nil
+}
+
 func (j *Journal) CompleteToolCall(ctx context.Context, attemptID, tool, key string, result []byte) error {
 	res, err := j.db.ExecContext(ctx, `
 		UPDATE tool_calls SET status='completed', result=?, updated_at=?

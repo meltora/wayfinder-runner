@@ -119,10 +119,20 @@ var Tools = []ToolDef{
 		"name": stringProp("Artifact name"), "path": stringProp("Path inside the job workspace"),
 		"content_type": stringProp("MIME type"), "idempotency_key": stringProp("Idempotency key"),
 	})},
+	{Name: "platform_run_check", Description: "Runs a registered required check on demand inside the job sandbox. Iterative results never satisfy final required checks.", InputSchema: runCheckSchema()},
 	{Name: "platform_mark_review_ready", Description: "Requests transition to review readiness. The control plane independently verifies evidence.", InputSchema: objectSchema(map[string]any{
 		"summary": stringProp("Review summary"), "known_limitations": arrayProp("Known limitations"),
 		"idempotency_key": stringProp("Idempotency key"),
 	})},
+}
+
+func runCheckSchema() map[string]any {
+	schema := objectSchema(map[string]any{
+		"check_id":        stringProp("Registered required check ID"),
+		"idempotency_key": stringProp("Idempotency key"),
+	})
+	schema["required"] = []string{"check_id", "idempotency_key"}
+	return schema
 }
 
 func objectSchema(props map[string]any) map[string]any {

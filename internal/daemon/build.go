@@ -67,24 +67,24 @@ func (jr *jobRunner) finalizeBuild(
 }
 
 func (jr *jobRunner) commitAgentChanges(ctx context.Context, repository checkedOutRepository) (string, error) {
-	status, err := jr.runWorkspaceCommand(ctx, "git-status-"+repository.ID, repository.WorkDir,
+	status, _, err := jr.runWorkspaceCommand(ctx, "git-status-"+repository.ID, repository.WorkDir,
 		"git", []string{"status", "--porcelain"}, false, 1<<20)
 	if err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(status) != "" {
-		if _, err := jr.runWorkspaceCommand(ctx, "git-add-"+repository.ID, repository.WorkDir,
+		if _, _, err := jr.runWorkspaceCommand(ctx, "git-add-"+repository.ID, repository.WorkDir,
 			"git", []string{"add", "-A"}, false, 1<<20); err != nil {
 			return "", err
 		}
 		msg := fmt.Sprintf("agent: implement %s %s", jr.job.Ticket.Key, jr.job.Ticket.Summary)
-		if _, err := jr.runWorkspaceCommand(ctx, "git-commit-"+repository.ID, repository.WorkDir,
+		if _, _, err := jr.runWorkspaceCommand(ctx, "git-commit-"+repository.ID, repository.WorkDir,
 			"git", []string{"-c", "core.hooksPath=/dev/null", "-c", "user.name=our-runner",
 				"-c", "user.email=runner@localhost", "commit", "-m", msg}, false, 1<<20); err != nil {
 			return "", err
 		}
 	}
-	sha, err := jr.runWorkspaceCommand(ctx, "git-head-"+repository.ID, repository.WorkDir,
+	sha, _, err := jr.runWorkspaceCommand(ctx, "git-head-"+repository.ID, repository.WorkDir,
 		"git", []string{"rev-parse", "--verify", "HEAD^{commit}"}, false, 1<<20)
 	return strings.TrimSpace(sha), err
 }
@@ -92,54 +92,51 @@ func (jr *jobRunner) commitAgentChanges(ctx context.Context, repository checkedO
 func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string]string) bool {
 	allOK := true
 	for _, checkID := range jr.job.RequiredChecks {
-		start := time.Now()
 		check, ok := jr.d.cfg.Checks[checkID]
 		if !ok {
 			_ = jr.sendJobEvent(ctx, "test_results", map[string]any{
 				"suite": checkID, "command": checkID, "result": "error",
-				"failures": []string{"required check is not registered on this runner"}, "commit_set": commitSet,
+				"failures": []string{"required check is not registered on this runner"},
+				"commit_set": commitSet, "phase": "terminal", "source": "runner",
 			})
 			allOK = false
 			continue
 		}
-		timeout := 10 * time.Minute
-		if check.TimeoutSeconds > 0 {
-			timeout = time.Duration(check.TimeoutSeconds) * time.Second
-		}
-		checkCtx, cancel := context.WithTimeout(ctx, timeout)
 		repository, ok := jr.checkRepository(check.RepositoryID)
 		if !ok {
-			cancel()
 			allOK = false
 			_ = jr.sendJobEvent(ctx, "test_results", map[string]any{
 				"suite": checkID, "result": "error",
-				"failures": []string{"check repository is not part of the job"}, "commit_set": commitSet,
+				"failures": []string{"check repository is not part of the job"},
+				"commit_set": commitSet, "phase": "terminal", "source": "runner",
 			})
 			continue
 		}
-		out, runErr := jr.runCheck(checkCtx, checkID, repository.WorkDir, check.Command, check.Args)
-		cancel()
-		result := "passed"
-		if runErr != nil {
-			result = "failed"
+		outcome := jr.executeConfiguredCheck(ctx, checkID, repository, check)
+		if outcome.Result != "passed" {
 			allOK = false
 		}
 		failures := []string{}
-		if runErr != nil {
-			failures = append(failures, truncate(out, 2000))
+		if outcome.Result != "passed" {
+			failures = append(failures, outcome.Output)
 		}
-		_ = jr.sendJobEvent(ctx, "test_results", map[string]any{
-			"suite": checkID, "command": append([]string{check.Command}, check.Args...), "result": result,
-			"duration_ms": time.Since(start).Milliseconds(),
-			"failures":    failures, "repository_id": repository.ID,
+		event := map[string]any{
+			"suite": checkID, "command": append([]string{check.Command}, check.Args...),
+			"result": outcome.Result, "duration_ms": outcome.Duration.Milliseconds(),
+			"failures": failures, "repository_id": repository.ID,
 			"commit_sha": commitSet[repository.ID], "commit_set": commitSet,
-		})
+			"phase": "terminal", "source": "runner", "truncated": outcome.Truncated,
+		}
+		if outcome.Class != "" {
+			event["error_classification"] = outcome.Class
+		}
+		_ = jr.sendJobEvent(ctx, "test_results", event)
 	}
 	return allOK
 }
 
 func (jr *jobRunner) collectPatch(ctx context.Context, repository checkedOutRepository, sha string) error {
-	diff, err := jr.runWorkspaceCommand(ctx, "git-diff-"+repository.ID, repository.WorkDir, "git",
+	diff, _, err := jr.runWorkspaceCommand(ctx, "git-diff-"+repository.ID, repository.WorkDir, "git",
 		[]string{"--no-pager", "diff", "--no-ext-diff", "--no-textconv", repository.Base + "...HEAD"}, false, 64<<20)
 	if err != nil || strings.TrimSpace(diff) == "" {
 		return err
@@ -171,7 +168,7 @@ func (jr *jobRunner) pushBranch(ctx context.Context, repository checkedOutReposi
 		return err
 	}
 	defer func() { _ = os.Remove(bundlePath) }()
-	if _, err := jr.runWorkspaceCommand(ctx, "git-bundle-"+repository.ID, repository.WorkDir,
+	if _, _, err := jr.runWorkspaceCommand(ctx, "git-bundle-"+repository.ID, repository.WorkDir,
 		"git", []string{"bundle", "create", bundlePath, repository.Branch}, false, 1<<20); err != nil {
 		return err
 	}
@@ -193,12 +190,7 @@ func (jr *jobRunner) checkRepository(id string) (checkedOutRepository, bool) {
 	return checkedOutRepository{}, false
 }
 
-func (jr *jobRunner) runCheck(ctx context.Context, checkID, dir, command string, args []string) (string, error) {
-	out, err := jr.runWorkspaceCommand(ctx, "check-"+checkID, dir, command, args, true, 1<<20)
-	return truncate(out, 8192), err
-}
-
-func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, dir, command string, args []string, configuredNetwork bool, outputLimit int) (string, error) {
+func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, dir, command string, args []string, configuredNetwork bool, outputLimit int) (string, bool, error) {
 	wrappedCommand := command
 	wrappedArgs := append([]string(nil), args...)
 	workDir := dir
@@ -208,15 +200,15 @@ func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, dir, comm
 	if jr.d.cfg.Isolation == "docker" {
 		iso, err := isolation.Select("docker", false)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		homeRoot := filepath.Join(jr.d.cfg.StateDir, "check-homes")
 		if err := os.MkdirAll(homeRoot, 0o700); err != nil {
-			return "", err
+			return "", false, err
 		}
 		home, err := os.MkdirTemp(homeRoot, "home-")
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		cleanup = func() error {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -237,7 +229,7 @@ func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, dir, comm
 		wrappedCommand, wrappedArgs, err = iso.Wrap(command, wrappedArgs, policy)
 		if err != nil {
 			_ = cleanup()
-			return "", err
+			return "", false, err
 		}
 		workDir = ""
 		commandEnvironment = isolation.DockerEnvironment()
@@ -252,7 +244,7 @@ func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, dir, comm
 	cmd.Stderr = &output
 	runErr := cmd.Run()
 	cleanupErr := cleanup()
-	return output.String(), errors.Join(runErr, cleanupErr)
+	return output.String(), output.truncated, errors.Join(runErr, cleanupErr)
 }
 
 type cappedBuffer struct {
