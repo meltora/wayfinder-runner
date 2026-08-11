@@ -1,15 +1,48 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/journal"
 )
+
+// runCheckRecoveryEnvelope decodes durable check evidence without a float64
+// round trip: the payload stays raw so integer fields keep full precision.
+type runCheckRecoveryEnvelope struct {
+	Version   int             `json:"version"`
+	Type      v1.MessageType  `json:"type"`
+	ID        string          `json:"id"`
+	SentAt    time.Time       `json:"sent_at"`
+	RunnerID  string          `json:"runner_id,omitempty"`
+	InReplyTo string          `json:"in_reply_to,omitempty"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
+// runCheckRecoveryPayload keeps fencing_token and duration_ms as exact
+// integers. Pointer fields distinguish a missing key from a zero value so the
+// strict presence validation of the durable record is preserved.
+type runCheckRecoveryPayload struct {
+	Kind          string          `json:"kind"`
+	Phase         string          `json:"phase"`
+	Source        string          `json:"source"`
+	JobID         string          `json:"job_id"`
+	AttemptID     string          `json:"attempt_id"`
+	CheckID       string          `json:"check_id"`
+	Suite         string          `json:"suite"`
+	FencingToken  *uint64         `json:"fencing_token"`
+	Result        string          `json:"result"`
+	RepositoryID  string          `json:"repository_id"`
+	DurationMS    *int64          `json:"duration_ms"`
+	CommitSHA     *string         `json:"commit_sha"`
+	WorktreeDirty *bool           `json:"worktree_dirty"`
+	Failures      *[]string       `json:"failures"`
+	Truncated     *bool           `json:"truncated"`
+	ErrorClass    json.RawMessage `json:"error_classification"`
+}
 
 func (jr *jobRunner) recoverRunCheckResult(ctx context.Context, checkID, key string) (map[string]any, error) {
 	eventID := runCheckEventID(jr.job.AttemptID, checkID, key)
@@ -23,121 +56,76 @@ func (jr *jobRunner) recoverRunCheckResult(ctx context.Context, checkID, key str
 	if record.Kind != journal.KindEvent {
 		return nil, fmt.Errorf("check evidence record has unexpected kind %q", record.Kind)
 	}
-	var env v1.Envelope
-	decoder := json.NewDecoder(bytes.NewReader(record.Payload))
-	decoder.UseNumber()
-	if err := decoder.Decode(&env); err != nil {
+	var env runCheckRecoveryEnvelope
+	if err := json.Unmarshal(record.Payload, &env); err != nil {
 		return nil, fmt.Errorf("check evidence is malformed: %w", err)
 	}
 	if env.Version != v1.ProtocolVersion || env.Type != v1.TypeEvent || env.ID != eventID {
 		return nil, fmt.Errorf("check evidence envelope does not match the derived event identity")
 	}
-	payload, ok := env.Payload.(map[string]any)
-	if !ok {
+	if len(env.Payload) == 0 {
 		return nil, fmt.Errorf("check evidence payload is malformed")
 	}
-	if payload["kind"] != "test_results" || payload["phase"] != "iterative" || payload["source"] != "runner" {
+	var payload runCheckRecoveryPayload
+	if err := json.Unmarshal(env.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("check evidence payload is malformed: %w", err)
+	}
+	if payload.Kind != "test_results" || payload.Phase != "iterative" || payload.Source != "runner" {
 		return nil, fmt.Errorf("check evidence is not an iterative runner result")
 	}
-	if payload["job_id"] != jr.job.JobID || payload["attempt_id"] != jr.job.AttemptID ||
-		payload["check_id"] != checkID || payload["suite"] != checkID {
+	if payload.JobID != jr.job.JobID || payload.AttemptID != jr.job.AttemptID ||
+		payload.CheckID != checkID || payload.Suite != checkID {
 		return nil, fmt.Errorf("check evidence identity does not match this attempt and check")
 	}
-	token, ok := jsonUint64(payload["fencing_token"])
-	if !ok || token != jr.job.FencingToken {
+	if payload.FencingToken == nil || *payload.FencingToken != jr.job.FencingToken {
 		return nil, fmt.Errorf("check evidence fencing token does not match this attempt")
 	}
-	resultName, ok := payload["result"].(string)
-	if !ok || (resultName != "passed" && resultName != "failed" && resultName != "error") {
+	resultName := payload.Result
+	if resultName != "passed" && resultName != "failed" && resultName != "error" {
 		return nil, fmt.Errorf("check evidence result is malformed")
 	}
-	repositoryID, ok := payload["repository_id"].(string)
-	if !ok || repositoryID == "" {
+	if payload.RepositoryID == "" {
 		return nil, fmt.Errorf("check evidence repository is malformed")
 	}
-	duration, ok := jsonInt64(payload["duration_ms"])
-	if !ok || duration < 0 {
+	if payload.DurationMS == nil || *payload.DurationMS < 0 {
 		return nil, fmt.Errorf("check evidence duration is malformed")
 	}
-	commitSHA, ok := payload["commit_sha"].(string)
-	if !ok {
+	if payload.CommitSHA == nil {
 		return nil, fmt.Errorf("check evidence commit is malformed")
 	}
-	dirty, ok := payload["worktree_dirty"].(bool)
-	if !ok {
+	if payload.WorktreeDirty == nil {
 		return nil, fmt.Errorf("check evidence worktree state is malformed")
 	}
 	result := map[string]any{
 		"check_id":       checkID,
-		"repository_id":  repositoryID,
+		"repository_id":  payload.RepositoryID,
 		"result":         resultName,
-		"duration_ms":    duration,
-		"commit_sha":     commitSHA,
-		"worktree_dirty": dirty,
+		"duration_ms":    *payload.DurationMS,
+		"commit_sha":     *payload.CommitSHA,
+		"worktree_dirty": *payload.WorktreeDirty,
 	}
 	if resultName != "passed" {
-		failures, ok := payload["failures"].([]any)
-		if !ok || len(failures) > 1 {
+		if payload.Failures == nil || len(*payload.Failures) > 1 {
 			return nil, fmt.Errorf("check evidence failures are malformed")
 		}
 		output := ""
-		if len(failures) == 1 {
-			output, ok = failures[0].(string)
-			if !ok {
-				return nil, fmt.Errorf("check evidence failure output is malformed")
-			}
+		if len(*payload.Failures) == 1 {
+			output = (*payload.Failures)[0]
 		}
-		truncated, ok := payload["truncated"].(bool)
-		if !ok {
+		if payload.Truncated == nil {
 			return nil, fmt.Errorf("check evidence truncation flag is malformed")
 		}
 		result["output"] = output
-		result["truncated"] = truncated
+		result["truncated"] = *payload.Truncated
 	}
-	if class, present := payload["error_classification"]; present {
-		classStr, ok := class.(string)
-		if !ok || classStr == "" {
+	if len(payload.ErrorClass) > 0 {
+		var class string
+		if err := json.Unmarshal(payload.ErrorClass, &class); err != nil || class == "" {
 			return nil, fmt.Errorf("check evidence error classification is malformed")
 		}
-		result["error_classification"] = classStr
+		result["error_classification"] = class
 	}
 	return result, nil
-}
-
-func jsonUint64(value any) (uint64, bool) {
-	switch n := value.(type) {
-	case json.Number:
-		parsed, err := strconv.ParseUint(string(n), 10, 64)
-		return parsed, err == nil
-	case uint64:
-		return n, true
-	case int64:
-		if n < 0 {
-			return 0, false
-		}
-		return uint64(n), true
-	case int:
-		if n < 0 {
-			return 0, false
-		}
-		return uint64(n), true
-	default:
-		return 0, false
-	}
-}
-
-func jsonInt64(value any) (int64, bool) {
-	switch n := value.(type) {
-	case json.Number:
-		parsed, err := strconv.ParseInt(string(n), 10, 64)
-		return parsed, err == nil
-	case int64:
-		return n, true
-	case int:
-		return int64(n), true
-	default:
-		return 0, false
-	}
 }
 
 func (jr *jobRunner) reconcilePendingRunCheck(ctx context.Context, scopeTool, checkID, key string) (any, []byte, error) {
