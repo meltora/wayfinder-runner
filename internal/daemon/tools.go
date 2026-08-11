@@ -53,7 +53,15 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 	if err := validation.ID("idempotency_key", key); err != nil {
 		return nil, err
 	}
-	scope := tool + ":" + key
+	scopeTool := tool
+	if tool == runCheckTool {
+		checkID := str(raw, "check_id")
+		if err := validation.ID("check_id", checkID); err != nil {
+			return nil, err
+		}
+		scopeTool = tool + ":" + checkID
+	}
+	scope := scopeTool + ":" + key
 	jr.idempotencyMu.Lock()
 	if existing, ok := jr.seenIdempotency[scope]; ok {
 		jr.idempotencyMu.Unlock()
@@ -74,7 +82,7 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 	memo := &toolCallMemo{done: make(chan struct{})}
 	jr.seenIdempotency[scope] = memo
 	jr.idempotencyMu.Unlock()
-	state, storedResult, err := jr.d.journal.BeginToolCall(ctx, jr.job.AttemptID, tool, key)
+	state, storedResult, err := jr.d.journal.BeginToolCall(ctx, jr.job.AttemptID, scopeTool, key)
 	if err != nil {
 		jr.finishToolMemo(scope, memo, nil, err)
 		return nil, fmt.Errorf("record tool call: %w", err)
@@ -97,10 +105,10 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 		encoded, marshalErr = json.Marshal(result)
 		if marshalErr != nil {
 			callErr = fmt.Errorf("encode tool result: %w", marshalErr)
-		} else if completeErr := jr.d.journal.CompleteToolCall(ctx, jr.job.AttemptID, tool, key, encoded); completeErr != nil {
+		} else if completeErr := jr.d.journal.CompleteToolCall(ctx, jr.job.AttemptID, scopeTool, key, encoded); completeErr != nil {
 			callErr = fmt.Errorf("commit tool call: %w", completeErr)
 		}
-	} else if abandonErr := jr.d.journal.AbandonToolCall(context.Background(), jr.job.AttemptID, tool, key); abandonErr != nil {
+	} else if abandonErr := jr.d.journal.AbandonToolCall(context.Background(), jr.job.AttemptID, scopeTool, key); abandonErr != nil {
 		jr.logger.Error("abandon failed tool call", "tool", tool, "err", abandonErr)
 	}
 	jr.finishToolMemo(scope, memo, encoded, callErr)
@@ -185,12 +193,13 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 
 	case "platform_get_job_context":
 		return map[string]any{
-			"job_id":       jr.job.JobID,
-			"attempt_id":   jr.job.AttemptID,
-			"kind":         jr.job.Kind,
-			"ticket":       jr.job.Ticket,
-			"repositories": jr.job.Repositories,
-			"capabilities": capabilitiesForJob(jr.job.Kind),
+			"job_id":          jr.job.JobID,
+			"attempt_id":      jr.job.AttemptID,
+			"kind":            jr.job.Kind,
+			"ticket":          jr.job.Ticket,
+			"repositories":    jr.job.Repositories,
+			"capabilities":    capabilitiesForJob(jr.job.Kind),
+			"runnable_checks": jr.runnableChecks(),
 		}, nil
 
 	case "platform_publish_plan":
@@ -398,6 +407,9 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 
 	case "platform_publish_artifact":
 		return jr.handlePublishArtifact(ctx, raw)
+
+	case runCheckTool:
+		return jr.executeRunCheck(ctx, raw)
 
 	case "platform_mark_review_ready":
 		if err := requireToolText(raw, "summary", 64<<10); err != nil {
