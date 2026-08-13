@@ -10,6 +10,7 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/collector"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/daemon"
 	"github.com/example/app-runner/internal/mockcp"
@@ -61,7 +62,12 @@ echo 'package main
 
 func PartialFeature() bool { return true }
 ' > partial.go
-echo '{"type":"error","status":"failed","error":{"data":{"message":"provider quota exhausted"}}}'
+if [ -n "$RUNNER_BIN" ]; then
+  printf '%s\n' \
+   '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"platform_checkpoint","arguments":{"plan_step":"partial implementation","branch_state":"agent-controlled-not-authoritative","next_action":"resume","idempotency_key":"capacity-cp-1"}}}' \
+   | "$RUNNER_BIN" mcp-serve --socket "$PLATFORM_MCP_SOCKET" --token-file "$PLATFORM_MCP_TOKEN_FILE" >/dev/null 2>&1
+fi
+echo '{"type":"error","status":"failed","session_id":"capacity-session-1","error":{"data":{"message":"provider quota exhausted"}}}'
 exit 17
 `
 
@@ -239,7 +245,8 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 	stateDir := t.TempDir()
 	enrollRunner(t, cp, stateDir)
 	origin := seedBareOrigin(t)
-	fakeAgent := writeFakeAgent(t, fakeFailingBuildAgent)
+	runnerBin := buildRunnerBinary(t)
+	fakeAgent := writeFakeAgent(t, strings.ReplaceAll(fakeFailingBuildAgent, "$RUNNER_BIN", runnerBin))
 
 	cfg := directRunnerConfig(cp.WSURL(), stateDir)
 	cfg.ControlPlaneHTTPURL = cp.EnrollURL()
@@ -304,6 +311,18 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 	if capacity["adapter"] != "claude" || capacity["provider"] != "claude" ||
 		capacity["reason"] != "quota_exhausted" || capacity["resume_policy"] != "automatic" {
 		t.Fatalf("provider capacity payload = %v", capacity)
+	}
+	if capacity["branch_ref"] != payload["branch"] || capacity["commit_sha"] != payload["head_sha"] ||
+		capacity["checkpoint_ref"] != "att-1" {
+		t.Fatalf("provider capacity lineage = %v, job result = %v", capacity, payload)
+	}
+	checkpoint, err := collector.NewStore(stateDir).CheckpointForAttempt(job.JobID, job.AttemptID, job.FencingToken)
+	if err != nil {
+		t.Fatalf("load emitted recovery checkpoint: %v", err)
+	}
+	wantBranchState := payload["branch"].(string) + "@" + payload["head_sha"].(string)
+	if checkpoint.BranchState != wantBranchState {
+		t.Fatalf("capacity checkpoint was overwritten after emission: %#v", checkpoint)
 	}
 	cmd := exec.Command("git", "--git-dir", origin, "show", "job/build-agent-failure/att-1:partial.go")
 	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "PartialFeature") {

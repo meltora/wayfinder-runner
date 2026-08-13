@@ -95,6 +95,50 @@ func TestCheckpointRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCheckpointForAttemptRequiresExactFence(t *testing.T) {
+	t.Parallel()
+	store := NewStore(t.TempDir())
+	job := v1.JobSpec{JobID: "job-1", AttemptID: "attempt-1", FencingToken: 9}
+	checkpoint := collectorCheckpoint(job, "step")
+	if err := store.SaveCheckpoint(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.CheckpointForAttempt(job.JobID, job.AttemptID, job.FencingToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AttemptID != job.AttemptID || got.FencingToken != job.FencingToken {
+		t.Fatalf("checkpoint = %#v", got)
+	}
+	if _, err := store.CheckpointForAttempt(job.JobID, job.AttemptID, job.FencingToken+1); err == nil {
+		t.Fatal("checkpoint was accepted under a different fence")
+	}
+	for name, read := range map[string]func() error{
+		"invalid job": func() error {
+			_, err := store.CheckpointForAttempt("bad/id", job.AttemptID, job.FencingToken)
+			return err
+		},
+		"invalid attempt": func() error {
+			_, err := store.CheckpointForAttempt(job.JobID, "bad/id", job.FencingToken)
+			return err
+		},
+		"zero fence": func() error {
+			_, err := store.CheckpointForAttempt(job.JobID, job.AttemptID, 0)
+			return err
+		},
+		"missing checkpoint": func() error {
+			_, err := store.CheckpointForAttempt(job.JobID, "missing", job.FencingToken)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := read(); err == nil {
+				t.Fatal("invalid checkpoint lookup succeeded")
+			}
+		})
+	}
+}
+
 func collectorCheckpoint(job v1.JobSpec, step string) v1.Checkpoint {
 	return v1.Checkpoint{
 		JobID: job.JobID, AttemptID: job.AttemptID, FencingToken: job.FencingToken,

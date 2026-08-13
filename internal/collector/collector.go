@@ -219,6 +219,43 @@ func (s *Store) LatestCheckpoint(jobID string) (*v1.Checkpoint, error) {
 	return latest, nil
 }
 
+// CheckpointForAttempt returns the exact durable checkpoint bound to a fenced
+// attempt. It never scans another attempt and therefore can be used as a safe
+// opaque recovery reference.
+func (s *Store) CheckpointForAttempt(jobID, attemptID string, fencingToken uint64) (*v1.Checkpoint, error) {
+	if err := validation.ID("job_id", jobID); err != nil {
+		return nil, err
+	}
+	if err := validation.ID("attempt_id", attemptID); err != nil {
+		return nil, err
+	}
+	if fencingToken == 0 {
+		return nil, fmt.Errorf("fencing_token must be non-zero")
+	}
+	f, err := safeio.OpenRegular(s.Root, filepath.Join("checkpoints", jobID, attemptID+".json"))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > 1<<20 {
+		return nil, fmt.Errorf("checkpoint exceeds size limit")
+	}
+	var checkpoint v1.Checkpoint
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&checkpoint); err != nil {
+		return nil, err
+	}
+	if checkpoint.JobID != jobID || checkpoint.AttemptID != attemptID || checkpoint.FencingToken != fencingToken {
+		return nil, fmt.Errorf("checkpoint identity or fence does not match requested attempt")
+	}
+	return &checkpoint, nil
+}
+
 func NewCheckpoint(job v1.JobSpec, step, branchState, next string) v1.Checkpoint {
 	return v1.Checkpoint{
 		JobID: job.JobID, AttemptID: job.AttemptID, FencingToken: job.FencingToken,

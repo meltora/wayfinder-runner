@@ -174,6 +174,18 @@ func GitRef(field, value string) error {
 	return nil
 }
 
+// GitCommitSHA accepts only the complete lowercase object IDs supported by the
+// protocol. Abbreviated or uppercase values are not stable recovery identity.
+func GitCommitSHA(field, value string) error {
+	if len(value) != 40 && len(value) != 64 {
+		return fmt.Errorf("%s must be a full lowercase Git commit SHA", field)
+	}
+	if _, err := hex.DecodeString(value); err != nil || value != strings.ToLower(value) {
+		return fmt.Errorf("%s must be a full lowercase Git commit SHA", field)
+	}
+	return nil
+}
+
 func boundedText(field, value string, limit int, required bool) error {
 	if required && value == "" {
 		return fmt.Errorf("%s is required", field)

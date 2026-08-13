@@ -98,6 +98,16 @@ untrusted with respect to the runner identity and control plane.
 8. Cancellation kills the complete supervised process tree. Emergency stop also
    persists the paused state so no new job starts until an explicit resume.
 
+When a provider reports subscription-capacity exhaustion during a single-
+repository build, trusted finalization commits and pushes the partial-work
+branch before the runner emits recovery lineage. The capacity event includes
+that exact branch and full commit SHA plus the opaque current-attempt checkpoint
+reference when a checkpoint exists. It omits recovery lineage if finalization
+or publication fails. Protocol v1 also omits lineage for multi-repository jobs,
+because a single branch/commit pair cannot safely represent their full change
+set; those attempts remain paused for manual resolution until a versioned
+multi-repository lineage contract is available.
+
 The runner finishing a job or a merge request being merged does **not** mark a
 feature Done. Merge may move the control-plane workflow to Ready for QA, but only
 an authorized user action marks the work item Done.

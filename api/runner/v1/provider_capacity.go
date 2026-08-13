@@ -21,5 +21,8 @@ type ProviderCapacityExhaustedEvent struct {
 	ResumePolicy      CapacityResumePolicy `json:"resume_policy"`
 	RetryAt           *time.Time           `json:"retry_at,omitempty"`
 	ProviderSessionID string               `json:"provider_session_id,omitempty"`
+	BranchRef         string               `json:"branch_ref,omitempty"`
+	CommitSHA         string               `json:"commit_sha,omitempty"`
+	CheckpointRef     string               `json:"checkpoint_ref,omitempty"`
 	Message           string               `json:"message"`
 }

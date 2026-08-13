@@ -248,6 +248,7 @@ func (jr *jobRunner) run() {
 		stopLeaseMonitor()
 		finishCtx, finishCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer finishCancel()
+		capacityWait := state == "waiting_for_provider_capacity"
 		if payload == nil {
 			payload = map[string]any{}
 		}
@@ -266,7 +267,7 @@ func (jr *jobRunner) run() {
 		payload["job_id"] = job.JobID
 		payload["attempt_id"] = job.AttemptID
 		payload["fencing_token"] = job.FencingToken
-		if sid := jr.currentSessionID(); sid != "" {
+		if sid := jr.currentSessionID(); sid != "" && !capacityWait {
 			cp := collector.NewCheckpoint(job, "finished", "", "")
 			cp.ProviderSessionID = sid
 			if err := d.collectors.SaveCheckpoint(cp); err != nil {
@@ -525,7 +526,9 @@ func (jr *jobRunner) run() {
 		if state == "waiting_for_provider_capacity" {
 			extra["failure_class"] = "provider_capacity_exhausted"
 			extra["resume_policy"] = jr.effectiveCapacityResumePolicy()
-			capacityEvent := jr.providerCapacityEvent(capacityFailure)
+			lineage := jr.capacityRecoveryLineage(extra)
+			checkpointRef := jr.persistCapacityCheckpoint(lineage)
+			capacityEvent := jr.providerCapacityEvent(capacityFailure, lineage, checkpointRef)
 			if err := jr.d.sendEvent(ctx, capacityEvent); err != nil {
 				extra["capacity_event_error"] = "provider capacity event could not be recorded"
 				jr.logger.Error("record provider capacity event", "err", err)
@@ -876,32 +879,6 @@ func (jr *jobRunner) effectiveCapacityResumePolicy() string {
 		return string(v1.CapacityResumeAutomatic)
 	}
 	return string(v1.CapacityResumeManual)
-}
-
-func (jr *jobRunner) providerCapacityEvent(failure provider.CapacityFailure) v1.ProviderCapacityExhaustedEvent {
-	event := v1.ProviderCapacityExhaustedEvent{
-		Kind:         "provider_capacity_exhausted",
-		JobID:        jr.job.JobID,
-		AttemptID:    jr.job.AttemptID,
-		FencingToken: jr.job.FencingToken,
-		Adapter:      jr.d.cfg.Provider,
-		Provider:     provider.ProviderIdentity(jr.d.cfg.Provider, jr.d.cfg.AgentModel),
-		Model:        jr.d.cfg.AgentModel,
-		Reason:       string(failure.Reason),
-		ResumePolicy: jr.job.ProviderCapacityResumePolicy,
-		Message:      jr.currentProviderError(),
-	}
-	if event.ResumePolicy == "" {
-		event.ResumePolicy = v1.CapacityResumeManual
-	}
-	if !failure.RetryAt.IsZero() {
-		retryAt := failure.RetryAt.UTC()
-		event.RetryAt = &retryAt
-	}
-	if sessionID := jr.currentSessionID(); sessionID != "" {
-		event.ProviderSessionID = sessionID
-	}
-	return event
 }
 
 func truncate(s string, n int) string {

@@ -113,6 +113,16 @@ func TestOpaqueIdentifiersGitRefsAndWebURLs(t *testing.T) {
 			t.Errorf("GitRef(%q) accepted", ref)
 		}
 	}
+	for _, sha := range []string{strings.Repeat("a", 40), strings.Repeat("b", 64)} {
+		if err := GitCommitSHA("commit", sha); err != nil {
+			t.Errorf("GitCommitSHA(%q): %v", sha, err)
+		}
+	}
+	for _, sha := range []string{"abc123", strings.Repeat("A", 40), strings.Repeat("g", 40)} {
+		if err := GitCommitSHA("commit", sha); err == nil {
+			t.Errorf("GitCommitSHA(%q) accepted", sha)
+		}
+	}
 	if err := WebURL("preview", "https://preview.example.test/path?q=ok"); err != nil {
 		t.Fatal(err)
 	}
