@@ -40,7 +40,10 @@ policy itself must be enforced outside the runner.
   Enrollment codes and MCP tokens are accepted from private files, not command
   arguments.
 - Each job has a durable lease and monotonically checked fencing token. Duplicate
-  control-plane commands and MCP tool calls are idempotent.
+  control-plane commands, lease-renewal requests, and MCP tool calls are
+  idempotent. Long-running jobs request renewal during the latter third of the
+  current authority window and accept only a manifest-bound, fencing-checked
+  extension from the control plane.
 - Every job container runs under rootless/user-namespaced Docker with a read-only
   root filesystem, non-root UID/GID, PID/CPU/memory limits, private temporary
   filesystems, and either no network or the verified restricted network.
@@ -83,6 +86,11 @@ untrusted with respect to the runner identity and control plane.
   accepted progress, checkpoint, plan-publication, provider-capacity, terminal,
   and artifact event.
 2. The daemon durably records the command and acquires the single active lease.
+   While the job remains active, the daemon emits at most one durable
+   `lease_renewal` request per authority window. A successful `renew_lease`
+   command must repeat the owning attempt and fencing token and strictly extend
+   the current expiration; the renewed window is persisted before execution
+   continues.
 3. Each repository is cloned from a trusted local mirror into a self-contained
    job workspace. No job receives mirror metadata or host Git credentials.
 4. The runner publishes a non-executing agent-configuration inventory, verifies
@@ -107,9 +115,11 @@ a competing plan.
    imported and optionally pushed from the trusted mirror.
 7. A strict `job_finished` event records only the manifest-bound authority,
    controlled terminal state/failure evidence, and optional provider session.
-   It is durably queued before the local lease is released. Durable events replay
-   in SQLite insertion order so preceding plan, progress, test, review, and
-   artifact evidence cannot be overtaken by completion after reconnect.
+   It is durably queued before the local lease is released. The exact envelope
+   that is journaled is also used for live delivery, so an acknowledgement loss
+   cannot replay the same event ID with different bytes. Durable events replay in
+   SQLite insertion order so preceding plan, progress, test, review, and artifact
+   evidence cannot be overtaken by completion after reconnect.
    Workspaces, job homes, sockets, tokens, and labeled containers are removed.
    Crash recovery reconciles an unfinished lease and queued uploads after restart.
 8. Cancellation kills the complete supervised process tree. Emergency stop also

@@ -125,6 +125,14 @@ provenance that belongs in dedicated evidence events. Journal tests insert
 multiple event IDs with one timestamp and prove reconnect replay follows durable
 SQLite insertion order instead of lexical ID order.
 
+Lease-renewal tests prove the runner waits until the latter third of the current
+authority window, emits one stable manifest-bound request per window, rejects
+non-increasing or incorrectly fenced extensions, and persists the new window.
+The integration fixture runs an agent beyond its original expiry, delivers a
+strict `renew_lease` command, and proves that the job completes under renewed
+authority. Transport tests also assert that live delivery sends the exact
+journaled envelope rather than rebuilding mutable metadata such as `sent_at`.
+
 ## Troubleshooting
 
 ```sh

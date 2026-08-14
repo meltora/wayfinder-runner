@@ -112,7 +112,11 @@ func TestExecuteCommandPolicyAndLeaseBranches(t *testing.T) {
 		if err := d.executeCommand(context.Background(), v1.Envelope{}, v1.CommandPayload{Command: v1.CmdRenewLease, AttemptID: "a1", FencingToken: 99, LeaseExpiresAt: time.Now().Add(time.Hour)}); err == nil {
 			t.Fatal("wrong fencing token accepted")
 		}
-		expires := time.Now().Add(30 * time.Minute).Truncate(time.Second)
+		current := d.leases.Current()
+		if current == nil {
+			t.Fatal("expected active lease")
+		}
+		expires := current.ExpiresAt.Add(30 * time.Minute).Truncate(time.Second)
 		if err := d.executeCommand(context.Background(), v1.Envelope{}, v1.CommandPayload{Command: v1.CmdRenewLease, AttemptID: "a1", FencingToken: 7, LeaseExpiresAt: expires}); err != nil {
 			t.Fatalf("valid renewal: %v", err)
 		}

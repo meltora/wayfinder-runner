@@ -246,4 +246,65 @@ func TestEmergencyStopCancelsJob(t *testing.T) {
 	}
 }
 
+func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	cp, err := mockcp.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer cp.Close()
+	stateDir := t.TempDir()
+	enrollRunner(t, cp, stateDir)
+	origin := seedGitRepo(t)
+	agent := writeFakeAgent(t, "#!/bin/sh\nsleep 8\necho '{\"type\":\"result\",\"status\":\"success\"}'\n")
+	cfg := directRunnerConfig(cp.WSURL(), stateDir)
+	cfg.Provider = "claude"
+	cfg.ProviderBinaries = map[string]string{"claude": agent}
+	cfg.Repositories = map[string]config.RepositoryConfig{"repo-renew": {URL: origin}}
+	d, err := daemon.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
+
+	job := withIntegrationAuthority(v1.JobSpec{
+		JobID: "job-renew", AttemptID: "att-renew", Kind: v1.JobKindPlan, FencingToken: 9,
+		LeaseExpiresAt: time.Now().Add(6 * time.Second),
+		Repositories:   []v1.JobRepository{{RepositoryID: "repo-renew", Primary: true}},
+		Ticket:         v1.TicketContext{Key: "PROJ-RENEW", Summary: "Long planning job"},
+	})
+	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "lease renewal request", 8*time.Second, func() bool {
+		return len(cp.EventsByKind("lease_renewal")) == 1
+	})
+	renewal := cp.EventsByKind("lease_renewal")[0].Payload.(map[string]any)
+	if renewal["lease_id"] != job.LeaseID || renewal["manifest_id"] != job.ManifestID ||
+		renewal["manifest_digest"] != job.ManifestDigest || renewal["fencing_token"] != float64(job.FencingToken) {
+		t.Fatalf("renewal authority = %v", renewal)
+	}
+	if err := cp.SendCommand(ctx, v1.CommandPayload{
+		Command: v1.CmdRenewLease, AttemptID: job.AttemptID, FencingToken: job.FencingToken,
+		LeaseExpiresAt: time.Now().Add(8 * time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "job completion after original expiry", 12*time.Second, func() bool {
+		return len(cp.EventsByKind("job_finished")) == 1
+	})
+	terminal := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
+	if terminal["state"] != "succeeded" {
+		t.Fatalf("terminal after renewal = %v", terminal)
+	}
+}
+
 var _ = json.Marshal

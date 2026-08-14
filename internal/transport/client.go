@@ -229,11 +229,13 @@ func (c *Client) readLoop(ctx context.Context) error {
 	}
 }
 
-func (c *Client) SendEvent(ctx context.Context, id string, payload any) error {
-	return c.send(ctx, v1.Envelope{
-		Version: v1.ProtocolVersion, Type: v1.TypeEvent, ID: id,
-		SentAt: time.Now(), RunnerID: c.runnerID, Payload: payload,
-	})
+func (c *Client) SendEvent(ctx context.Context, envelope v1.Envelope) error {
+	if envelope.Version != v1.ProtocolVersion || envelope.Type != v1.TypeEvent ||
+		envelope.ID == "" || envelope.SentAt.IsZero() || envelope.RunnerID != c.runnerID ||
+		envelope.InReplyTo != "" {
+		return fmt.Errorf("invalid outbound event envelope")
+	}
+	return c.send(ctx, envelope)
 }
 
 func (c *Client) SendCommandAck(ctx context.Context, commandID string, payload v1.CommandAckPayload) error {

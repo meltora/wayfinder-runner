@@ -424,7 +424,7 @@ func (d *Daemon) sendEventWithID(ctx context.Context, eventID string, payload an
 	if d.client == nil {
 		return nil
 	}
-	if err := d.client.SendEvent(ctx, env.ID, payload); err != nil {
+	if err := d.client.SendEvent(ctx, env); err != nil {
 		d.logger.Debug("event durably queued for replay", "id", env.ID, "err", err)
 	}
 	return nil
@@ -434,7 +434,7 @@ func (d *Daemon) sendEventWithID(ctx context.Context, eventID string, payload an
 // ID before delivering it. An ID that is already journaled is neither appended
 // again nor transmitted, so a retry after a crash between event publication
 // and tool-result commit cannot create a second logical event.
-func (d *Daemon) sendEventWithStableID(ctx context.Context, eventID string, payload map[string]any) (bool, error) {
+func (d *Daemon) sendEventWithStableID(ctx context.Context, eventID string, payload any) (bool, error) {
 	if err := validation.ID("event_id", eventID); err != nil {
 		return false, err
 	}
@@ -461,7 +461,7 @@ func (d *Daemon) sendEventWithStableID(ctx context.Context, eventID string, payl
 	if d.client == nil {
 		return true, nil
 	}
-	if err := d.client.SendEvent(ctx, env.ID, payload); err != nil {
+	if err := d.client.SendEvent(ctx, env); err != nil {
 		d.logger.Debug("event durably queued for replay", "id", env.ID, "err", err)
 	}
 	return true, nil

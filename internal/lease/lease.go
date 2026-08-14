@@ -88,7 +88,9 @@ func (m *Manager) Renew(d time.Duration) bool {
 	if m.current == nil {
 		return false
 	}
-	m.current.ExpiresAt = time.Now().Add(d)
+	now := time.Now()
+	m.current.AcquiredAt = now
+	m.current.ExpiresAt = now.Add(d)
 	return true
 }
 
@@ -104,9 +106,13 @@ func (m *Manager) RenewUntil(attemptID string, fencing uint64, expiresAt time.Ti
 	if !expiresAt.After(time.Now()) {
 		return fmt.Errorf("renewed lease must expire in the future")
 	}
+	if !expiresAt.After(m.current.ExpiresAt) {
+		return fmt.Errorf("renewed lease must extend the current expiration")
+	}
 	if expiresAt.After(time.Now().Add(24 * time.Hour)) {
 		return fmt.Errorf("renewed lease cannot exceed 24 hours")
 	}
+	m.current.AcquiredAt = time.Now()
 	m.current.ExpiresAt = expiresAt
 	return nil
 }

@@ -102,11 +102,18 @@ func TestRenewUntilRequiresOwnerAndFencingToken(t *testing.T) {
 	if err := m.RenewUntil("a1", 7, time.Now().Add(-time.Second)); err == nil {
 		t.Fatal("past expiration renewed lease")
 	}
+	if err := m.RenewUntil("a1", 7, m.Current().ExpiresAt); err == nil {
+		t.Fatal("non-increasing expiration renewed lease")
+	}
+	beforeWindow := time.Now()
 	if err := m.RenewUntil("a1", 7, newExpiry); err != nil {
 		t.Fatalf("RenewUntil: %v", err)
 	}
 	if got := m.Current(); got == nil || !got.ExpiresAt.Equal(newExpiry) {
 		t.Fatalf("renewed lease = %+v, want expiry %v", got, newExpiry)
+	}
+	if got := m.Current(); got.AcquiredAt.Before(beforeWindow) || got.AcquiredAt.After(time.Now()) {
+		t.Fatalf("renewal window did not advance: %+v", got)
 	}
 }
 

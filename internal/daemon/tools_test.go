@@ -31,7 +31,17 @@ func (c *capturedEvents) sink(ctx context.Context, payload any) error {
 	defer c.mu.Unlock()
 	if m, ok := payload.(map[string]any); ok {
 		c.events = append(c.events, m)
+		return nil
 	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	var event map[string]any
+	if err := json.Unmarshal(raw, &event); err != nil {
+		return err
+	}
+	c.events = append(c.events, event)
 	return nil
 }
 

@@ -509,6 +509,13 @@ func (jr *jobRunner) monitorLease(ctx context.Context) {
 				}
 				return
 			}
+			current := jr.d.leases.Current()
+			now := time.Now()
+			if current != nil && leaseRenewalDue(now, *current) {
+				if err := jr.requestLeaseRenewal(ctx, *current, now); err != nil {
+					jr.logger.Error("request lease renewal", "err", err)
+				}
+			}
 		}
 	}
 }
