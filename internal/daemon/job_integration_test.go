@@ -132,7 +132,7 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
-	job := v1.JobSpec{
+	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-1", AttemptID: "att-1", Kind: v1.JobKindPlan, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
 		Ticket:       v1.TicketContext{Key: "PROJ-1", Summary: "Add feature X", Description: "Details"},
@@ -140,7 +140,7 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 			Version: "1.0.0", Digest: digest,
 			URL: cp.EnrollURL() + packPath, KeyID: "test-pack",
 		},
-	}
+	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatalf("SendCommand: %v", err)
 	}
@@ -216,11 +216,11 @@ func TestEmergencyStopCancelsJob(t *testing.T) {
 
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
-	job := v1.JobSpec{
+	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-2", AttemptID: "att-2", Kind: v1.JobKindPlan, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-2", Primary: true}},
 		Ticket:       v1.TicketContext{Key: "PROJ-2", Summary: "Long job"},
-	}
+	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatal(err)
 	}

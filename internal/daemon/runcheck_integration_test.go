@@ -61,13 +61,13 @@ func TestBuildJobRunCheckEndToEnd(t *testing.T) {
 
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
-	job := v1.JobSpec{
+	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-rc", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-rc", Primary: true}}, ApprovedPlanRevision: 1,
 		RequiredChecks: []string{"feature-file"},
 		PushBranch:     true, PRTitle: "PROJ-12 add feature",
 		Ticket: v1.TicketContext{Key: "PROJ-12", Summary: "Add Feature()"},
-	}
+	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatal(err)
 	}

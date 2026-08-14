@@ -226,11 +226,11 @@ func TestStartJobRefusesBusyExpiredAndOversizedLeases(t *testing.T) {
 			leases: lease.NewManager(), logger: slog.Default(),
 		}
 	}
-	job := v1.JobSpec{
+	job := withTestAuthority(v1.JobSpec{
 		JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindPlan, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
 		Ticket:       v1.TicketContext{Key: "PROJ-1", Summary: "Feature"},
-	}
+	})
 
 	d := newDaemon(t)
 	d.activeJob = &jobRunner{job: job}

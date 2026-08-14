@@ -109,13 +109,13 @@ func TestBuildJobEndToEnd(t *testing.T) {
 
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
-	job := v1.JobSpec{
+	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-1", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}}, ApprovedPlanRevision: 1,
 		RequiredChecks: []string{"feature-file", "feature-symbol"},
 		PushBranch:     true, PRTitle: "PROJ-9 add feature",
 		Ticket: v1.TicketContext{Key: "PROJ-9", Summary: "Add Feature()"},
-	}
+	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatal(err)
 	}
@@ -184,13 +184,13 @@ func TestBuildJobCheckFailure(t *testing.T) {
 
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
-	job := v1.JobSpec{
+	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-2", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-2", Primary: true}}, ApprovedPlanRevision: 1,
 		RequiredChecks: []string{"always-fail"},
 		PushBranch:     true,
 		Ticket:         v1.TicketContext{Key: "PROJ-10", Summary: "Will fail checks"},
-	}
+	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatal(err)
 	}
@@ -267,13 +267,13 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
-	job := v1.JobSpec{
+	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-agent-failure", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-agent-failure", Primary: true}}, ApprovedPlanRevision: 1,
 		RequiredChecks: []string{"partial-file", "always-fail"}, PushBranch: true,
 		ProviderCapacityResumePolicy: v1.CapacityResumeAutomatic,
 		Ticket:                       v1.TicketContext{Key: "PROJ-11", Summary: "Preserve partial work"},
-	}
+	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ echo '{"type":"result","status":"success"}'
 	go func() { _ = d.Run(ctx) }()
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
-	job := v1.JobSpec{
+	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "multi-1", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
 		ApprovedPlanRevision: 1,
 		Repositories: []v1.JobRepository{
@@ -378,7 +378,7 @@ echo '{"type":"result","status":"success"}'
 		},
 		PushBranch: true,
 		Ticket:     v1.TicketContext{Key: "PROJ-11", Summary: "Cross-repository change"},
-	}
+	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatal(err)
 	}

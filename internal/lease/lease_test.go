@@ -1,12 +1,19 @@
 package lease
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	v1 "github.com/example/app-runner/api/runner/v1"
 )
 
 func testLease(token uint64) Lease {
-	return Lease{JobID: "j1", AttemptID: "a1", FencingToken: token, ExpiresAt: time.Now().Add(time.Hour)}
+	return Lease{
+		LeaseID: "lease-1", JobID: "j1", AttemptID: "a1", Kind: v1.JobKindBuild,
+		ManifestID: "manifest-1", ManifestDigest: strings.Repeat("a", 64), WorkflowRevision: 1,
+		FencingToken: token, ExpiresAt: time.Now().Add(time.Hour),
+	}
 }
 
 func TestAcquireValidates(t *testing.T) {
@@ -30,10 +37,14 @@ func TestAcquireBusyAndFencingPreemption(t *testing.T) {
 	if err := m.Acquire(testLease(2)); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Acquire(Lease{JobID: "j2", AttemptID: "a2", FencingToken: 1, ExpiresAt: time.Now().Add(time.Hour)}); err == nil {
+	stale := testLease(1)
+	stale.JobID, stale.AttemptID, stale.LeaseID, stale.ManifestID = "j2", "a2", "lease-2", "manifest-2"
+	if err := m.Acquire(stale); err == nil {
 		t.Fatal("lower fencing token must not preempt")
 	}
-	if err := m.Acquire(Lease{JobID: "j2", AttemptID: "a2", FencingToken: 3, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+	fresher := stale
+	fresher.FencingToken = 3
+	if err := m.Acquire(fresher); err != nil {
 		t.Fatalf("higher fencing token should preempt: %v", err)
 	}
 	if m.Current().JobID != "j2" {
@@ -59,11 +70,20 @@ func TestRelease(t *testing.T) {
 
 func TestExpiredLease(t *testing.T) {
 	m := NewManager()
-	if err := m.Acquire(Lease{JobID: "j1", AttemptID: "a1", FencingToken: 1, ExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
+	expired := testLease(1)
+	expired.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := m.Acquire(expired); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.Validate("a1", 1); err == nil {
 		t.Fatal("expired lease should fail validation")
+	}
+}
+
+func TestAcquireRejectsLeaseWithoutManifestAuthority(t *testing.T) {
+	m := NewManager()
+	if err := m.Acquire(Lease{JobID: "j1", AttemptID: "a1", FencingToken: 1, ExpiresAt: time.Now().Add(time.Hour)}); err == nil {
+		t.Fatal("lease without immutable manifest authority was accepted")
 	}
 }
 

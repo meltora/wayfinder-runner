@@ -100,7 +100,12 @@ go run ./cmd/our-runner start --config /tmp/runner-config.yaml
 Use the mock control plane's test API or the integration-test fixtures for a
 valid `start_job` payload. Job specs now reference `repositories` by registered
 ID; arbitrary `repository_url` and free-form environment fields are not part of
-the protocol.
+the protocol. A valid payload also carries the exact `lease_id`, `manifest_id`,
+`manifest_digest`, and `workflow_revision` issued by the control plane. Revision
+planning fixtures must include the immutable request, reviewed base plan, and
+structured feedback. Contract tests assert that passive evidence repeats that
+authority exactly and that legacy active-lease databases fail closed after their
+schema is migrated.
 
 ## Troubleshooting
 

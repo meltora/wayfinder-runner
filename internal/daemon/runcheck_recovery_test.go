@@ -395,8 +395,10 @@ func setRunCheckFencingToken(t *testing.T, jr *jobRunner, token uint64) {
 	jr.job.FencingToken = token
 	jr.d.leases.Release(jr.job.AttemptID)
 	if err := jr.d.leases.Acquire(lease.Lease{
-		JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, FencingToken: token,
-		ExpiresAt: time.Now().Add(time.Hour),
+		LeaseID: jr.job.LeaseID, JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, FencingToken: token,
+		Kind: jr.job.Kind, ManifestID: jr.job.ManifestID, ManifestDigest: jr.job.ManifestDigest,
+		WorkflowRevision: jr.job.WorkflowRevision,
+		ExpiresAt:        time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -135,10 +135,7 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 	if outcome.Class != "" {
 		event["error_classification"] = outcome.Class
 	}
-	event["kind"] = "test_results"
-	event["job_id"] = jr.job.JobID
-	event["attempt_id"] = jr.job.AttemptID
-	event["fencing_token"] = jr.job.FencingToken
+	event = manifestBoundEvent(jr.job, "test_results", event, time.Now())
 	if _, err := jr.d.sendEventWithStableID(evidenceCtx, eventID, event); err != nil {
 		return nil, err
 	}

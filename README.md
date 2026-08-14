@@ -76,9 +76,11 @@ untrusted with respect to the runner identity and control plane.
 
 ## Execution flow
 
-1. The control plane sends a validated `start_job` command containing a lease,
-   fencing token, ticket context, one to sixteen registered repository IDs, and
-   optionally a signed Agent Pack reference.
+1. The control plane sends a validated `start_job` command containing the exact
+   lease ID, manifest ID/kind/digest, workflow revision, fencing token, ticket
+   context, one to sixteen registered repository IDs, and optionally a signed
+   Agent Pack reference. The runner preserves this immutable authority on every
+   accepted progress, checkpoint, and artifact event.
 2. The daemon durably records the command and acquires the single active lease.
 3. Each repository is cloned from a trusted local mirror into a self-contained
    job workspace. No job receives mirror metadata or host Git credentials.
@@ -87,8 +89,10 @@ untrusted with respect to the runner identity and control plane.
    token-scoped Unix MCP bridge.
 5. Codex, Claude, or OpenCode receives the ticket/approved plan and invokes platform MCP
    tools to publish plan revisions, progress, decisions, checkpoints, preview
-   metadata, and artifact declarations. Provider hooks are non-authoritative
-   telemetry only.
+   metadata, and artifact declarations. A plan-revision job retrieves the full
+   reviewed base plan and structured feedback with `platform_get_job_context`;
+   the potentially large context is not copied into process arguments. Provider
+   hooks are non-authoritative telemetry only.
 6. For build jobs, administrator-defined checks run in fresh, credential-free
    containers. Successful changes are committed and bundled in isolation, then
    imported and optionally pushed from the trusted mirror.
@@ -275,6 +279,13 @@ sudo systemctl status our-runner-updater.service our-runner-updater.socket
 
 The service is enabled at installation for boot-time transaction recovery. With
 `enabled: false` it exits cleanly without changing the installed release.
+
+Protocol upgrades that introduce new immutable lease or manifest fields require
+the fleet to be drained before upgrading runners. Upgrade runners first, then
+enable the matching control-plane dispatch contract. A pre-upgrade active lease
+cannot be assigned trustworthy manifest authority after the fact, so the runner
+migrates the local schema but fails closed with an operator-facing drain error
+instead of recovering that lease under guessed identity.
 
 The updater service has only `CAP_SETUID`, `CAP_SETGID`, and `CAP_KILL` in its
 capability bounding set. The first two run candidate preflight checks as the

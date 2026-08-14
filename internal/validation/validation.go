@@ -2,6 +2,7 @@ package validation
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
@@ -61,6 +62,18 @@ func JobSpec(job v1.JobSpec) error {
 	if job.Kind != v1.JobKindPlan && job.Kind != v1.JobKindBuild {
 		return fmt.Errorf("unsupported job kind %q", job.Kind)
 	}
+	if err := ID("lease_id", job.LeaseID); err != nil {
+		return err
+	}
+	if err := ID("manifest_id", job.ManifestID); err != nil {
+		return err
+	}
+	if err := SHA256Digest("manifest_digest", job.ManifestDigest); err != nil {
+		return err
+	}
+	if job.WorkflowRevision < 0 {
+		return fmt.Errorf("workflow_revision must be non-negative")
+	}
 	if job.FencingToken == 0 {
 		return fmt.Errorf("fencing_token must be non-zero")
 	}
@@ -116,6 +129,14 @@ func JobSpec(job v1.JobSpec) error {
 	if job.Kind == v1.JobKindBuild && job.ApprovedPlanRevision < 1 {
 		return fmt.Errorf("build job requires a positive approved_plan_revision")
 	}
+	if job.Kind == v1.JobKindBuild && job.PlanRevisionContext != nil {
+		return fmt.Errorf("build job cannot contain plan_revision_context")
+	}
+	if job.PlanRevisionContext != nil {
+		if err := PlanRevisionContext(*job.PlanRevisionContext); err != nil {
+			return err
+		}
+	}
 	if job.ResumeSessionID != "" {
 		if err := ID("resume_session_id", job.ResumeSessionID); err != nil {
 			return err
@@ -146,15 +167,48 @@ func JobSpec(job v1.JobSpec) error {
 		if err := boundedText("agent_pack.version", job.AgentPack.Version, 128, true); err != nil {
 			return err
 		}
-		if len(job.AgentPack.Digest) != 64 {
-			return fmt.Errorf("agent_pack.digest must be a sha256 digest")
-		}
-		if _, err := hex.DecodeString(job.AgentPack.Digest); err != nil || job.AgentPack.Digest != strings.ToLower(job.AgentPack.Digest) {
-			return fmt.Errorf("agent_pack.digest must be a lowercase sha256 digest")
+		if err := SHA256Digest("agent_pack.digest", job.AgentPack.Digest); err != nil {
+			return err
 		}
 		if len(job.AgentPack.URL) == 0 || len(job.AgentPack.URL) > 4096 {
 			return fmt.Errorf("agent_pack.url has an invalid length")
 		}
+	}
+	raw, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("encode job: %w", err)
+	}
+	if len(raw) > (2<<20)-(8<<10) {
+		return fmt.Errorf("job exceeds command payload limit")
+	}
+	return nil
+}
+
+func ManifestAuthority(authority v1.ManifestAuthority) error {
+	if authority.Kind != v1.JobKindPlan && authority.Kind != v1.JobKindBuild {
+		return fmt.Errorf("unsupported manifest kind %q", authority.Kind)
+	}
+	if err := ID("lease_id", authority.LeaseID); err != nil {
+		return err
+	}
+	if err := ID("manifest_id", authority.ManifestID); err != nil {
+		return err
+	}
+	if err := SHA256Digest("manifest_digest", authority.ManifestDigest); err != nil {
+		return err
+	}
+	if authority.WorkflowRevision < 0 {
+		return fmt.Errorf("workflow_revision must be non-negative")
+	}
+	return nil
+}
+
+func SHA256Digest(field, value string) error {
+	if len(value) != 64 {
+		return fmt.Errorf("%s must be a sha256 digest", field)
+	}
+	if _, err := hex.DecodeString(value); err != nil || value != strings.ToLower(value) {
+		return fmt.Errorf("%s must be a lowercase sha256 digest", field)
 	}
 	return nil
 }

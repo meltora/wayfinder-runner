@@ -82,9 +82,10 @@ func (u *artifactUploader) Upload(ctx context.Context, jobID, attemptID, name, d
 }
 
 type pendingArtifactUpload struct {
-	RecordID string         `json:"record_id"`
-	Artifact v1.ArtifactRef `json:"artifact"`
-	Path     string         `json:"path"`
+	RecordID  string               `json:"record_id"`
+	Authority v1.ManifestAuthority `json:"authority"`
+	Artifact  v1.ArtifactRef       `json:"artifact"`
+	Path      string               `json:"path"`
 }
 
 type permanentUploadError struct{ err error }
@@ -99,12 +100,15 @@ func permanentUpload(err error) error {
 	return permanentUploadError{err: err}
 }
 
-func (d *Daemon) queueArtifactUpload(ctx context.Context, ref v1.ArtifactRef, storedPath string) (*pendingArtifactUpload, error) {
+func (d *Daemon) queueArtifactUpload(ctx context.Context, authority v1.ManifestAuthority, ref v1.ArtifactRef, storedPath string) (*pendingArtifactUpload, error) {
 	relative, err := filepath.Rel(d.collectors.Root, storedPath)
 	if err != nil {
 		return nil, err
 	}
-	pending := &pendingArtifactUpload{RecordID: "upload-" + newEventID(), Artifact: ref, Path: filepath.ToSlash(relative)}
+	pending := &pendingArtifactUpload{
+		RecordID: "upload-" + newEventID(), Authority: authority,
+		Artifact: ref, Path: filepath.ToSlash(relative),
+	}
 	raw, err := json.Marshal(pending)
 	if err != nil {
 		return nil, err
@@ -119,6 +123,9 @@ func (d *Daemon) queueArtifactUpload(ctx context.Context, ref v1.ArtifactRef, st
 
 func (d *Daemon) processArtifactUpload(ctx context.Context, pending pendingArtifactUpload) error {
 	if err := validation.ID("upload_record_id", pending.RecordID); err != nil {
+		return permanentUpload(err)
+	}
+	if err := validation.ManifestAuthority(pending.Authority); err != nil {
 		return permanentUpload(err)
 	}
 	if err := validation.ID("job_id", pending.Artifact.JobID); err != nil {
@@ -140,7 +147,7 @@ func (d *Daemon) processArtifactUpload(ctx context.Context, pending pendingArtif
 		return permanentUpload(fmt.Errorf("artifact size is invalid"))
 	}
 	if pending.Artifact.ContentType != "" {
-		if len(pending.Artifact.ContentType) > 255 {
+		if len(pending.Artifact.ContentType) > 200 {
 			return permanentUpload(fmt.Errorf("artifact content type is too long"))
 		}
 		if _, _, err := mime.ParseMediaType(pending.Artifact.ContentType); err != nil {
@@ -181,11 +188,14 @@ func (d *Daemon) processArtifactUpload(ctx context.Context, pending pendingArtif
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if err := d.sendEventWithID(ctx, "artifact-event-"+pending.RecordID, map[string]any{
-		"kind": "artifact_registered", "job_id": pending.Artifact.JobID,
-		"attempt_id": pending.Artifact.AttemptID, "fencing_token": pending.Artifact.FencingToken,
-		"artifact": pending.Artifact,
-	}); err != nil {
+	event := authorityBoundEvent(
+		pending.Authority, pending.Artifact.JobID, pending.Artifact.AttemptID,
+		pending.Artifact.FencingToken, "artifact_registered", map[string]any{
+			"name": pending.Artifact.Name, "content_type": pending.Artifact.ContentType,
+			"digest_sha256": pending.Artifact.DigestSHA256, "size_bytes": pending.Artifact.SizeBytes,
+		}, time.Now(),
+	)
+	if err := d.sendEventWithID(ctx, "artifact-event-"+pending.RecordID, event); err != nil {
 		return err
 	}
 	if err := d.journal.Ack(ctx, pending.RecordID); err != nil {

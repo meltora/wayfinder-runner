@@ -199,12 +199,16 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 
 	case "platform_get_job_context":
 		result := map[string]any{
-			"job_id":       jr.job.JobID,
-			"attempt_id":   jr.job.AttemptID,
-			"kind":         jr.job.Kind,
-			"ticket":       jr.job.Ticket,
-			"repositories": jr.job.Repositories,
-			"capabilities": capabilitiesForJob(jr.job.Kind),
+			"job_id":            jr.job.JobID,
+			"attempt_id":        jr.job.AttemptID,
+			"kind":              jr.job.Kind,
+			"workflow_revision": jr.job.WorkflowRevision,
+			"ticket":            jr.job.Ticket,
+			"repositories":      jr.job.Repositories,
+			"capabilities":      capabilitiesForJob(jr.job.Kind),
+		}
+		if jr.job.PlanRevisionContext != nil {
+			result["plan_revision_context"] = jr.job.PlanRevisionContext
 		}
 		if checks := jr.runnableChecks(); checks != nil {
 			result["runnable_checks"] = checks
@@ -251,6 +255,13 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		cp := collector.NewCheckpoint(jr.job, str(raw, "plan_step"), str(raw, "branch_state"), str(raw, "next_action"))
 		cp.ProviderSessionID = jr.currentSessionID()
 		if err := jr.d.collectors.SaveCheckpoint(cp); err != nil {
+			return nil, err
+		}
+		if err := jr.sendJobEvent(ctx, "checkpoint", map[string]any{
+			"plan_step": cp.PlanStep, "branch_state": cp.BranchState,
+			"next_action": cp.NextAction, "provider_session_id": cp.ProviderSessionID,
+			"created_at": cp.CreatedAt.UTC().Format(time.RFC3339Nano),
+		}); err != nil {
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
@@ -509,15 +520,7 @@ func str(m map[string]any, key string) string {
 }
 
 func (jr *jobRunner) sendJobEvent(ctx context.Context, kind string, fields map[string]any) error {
-	payload := make(map[string]any, len(fields)+4)
-	for key, value := range fields {
-		payload[key] = value
-	}
-	payload["kind"] = kind
-	payload["job_id"] = jr.job.JobID
-	payload["attempt_id"] = jr.job.AttemptID
-	payload["fencing_token"] = jr.job.FencingToken
-	return jr.d.sendEvent(ctx, payload)
+	return jr.d.sendEvent(ctx, manifestBoundEvent(jr.job, kind, fields, time.Now()))
 }
 
 func digestOf(raw map[string]any, keys ...string) string {
@@ -552,7 +555,7 @@ func (jr *jobRunner) handlePublishArtifact(ctx context.Context, raw map[string]a
 	if err != nil {
 		return nil, err
 	}
-	pending, err := jr.d.queueArtifactUpload(ctx, *ref, storedPath)
+	pending, err := jr.d.queueArtifactUpload(ctx, jr.job.ManifestAuthority(), *ref, storedPath)
 	if err != nil {
 		_ = os.Remove(storedPath)
 		return nil, fmt.Errorf("queue artifact upload: %w", err)

@@ -435,8 +435,10 @@ func TestRunCheckStaleLeasePreventsEvidence(t *testing.T) {
 		t.Fatal("check executed without a lease")
 	}
 	if err := jr.d.leases.Acquire(lease.Lease{
-		JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, FencingToken: jr.job.FencingToken + 1,
-		ExpiresAt: time.Now().Add(time.Hour),
+		LeaseID: jr.job.LeaseID, JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, FencingToken: jr.job.FencingToken + 1,
+		Kind: jr.job.Kind, ManifestID: jr.job.ManifestID, ManifestDigest: jr.job.ManifestDigest,
+		WorkflowRevision: jr.job.WorkflowRevision,
+		ExpiresAt:        time.Now().Add(time.Hour),
 	}); err != nil {
 		t.Fatal(err)
 	}

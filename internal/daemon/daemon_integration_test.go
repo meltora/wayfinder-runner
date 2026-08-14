@@ -2,15 +2,25 @@ package daemon_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/daemon"
 	"github.com/example/app-runner/internal/enroll"
 	"github.com/example/app-runner/internal/identity"
 	"github.com/example/app-runner/internal/mockcp"
 )
+
+func withIntegrationAuthority(job v1.JobSpec) v1.JobSpec {
+	job.LeaseID = "lease-" + job.AttemptID
+	job.ManifestID = "manifest-" + job.JobID
+	job.ManifestDigest = strings.Repeat("a", 64)
+	job.WorkflowRevision = 1
+	return job
+}
 
 func directRunnerConfig(controlPlaneURL, stateDir string) config.Config {
 	return config.Config{

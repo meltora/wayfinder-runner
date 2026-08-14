@@ -2,10 +2,12 @@ package journal
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -121,7 +123,8 @@ func TestLeaseRoundTripAndClear(t *testing.T) {
 	j := openTest(t)
 	ctx := context.Background()
 	want := lease.Lease{
-		JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindBuild,
+		LeaseID: "lease-1", JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindBuild,
+		ManifestID: "manifest-1", ManifestDigest: strings.Repeat("a", 64), WorkflowRevision: 3,
 		FencingToken: 42,
 		AcquiredAt:   time.Unix(1_700_000_000, 0),
 		ExpiresAt:    time.Unix(1_700_000_600, 0),
@@ -147,6 +150,79 @@ func TestLeaseRoundTripAndClear(t *testing.T) {
 	}
 	if got, err := j.LoadLease(ctx); err != nil || got != nil {
 		t.Fatalf("LoadLease after clear = %+v, %v", got, err)
+	}
+}
+
+func TestLeasePersistenceRejectsMissingManifestAuthority(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	err := j.SaveLease(context.Background(), lease.Lease{
+		JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindBuild,
+		FencingToken: 1, ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err == nil || !strings.Contains(err.Error(), "manifest authority") {
+		t.Fatalf("SaveLease without authority = %v", err)
+	}
+}
+
+func TestLegacyActiveLeaseSchemaMigratesAndFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE active_lease (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+			job_id TEXT NOT NULL,
+			attempt_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			fencing_token INTEGER NOT NULL,
+			acquired_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		);
+		INSERT INTO active_lease
+			(singleton, job_id, attempt_id, kind, fencing_token, acquired_at, expires_at)
+		VALUES (1, 'job-legacy', 'attempt-legacy', 'build', 1, 1, 4102444800);
+	`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	j, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy journal: %v", err)
+	}
+	defer func() { _ = j.Close() }()
+	if _, err := j.LoadLease(context.Background()); err == nil || !strings.Contains(err.Error(), "drain the runner") {
+		t.Fatalf("legacy active lease was accepted: %v", err)
+	}
+
+	columns := map[string]bool{}
+	rows, err := j.db.Query(`PRAGMA table_info(active_lease)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var index, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&index, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatal(err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"lease_id", "manifest_id", "manifest_digest", "workflow_revision"} {
+		if !columns[name] {
+			t.Fatalf("legacy migration did not add %s", name)
+		}
 	}
 }
 

@@ -100,9 +100,13 @@ func (j *Journal) migrate() error {
 			CREATE INDEX IF NOT EXISTS idx_records_unacked ON records(kind) WHERE acked_at IS NULL;
 			CREATE TABLE IF NOT EXISTS active_lease (
 				singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+				lease_id TEXT NOT NULL,
 				job_id TEXT NOT NULL,
 				attempt_id TEXT NOT NULL,
 				kind TEXT NOT NULL,
+				manifest_id TEXT NOT NULL,
+				manifest_digest TEXT NOT NULL,
+				workflow_revision INTEGER NOT NULL,
 				fencing_token INTEGER NOT NULL,
 				acquired_at INTEGER NOT NULL,
 				expires_at INTEGER NOT NULL
@@ -126,7 +130,50 @@ func (j *Journal) migrate() error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_check_claims_check ON check_claims(attempt_id, check_id);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	return j.ensureActiveLeaseAuthorityColumns()
+}
+
+func (j *Journal) ensureActiveLeaseAuthorityColumns() error {
+	rows, err := j.db.Query(`PRAGMA table_info(active_lease)`)
+	if err != nil {
+		return err
+	}
+	existing := map[string]bool{}
+	for rows.Next() {
+		var index, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&index, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		existing[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	columns := []struct{ name, definition string }{
+		{"lease_id", `TEXT NOT NULL DEFAULT ''`},
+		{"manifest_id", `TEXT NOT NULL DEFAULT ''`},
+		{"manifest_digest", `TEXT NOT NULL DEFAULT ''`},
+		{"workflow_revision", `INTEGER NOT NULL DEFAULT -1`},
+	}
+	for _, column := range columns {
+		if existing[column.name] {
+			continue
+		}
+		if _, err := j.db.Exec(`ALTER TABLE active_lease ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+			return fmt.Errorf("add active lease authority column %s: %w", column.name, err)
+		}
+	}
+	return nil
 }
 
 func (j *Journal) Append(ctx context.Context, r Record) error {
@@ -256,13 +303,18 @@ func (j *Journal) UnackedCount(ctx context.Context) (int, error) {
 }
 
 func (j *Journal) SaveLease(ctx context.Context, l lease.Lease) error {
+	if !l.HasManifestAuthority() {
+		return fmt.Errorf("refuse to persist lease without immutable manifest authority")
+	}
 	_, err := j.db.ExecContext(ctx, `
-		INSERT INTO active_lease (singleton, job_id, attempt_id, kind, fencing_token, acquired_at, expires_at)
-		VALUES (1, ?, ?, ?, ?, ?, ?)
+		INSERT INTO active_lease (singleton, lease_id, job_id, attempt_id, kind, manifest_id, manifest_digest, workflow_revision, fencing_token, acquired_at, expires_at)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(singleton) DO UPDATE SET
-			job_id=excluded.job_id, attempt_id=excluded.attempt_id, kind=excluded.kind,
+			lease_id=excluded.lease_id, job_id=excluded.job_id, attempt_id=excluded.attempt_id, kind=excluded.kind,
+			manifest_id=excluded.manifest_id, manifest_digest=excluded.manifest_digest, workflow_revision=excluded.workflow_revision,
 			fencing_token=excluded.fencing_token, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at`,
-		l.JobID, l.AttemptID, string(l.Kind), l.FencingToken, l.AcquiredAt.Unix(), l.ExpiresAt.Unix())
+		l.LeaseID, l.JobID, l.AttemptID, string(l.Kind), l.ManifestID, l.ManifestDigest, l.WorkflowRevision,
+		l.FencingToken, l.AcquiredAt.Unix(), l.ExpiresAt.Unix())
 	return err
 }
 
@@ -270,8 +322,9 @@ func (j *Journal) LoadLease(ctx context.Context) (*lease.Lease, error) {
 	var l lease.Lease
 	var kind string
 	var acquired, expires int64
-	err := j.db.QueryRowContext(ctx, `SELECT job_id, attempt_id, kind, fencing_token, acquired_at, expires_at FROM active_lease WHERE singleton=1`).
-		Scan(&l.JobID, &l.AttemptID, &kind, &l.FencingToken, &acquired, &expires)
+	err := j.db.QueryRowContext(ctx, `SELECT lease_id, job_id, attempt_id, kind, manifest_id, manifest_digest, workflow_revision, fencing_token, acquired_at, expires_at FROM active_lease WHERE singleton=1`).
+		Scan(&l.LeaseID, &l.JobID, &l.AttemptID, &kind, &l.ManifestID, &l.ManifestDigest, &l.WorkflowRevision,
+			&l.FencingToken, &acquired, &expires)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -281,6 +334,9 @@ func (j *Journal) LoadLease(ctx context.Context) (*lease.Lease, error) {
 	l.Kind = v1.JobKind(kind)
 	l.AcquiredAt = time.Unix(acquired, 0)
 	l.ExpiresAt = time.Unix(expires, 0)
+	if !l.HasManifestAuthority() {
+		return nil, fmt.Errorf("active lease is missing immutable manifest authority; drain the runner before upgrading")
+	}
 	return &l, nil
 }
 

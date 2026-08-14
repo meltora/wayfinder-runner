@@ -80,6 +80,10 @@ func (d *Daemon) startJob(ctx context.Context, job v1.JobSpec) error {
 	if err := validation.JobSpec(job); err != nil {
 		return fmt.Errorf("invalid job: %w", err)
 	}
+	job, err := v1.CloneJobSpec(job)
+	if err != nil {
+		return fmt.Errorf("isolate job command: %w", err)
+	}
 	jobToken, err := newSecretToken()
 	if err != nil {
 		return err
@@ -104,7 +108,8 @@ func (d *Daemon) startJob(ctx context.Context, job v1.JobSpec) error {
 	}
 	now := time.Now()
 	l := lease.Lease{
-		JobID: job.JobID, AttemptID: job.AttemptID, Kind: job.Kind,
+		LeaseID: job.LeaseID, JobID: job.JobID, AttemptID: job.AttemptID, Kind: job.Kind,
+		ManifestID: job.ManifestID, ManifestDigest: job.ManifestDigest, WorkflowRevision: job.WorkflowRevision,
 		FencingToken: job.FencingToken,
 		AcquiredAt:   now,
 		ExpiresAt:    expiresAt,
@@ -765,7 +770,11 @@ func (jr *jobRunner) buildPrompt() string {
 	}
 	switch jr.job.Kind {
 	case v1.JobKindPlan:
-		b.WriteString("Analyze the repository and publish an implementation plan using platform_publish_plan. Do not modify any files.")
+		if context := jr.job.PlanRevisionContext; context != nil {
+			fmt.Fprintf(&b, "This is revision request %s for reviewed plan %s. Read the exact immutable base plan and human feedback from platform_get_job_context, then publish the replacement using platform_publish_plan_revision. Do not modify any files.", context.RequestID, context.BasePlan.RevisionID)
+		} else {
+			b.WriteString("Analyze the repository and publish an implementation plan using platform_publish_plan. Do not modify any files.")
+		}
 	case v1.JobKindBuild:
 		fmt.Fprintf(&b, "Implement the approved plan (revision %d) in this repository. ", jr.job.ApprovedPlanRevision)
 		if len(jr.job.RequiredChecks) > 0 {
@@ -780,14 +789,10 @@ func (jr *jobRunner) buildPrompt() string {
 }
 
 func (jr *jobRunner) publishProgress(ctx context.Context, milestone, task, next string) {
-	_ = jr.d.sendEvent(ctx, map[string]any{
-		"kind":          "progress",
-		"job_id":        jr.job.JobID,
-		"attempt_id":    jr.job.AttemptID,
-		"fencing_token": jr.job.FencingToken,
-		"milestone":     milestone,
-		"current_task":  task,
-		"next_action":   next,
+	_ = jr.sendJobEvent(ctx, "progress", map[string]any{
+		"milestone":    milestone,
+		"current_task": task,
+		"next_action":  next,
 	})
 }
 

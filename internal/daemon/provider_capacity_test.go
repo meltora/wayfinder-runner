@@ -14,8 +14,10 @@ import (
 func capacityTestLease(job v1.JobSpec) *lease.Manager {
 	manager := lease.NewManager()
 	_ = manager.Acquire(lease.Lease{
-		JobID: job.JobID, AttemptID: job.AttemptID, FencingToken: job.FencingToken,
-		ExpiresAt: time.Now().Add(time.Minute),
+		LeaseID: job.LeaseID, JobID: job.JobID, AttemptID: job.AttemptID, FencingToken: job.FencingToken,
+		Kind: job.Kind, ManifestID: job.ManifestID, ManifestDigest: job.ManifestDigest,
+		WorkflowRevision: job.WorkflowRevision,
+		ExpiresAt:        time.Now().Add(time.Minute),
 	})
 	return manager
 }
@@ -23,10 +25,10 @@ func capacityTestLease(job v1.JobSpec) *lease.Manager {
 func TestProviderCapacityEventUsesOnlyTrustedSingleRepositoryLineage(t *testing.T) {
 	t.Parallel()
 	store := collector.NewStore(t.TempDir())
-	job := v1.JobSpec{
-		JobID: "job-1", AttemptID: "attempt-1", FencingToken: 7,
+	job := withTestAuthority(v1.JobSpec{
+		JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindBuild, FencingToken: 7,
 		ProviderCapacityResumePolicy: v1.CapacityResumeAutomatic,
-	}
+	})
 	checkpoint := collector.NewCheckpoint(job, "implement", "untrusted agent text", "resume")
 	checkpoint.CreatedAt = time.Date(2026, time.August, 13, 12, 0, 0, 0, time.UTC)
 	if err := store.SaveCheckpoint(checkpoint); err != nil {
@@ -81,7 +83,7 @@ func TestProviderCapacityEventUsesOnlyTrustedSingleRepositoryLineage(t *testing.
 func TestCapacityCheckpointCanBeCreatedAfterProviderExit(t *testing.T) {
 	t.Parallel()
 	store := collector.NewStore(t.TempDir())
-	job := v1.JobSpec{JobID: "job-1", AttemptID: "attempt-1", FencingToken: 11}
+	job := withTestAuthority(v1.JobSpec{JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindBuild, FencingToken: 11})
 	jr := &jobRunner{
 		d:         &Daemon{cfg: config.Config{Provider: "codex"}, collectors: store, leases: capacityTestLease(job)},
 		job:       job,
@@ -106,7 +108,7 @@ func TestCapacityCheckpointCanBeCreatedAfterProviderExit(t *testing.T) {
 func TestProviderCapacityEventDefaultsAndOptionalCheckpointPaths(t *testing.T) {
 	t.Parallel()
 	store := collector.NewStore(t.TempDir())
-	job := v1.JobSpec{JobID: "job-1", AttemptID: "attempt-1", FencingToken: 13}
+	job := withTestAuthority(v1.JobSpec{JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindBuild, FencingToken: 13})
 	jr := &jobRunner{
 		d:         &Daemon{cfg: config.Config{Provider: "opencode", AgentModel: "openai/model"}, collectors: store, leases: capacityTestLease(job)},
 		job:       job,

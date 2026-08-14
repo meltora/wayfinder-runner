@@ -15,7 +15,6 @@ import (
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/identity"
 	"github.com/example/app-runner/internal/journal"
-	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/mockcp"
 	"github.com/example/app-runner/internal/runlock"
 )
@@ -66,7 +65,7 @@ func TestNewRestoresDurableLeaseAndPersistentPause(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := lease.Lease{JobID: "job-1", AttemptID: "attempt-1", FencingToken: 4, ExpiresAt: time.Now().Add(time.Hour)}
+	want := authoritativeTestLease("job-1", "attempt-1", 4, time.Now().Add(time.Hour))
 	if err := j.SaveLease(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +113,7 @@ func TestNewClearsExpiredLeaseAndOrphanedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := j.SaveLease(context.Background(), lease.Lease{JobID: "job-1", AttemptID: "attempt-1", FencingToken: 4, ExpiresAt: time.Now().Add(-time.Minute)}); err != nil {
+	if err := j.SaveLease(context.Background(), authoritativeTestLease("job-1", "attempt-1", 4, time.Now().Add(-time.Minute))); err != nil {
 		t.Fatal(err)
 	}
 	_ = j.Close()

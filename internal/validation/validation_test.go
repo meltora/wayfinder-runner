@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 )
@@ -23,9 +24,30 @@ func TestDisplayNameAllowsOrdinaryCharactersAndRejectsPathSyntax(t *testing.T) {
 
 func validJob() v1.JobSpec {
 	return v1.JobSpec{
-		JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindPlan, FencingToken: 1,
+		JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindPlan,
+		LeaseID: "lease-1", ManifestID: "manifest-1", ManifestDigest: strings.Repeat("a", 64),
+		WorkflowRevision: 2, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
 		Ticket:       v1.TicketContext{Key: "PROJ-1", Summary: "Implement feature"},
+	}
+}
+
+func validPlanContent() v1.PlanContent {
+	return v1.PlanContent{
+		Behavior: "Preserve reviewed behavior.", InScope: []string{"Revision planning"}, OutOfScope: []string{},
+		Assumptions: []string{}, UnansweredQuestions: []string{}, Architecture: "Use immutable authority.",
+		APIImpact: "None.", DataImpact: "None.", SecurityImpact: "Fail closed.", OperationalImpact: "Audited retry.",
+		PreviewRequirements: "No preview.", AutomatedTestStrategy: "Contract tests.", ManualTestPlan: "Review output.",
+		RolloutStrategy: "Runner first.", RollbackStrategy: "Disable dispatch.", Risks: []string{},
+		Alternatives: []string{}, Dependencies: []string{}, DeliveryOrder: []string{"Validate", "publish"},
+	}
+}
+
+func validRevisionContext() *v1.PlanRevisionContext {
+	return &v1.PlanRevisionContext{
+		RequestID: "request-1", RequestDigest: strings.Repeat("b", 64), RequestedAt: time.Date(2026, 8, 14, 18, 0, 0, 0, time.UTC),
+		Feedback: v1.PlanRevisionFeedback{Summary: "Clarify rollback.", RequestedChanges: []string{"Add recovery evidence."}, Questions: []string{}},
+		BasePlan: v1.BasePlan{RevisionID: "revision-1", Revision: 1, Digest: strings.Repeat("c", 64), Content: validPlanContent()},
 	}
 }
 
@@ -36,6 +58,10 @@ func TestJobSpecAcceptsValidPlanAndRejectsEveryUntrustedBoundary(t *testing.T) {
 	mutations := map[string]func(*v1.JobSpec){
 		"job id":            func(j *v1.JobSpec) { j.JobID = "../bad" },
 		"attempt id":        func(j *v1.JobSpec) { j.AttemptID = "bad id" },
+		"lease id":          func(j *v1.JobSpec) { j.LeaseID = "" },
+		"manifest id":       func(j *v1.JobSpec) { j.ManifestID = "bad/id" },
+		"manifest digest":   func(j *v1.JobSpec) { j.ManifestDigest = strings.Repeat("A", 64) },
+		"workflow revision": func(j *v1.JobSpec) { j.WorkflowRevision = -1 },
 		"kind":              func(j *v1.JobSpec) { j.Kind = "delete" },
 		"zero fence":        func(j *v1.JobSpec) { j.FencingToken = 0 },
 		"oversized fence":   func(j *v1.JobSpec) { j.FencingToken = uint64(math.MaxInt64) + 1 },
@@ -87,6 +113,49 @@ func TestJobSpecAcceptsValidPlanAndRejectsEveryUntrustedBoundary(t *testing.T) {
 			mutate(&job)
 			if err := JobSpec(job); err == nil {
 				t.Fatal("invalid job accepted")
+			}
+		})
+	}
+}
+
+func TestJobSpecValidatesImmutablePlanRevisionContext(t *testing.T) {
+	job := validJob()
+	job.PlanRevisionContext = validRevisionContext()
+	if err := JobSpec(job); err != nil {
+		t.Fatalf("valid revision context rejected: %v", err)
+	}
+
+	cases := map[string]func(*v1.JobSpec){
+		"build context": func(job *v1.JobSpec) {
+			job.Kind = v1.JobKindBuild
+			job.ApprovedPlanRevision = 1
+		},
+		"request id":        func(job *v1.JobSpec) { job.PlanRevisionContext.RequestID = "bad/id" },
+		"request digest":    func(job *v1.JobSpec) { job.PlanRevisionContext.RequestDigest = "bad" },
+		"request time":      func(job *v1.JobSpec) { job.PlanRevisionContext.RequestedAt = time.Time{} },
+		"feedback summary":  func(job *v1.JobSpec) { job.PlanRevisionContext.Feedback.Summary = "  " },
+		"requested changes": func(job *v1.JobSpec) { job.PlanRevisionContext.Feedback.RequestedChanges = nil },
+		"questions array":   func(job *v1.JobSpec) { job.PlanRevisionContext.Feedback.Questions = nil },
+		"base revision id":  func(job *v1.JobSpec) { job.PlanRevisionContext.BasePlan.RevisionID = "" },
+		"base revision":     func(job *v1.JobSpec) { job.PlanRevisionContext.BasePlan.Revision = 0 },
+		"base digest":       func(job *v1.JobSpec) { job.PlanRevisionContext.BasePlan.Digest = strings.Repeat("A", 64) },
+		"base content":      func(job *v1.JobSpec) { job.PlanRevisionContext.BasePlan.Content.Behavior = "" },
+		"base content array": func(job *v1.JobSpec) {
+			job.PlanRevisionContext.BasePlan.Content.Risks = nil
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			candidate := job
+			contextCopy := *job.PlanRevisionContext
+			contextCopy.Feedback = job.PlanRevisionContext.Feedback
+			contextCopy.Feedback.RequestedChanges = append([]string{}, job.PlanRevisionContext.Feedback.RequestedChanges...)
+			contextCopy.Feedback.Questions = append([]string{}, job.PlanRevisionContext.Feedback.Questions...)
+			contextCopy.BasePlan = job.PlanRevisionContext.BasePlan
+			candidate.PlanRevisionContext = &contextCopy
+			mutate(&candidate)
+			if err := JobSpec(candidate); err == nil {
+				t.Fatal("invalid revision context accepted")
 			}
 		})
 	}

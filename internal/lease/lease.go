@@ -6,15 +6,30 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/validation"
 )
 
 type Lease struct {
-	JobID        string
-	AttemptID    string
-	FencingToken uint64
-	Kind         v1.JobKind
-	AcquiredAt   time.Time
-	ExpiresAt    time.Time
+	LeaseID          string
+	JobID            string
+	AttemptID        string
+	FencingToken     uint64
+	Kind             v1.JobKind
+	ManifestID       string
+	ManifestDigest   string
+	WorkflowRevision int
+	AcquiredAt       time.Time
+	ExpiresAt        time.Time
+}
+
+func (l Lease) HasManifestAuthority() bool {
+	if validation.ID("job_id", l.JobID) != nil || validation.ID("attempt_id", l.AttemptID) != nil || l.FencingToken == 0 {
+		return false
+	}
+	return validation.ManifestAuthority(v1.ManifestAuthority{
+		Kind: l.Kind, LeaseID: l.LeaseID, ManifestID: l.ManifestID,
+		ManifestDigest: l.ManifestDigest, WorkflowRevision: l.WorkflowRevision,
+	}) == nil
 }
 
 type Manager struct {
@@ -27,6 +42,9 @@ func NewManager() *Manager { return &Manager{} }
 func (m *Manager) Acquire(l Lease) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !l.HasManifestAuthority() {
+		return fmt.Errorf("lease is missing immutable execution authority")
+	}
 	if m.current != nil && time.Now().Before(m.current.ExpiresAt) {
 		if m.current.FencingToken >= l.FencingToken {
 			return fmt.Errorf("runner busy: active lease for job %s (fencing %d)", m.current.JobID, m.current.FencingToken)

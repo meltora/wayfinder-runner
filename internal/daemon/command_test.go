@@ -200,7 +200,7 @@ func TestHeartbeatAndConnectionLifecycleStates(t *testing.T) {
 	d.activeJob = nil
 	d.jobMu.Unlock()
 	d.recoveredLease.Store(true)
-	if err := d.leases.Acquire(lease.Lease{JobID: "job-1", AttemptID: "attempt-1", FencingToken: 2, ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+	if err := d.leases.Acquire(authoritativeTestLease("job-1", "attempt-1", 2, time.Now().Add(time.Hour))); err != nil {
 		t.Fatal(err)
 	}
 	if got := d.heartbeatPayload(context.Background()); got.State != "reconciliation_required" {
@@ -249,7 +249,7 @@ func TestRecoveredLeaseIsRestoredByNew(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := lease.Lease{JobID: "job-1", AttemptID: "attempt-1", FencingToken: 9, ExpiresAt: time.Now().Add(time.Hour)}
+	want := authoritativeTestLease("job-1", "attempt-1", 9, time.Now().Add(time.Hour))
 	if err := j.SaveLease(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}

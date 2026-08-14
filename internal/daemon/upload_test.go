@@ -48,6 +48,18 @@ func TestQueuedArtifactUploadsWithFencingAndRegistersOnce(t *testing.T) {
 	if uploads != 1 || len(cap.byKind("artifact_registered")) != 1 {
 		t.Fatalf("uploads=%d events=%d", uploads, len(cap.byKind("artifact_registered")))
 	}
+	event := cap.byKind("artifact_registered")[0]
+	for field, expected := range map[string]any{
+		"manifest_kind": "build", "lease_id": "lease-1", "manifest_id": "manifest-1",
+		"manifest_digest": strings.Repeat("a", 64), "job_id": "j1", "attempt_id": "a1", "fencing_token": uint64(7),
+	} {
+		if event[field] != expected {
+			t.Fatalf("artifact event %s = %v, want %v", field, event[field], expected)
+		}
+	}
+	if event["name"] != "result.txt" || event["artifact"] != nil || event["observed_at"] == nil {
+		t.Fatalf("artifact event does not match strict wire shape: %v", event)
+	}
 	if records, err := jr.d.journal.Unacked(context.Background(), "upload", 10); err != nil || len(records) != 0 {
 		t.Fatalf("pending uploads = %v, %v", records, err)
 	}
@@ -104,6 +116,10 @@ func TestPermanentUploadErrorAndInputValidation(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	valid := pendingArtifactUpload{
 		RecordID: "upload-1",
+		Authority: v1.ManifestAuthority{
+			Kind: v1.JobKindBuild, LeaseID: "lease-1", ManifestID: "manifest-1",
+			ManifestDigest: strings.Repeat("a", 64), WorkflowRevision: 2,
+		},
 		Artifact: v1.ArtifactRef{
 			JobID: "job-1", AttemptID: "attempt-1", Name: "report.txt",
 			DigestSHA256: strings.Repeat("a", 64), SizeBytes: 1, ContentType: "text/plain",
@@ -120,7 +136,7 @@ func TestPermanentUploadErrorAndInputValidation(t *testing.T) {
 		"negative size": func(p *pendingArtifactUpload) { p.Artifact.SizeBytes = -1 },
 		"large size":    func(p *pendingArtifactUpload) { p.Artifact.SizeBytes = (256 << 20) + 1 },
 		"content type":  func(p *pendingArtifactUpload) { p.Artifact.ContentType = "not media" },
-		"long content":  func(p *pendingArtifactUpload) { p.Artifact.ContentType = strings.Repeat("x", 256) },
+		"long content":  func(p *pendingArtifactUpload) { p.Artifact.ContentType = strings.Repeat("x", 201) },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -142,6 +158,10 @@ func TestUploadBatchRejectsRecordIdentityMismatch(t *testing.T) {
 	jr, cap := testJobRunner(t)
 	pending := pendingArtifactUpload{
 		RecordID: "different-id",
+		Authority: v1.ManifestAuthority{
+			Kind: v1.JobKindBuild, LeaseID: "lease-1", ManifestID: "manifest-1",
+			ManifestDigest: strings.Repeat("a", 64), WorkflowRevision: 2,
+		},
 		Artifact: v1.ArtifactRef{JobID: "job-1", AttemptID: "attempt-1", Name: "a", DigestSHA256: strings.Repeat("a", 64)},
 		Path:     "missing",
 	}
