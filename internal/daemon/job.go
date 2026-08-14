@@ -18,14 +18,12 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/agentpack"
-	"github.com/example/app-runner/internal/collector"
 	"github.com/example/app-runner/internal/hookspool"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/mcpbridge"
 	"github.com/example/app-runner/internal/provider"
 	"github.com/example/app-runner/internal/repo"
-	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/scanner"
 	"github.com/example/app-runner/internal/supervisor"
 	"github.com/example/app-runner/internal/validation"
@@ -249,73 +247,13 @@ func (jr *jobRunner) run() {
 	leaseCtx, stopLeaseMonitor := context.WithCancel(ctx)
 	defer stopLeaseMonitor()
 	go jr.monitorLease(leaseCtx)
-	finish := func(state string, payload map[string]any) {
+	finish := func(outcome jobOutcome, capacityEvent *v1.ProviderCapacityExhaustedEvent) {
 		stopLeaseMonitor()
-		finishCtx, finishCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer finishCancel()
-		capacityWait := state == "waiting_for_provider_capacity"
-		if payload == nil {
-			payload = map[string]any{}
-		}
-		if err := d.leases.Validate(job.AttemptID, job.FencingToken); err != nil {
-			state = "quarantined"
-			payload["lease_error"] = err.Error()
-		}
-		jr.procMu.Lock()
-		leaseLost := jr.leaseLost
-		jr.procMu.Unlock()
-		if leaseLost {
-			state = "quarantined"
-		}
-		payload["kind"] = "job_finished"
-		payload["state"] = state
-		payload["job_id"] = job.JobID
-		payload["attempt_id"] = job.AttemptID
-		payload["fencing_token"] = job.FencingToken
-		if sid := jr.currentSessionID(); sid != "" && !capacityWait {
-			cp := collector.NewCheckpoint(job, "finished", "", "")
-			cp.ProviderSessionID = sid
-			if err := d.collectors.SaveCheckpoint(cp); err != nil {
-				jr.logger.Warn("save final checkpoint", "err", err)
-			}
-		}
-		if d.cfg.Isolation == "docker" {
-			if err := isolation.RemoveRunnerContainers(finishCtx, d.runnerID); err != nil {
-				jr.logger.Error("remove job container", "err", err)
-				state = "quarantined"
-				payload["state"] = state
-				payload["cleanup_error"] = "job container cleanup failed"
-			}
-		}
-		finishRecorded := true
-		if err := d.sendEvent(finishCtx, payload); err != nil {
-			finishRecorded = false
-			d.recoveredLease.Store(true)
-			jr.logger.Error("durably record finish event; lease retained for reconciliation", "err", err)
-		}
-		if finishRecorded {
-			if err := d.journal.ClearLease(finishCtx, job.AttemptID); err != nil {
-				d.recoveredLease.Store(true)
-				jr.logger.Error("clear durable lease; lease retained for reconciliation", "err", err)
-			} else {
-				d.leases.Release(job.AttemptID)
-				d.recoveredLease.Store(false)
-			}
-		}
-		d.jobMu.Lock()
-		d.activeJob = nil
-		d.signalUpdateLocked()
-		d.jobMu.Unlock()
-		if err := safeio.MakeTreeRemovable(jr.workDir); err != nil {
-			jr.logger.Warn("prepare workdir cleanup", "err", err)
-		}
-		if err := os.RemoveAll(jr.workDir); err != nil {
-			jr.logger.Warn("workdir cleanup", "err", err)
-		}
+		jr.completeJob(outcome, capacityEvent)
 	}
 
 	if err := os.MkdirAll(jr.workDir, 0o700); err != nil {
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "create job workspace"}, nil)
 		return
 	}
 
@@ -323,7 +261,7 @@ func (jr *jobRunner) run() {
 	workDir, cleanup, err := jr.prepareWorkspace(ctx)
 	if err != nil {
 		jr.logger.Error("workspace preparation failed", "err", err)
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "workspace preparation failed"}, nil)
 		return
 	}
 	defer cleanup()
@@ -334,26 +272,26 @@ func (jr *jobRunner) run() {
 		socketsRoot = os.TempDir()
 	}
 	if err := os.MkdirAll(socketsRoot, 0o700); err != nil {
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "create job socket directory"}, nil)
 		return
 	}
 	socketDir, err := os.MkdirTemp(socketsRoot, "job-")
 	if err != nil {
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "create job socket"}, nil)
 		return
 	}
 	defer func() { _ = os.RemoveAll(socketDir) }()
 	sockPath := filepath.Join(socketDir, "mcp.sock")
 	tokenPath := filepath.Join(socketDir, "job.token")
 	if err := os.WriteFile(tokenPath, []byte(jr.jobToken+"\n"), 0o400); err != nil {
-		finish("failed", map[string]any{"error": "create MCP token file: " + err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "create MCP token file"}, nil)
 		return
 	}
 	mcpSrv := &mcpbridge.UnixServer{SocketPath: sockPath, Token: jr.jobToken, Handler: jr.handleToolCall}
 	mcpCtx, stopMCP := context.WithCancel(ctx)
 	defer stopMCP()
 	if err := mcpSrv.Start(mcpCtx); err != nil {
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "start MCP bridge"}, nil)
 		return
 	}
 	agentSockPath := mcpSrv.SocketPath
@@ -361,7 +299,7 @@ func (jr *jobRunner) run() {
 	adapterName := d.cfg.Provider
 	adapter, err := provider.For(adapterName)
 	if err != nil {
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "select agent provider"}, nil)
 		return
 	}
 	spec, err := adapter.BuildSpec(provider.StartParams{
@@ -378,12 +316,12 @@ func (jr *jobRunner) run() {
 		ReadOnly:        job.Kind == v1.JobKindPlan,
 	})
 	if err != nil {
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "build agent start specification"}, nil)
 		return
 	}
 	iso, err := isolation.Select(d.cfg.Isolation, d.cfg.AllowUnsafeDirect)
 	if err != nil {
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "select job isolation"}, nil)
 		return
 	}
 	isoPolicy := isolation.Policy{
@@ -421,13 +359,13 @@ func (jr *jobRunner) run() {
 			HardenedRuntime: true,
 		})
 		if err != nil {
-			finish("failed", map[string]any{"error": err.Error()})
+			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "build isolated agent start specification"}, nil)
 			return
 		}
 		isoPolicy.Environment = provider.ContainerEnvironment(spec.Env)
 		jobHome, err := isolation.PrepareHome(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName)
 		if err != nil {
-			finish("failed", map[string]any{"error": "prepare job home: " + err.Error()})
+			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "prepare isolated job home"}, nil)
 			return
 		}
 		defer func() {
@@ -439,7 +377,7 @@ func (jr *jobRunner) run() {
 	}
 	spec.Command, spec.Args, err = iso.Wrap(spec.Command, spec.Args, isoPolicy)
 	if err != nil {
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "apply job isolation"}, nil)
 		return
 	}
 	spec.Env = append(spec.Env,
@@ -448,7 +386,7 @@ func (jr *jobRunner) run() {
 	)
 	supervisorRoot := filepath.Join(d.cfg.StateDir, "supervisor")
 	if err := os.MkdirAll(supervisorRoot, 0o700); err != nil {
-		finish("failed", map[string]any{"error": "create supervisor runtime: " + err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "create supervisor runtime"}, nil)
 		return
 	}
 	spec.RuntimeDir = supervisorRoot
@@ -461,13 +399,13 @@ func (jr *jobRunner) run() {
 	jr.procMu.Lock()
 	if jr.cancelled {
 		jr.procMu.Unlock()
-		finish("cancelled", nil)
+		finish(jobOutcome{State: v1.JobFinishedCancelled, FailureCode: v1.JobFailureCancelled}, nil)
 		return
 	}
 	proc, err := d.supervisor.Start(ctx, spec)
 	if err != nil {
 		jr.procMu.Unlock()
-		finish("failed", map[string]any{"error": err.Error()})
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "start agent process"}, nil)
 		return
 	}
 	jr.proc = proc
@@ -494,70 +432,56 @@ func (jr *jobRunner) run() {
 		cancelled := jr.cancelled
 		leaseLost := jr.leaseLost
 		jr.procMu.Unlock()
-		state := "failed"
-		if leaseLost {
-			state = "quarantined"
-		} else if cancelled {
-			state = "cancelled"
-		} else if capacityExhausted {
-			state = "waiting_for_provider_capacity"
-		}
 		jr.logger.Error("agent exited", "err", exitErr, "capacity_exhausted", capacityExhausted)
-		agentError := "provider capacity exhausted"
-		if exitErr != nil {
-			agentError = "agent exited: " + exitErr.Error()
-		}
-		if providerError := jr.currentProviderError(); providerError != "" {
-			agentError += "; provider: " + providerError
-		}
-		extra := map[string]any{"error": agentError}
-		if job.Kind == v1.JobKindBuild && (state == "failed" || state == "waiting_for_provider_capacity") {
+		extra := map[string]any{}
+		if job.Kind == v1.JobKindBuild && !cancelled && !leaseLost {
 			rm := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
 			rm.AllowLocal = d.cfg.AllowUnsafeDirect
 			_, buildExtra, finalizationErr := jr.finalizeBuild(ctx, rm, false)
 			if buildExtra != nil {
 				for key, value := range buildExtra {
-					if key == "error" {
-						extra["checks_error"] = value
-						continue
-					}
 					extra[key] = value
 				}
 			}
 			if finalizationErr != nil {
-				extra["finalization_error"] = finalizationErr.Error()
+				jr.logger.Error("preserve partial build", "err", finalizationErr)
 			}
 		}
-		if state == "waiting_for_provider_capacity" {
-			extra["failure_class"] = "provider_capacity_exhausted"
-			extra["resume_policy"] = jr.effectiveCapacityResumePolicy()
+		if capacityExhausted && !cancelled && !leaseLost {
 			lineage := jr.capacityRecoveryLineage(extra)
 			checkpointRef := jr.persistCapacityCheckpoint(lineage)
 			capacityEvent := jr.providerCapacityEvent(capacityFailure, lineage, checkpointRef)
-			if err := validation.ProviderCapacityExhaustedEvent(capacityEvent); err != nil {
-				extra["capacity_event_error"] = "provider capacity event failed local validation"
-				jr.logger.Error("validate provider capacity event", "err", err)
-			} else if err := jr.d.sendEvent(ctx, capacityEvent); err != nil {
-				extra["capacity_event_error"] = "provider capacity event could not be recorded"
-				jr.logger.Error("record provider capacity event", "err", err)
-			}
+			finish(jobOutcome{}, &capacityEvent)
+			return
 		}
-		finish(state, extra)
+		if leaseLost {
+			finish(jobOutcome{State: v1.JobFinishedQuarantined, FailureCode: v1.JobFailureLeaseLost, FailureMessage: "authoritative lease was lost"}, nil)
+			return
+		}
+		if cancelled {
+			finish(jobOutcome{State: v1.JobFinishedCancelled, FailureCode: v1.JobFailureCancelled}, nil)
+			return
+		}
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentExit, FailureMessage: "agent process exited unsuccessfully"}, nil)
 		return
 	}
 
 	if job.Kind == v1.JobKindBuild {
 		rm := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
 		rm.AllowLocal = d.cfg.AllowUnsafeDirect
-		state, extra, err := jr.finalizeBuild(ctx, rm, true)
+		state, _, err := jr.finalizeBuild(ctx, rm, true)
 		if err != nil {
-			finish("failed", map[string]any{"error": err.Error()})
+			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureBuildFinalization, FailureMessage: "build finalization failed"}, nil)
 			return
 		}
-		finish(state, extra)
+		if state == "failed" {
+			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureRequiredChecks, FailureMessage: "one or more required checks failed"}, nil)
+			return
+		}
+		finish(jobOutcome{State: v1.JobFinishedSucceeded}, nil)
 		return
 	}
-	finish("succeeded", nil)
+	finish(jobOutcome{State: v1.JobFinishedSucceeded}, nil)
 }
 
 func (jr *jobRunner) monitorLease(ctx context.Context) {

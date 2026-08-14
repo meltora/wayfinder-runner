@@ -86,6 +86,25 @@ func TestUnackedOrderingAndAck(t *testing.T) {
 	}
 }
 
+func TestUnackedReplaysSameTimestampRecordsInInsertionOrder(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	createdAt := time.Unix(1_700_000_000, 0)
+	for _, id := range []string{"z-first", "a-second", "m-third"} {
+		if err := j.Append(ctx, Record{ID: id, Kind: KindEvent, Payload: []byte(id), CreatedAt: createdAt}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := j.Unacked(ctx, KindEvent, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{records[0].ID, records[1].ID, records[2].ID}; strings.Join(got, ",") != "z-first,a-second,m-third" {
+		t.Fatalf("replay order = %v", got)
+	}
+}
+
 func TestKindsAreSeparate(t *testing.T) {
 	j := openTest(t)
 	ctx := context.Background()

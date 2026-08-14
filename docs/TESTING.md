@@ -116,7 +116,14 @@ Provider-capacity tests assert the strict manifest-bound wire shape, local
 fail-closed validation, UTF-8 byte limits, exact single-repository recovery
 lineage, and omission of unsafe or incomplete lineage. The end-to-end build
 fixture proves the capacity event repeats the retained lease, manifest, attempt,
-and fencing authority accepted by the control plane.
+and fencing authority accepted by the control plane, emits no competing terminal
+outcome, and releases local authority only after durable recording.
+
+Terminal-outcome tests assert the strict manifest-bound `job_finished` shape,
+state-to-failure-code consistency, bounded failure detail, and omission of build
+provenance that belongs in dedicated evidence events. Journal tests insert
+multiple event IDs with one timestamp and prove reconnect replay follows durable
+SQLite insertion order instead of lexical ID order.
 
 ## Troubleshooting
 

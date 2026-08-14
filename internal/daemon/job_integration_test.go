@@ -171,9 +171,14 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 	}
 
 	finished := cp.EventsByKind("job_finished")
-	state := finished[0].Payload.(map[string]any)["state"]
+	terminal := finished[0].Payload.(map[string]any)
+	state := terminal["state"]
 	if state != "succeeded" {
 		t.Fatalf("job state = %v", state)
+	}
+	if terminal["manifest_kind"] != "plan" || terminal["lease_id"] != job.LeaseID ||
+		terminal["manifest_id"] != job.ManifestID || terminal["manifest_digest"] != job.ManifestDigest {
+		t.Fatalf("terminal authority = %v", terminal)
 	}
 
 	if len(cp.EventsByKind("config_inventory")) == 0 {
@@ -232,6 +237,10 @@ func TestEmergencyStopCancelsJob(t *testing.T) {
 	waitFor(t, "job finished after stop", 15*time.Second, func() bool {
 		return len(cp.EventsByKind("job_finished")) >= 1
 	})
+	terminal := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
+	if terminal["state"] != "cancelled" || terminal["failure_code"] != "cancelled" {
+		t.Fatalf("cancel terminal = %v", terminal)
+	}
 	if !d.Paused() {
 		t.Fatal("runner should be paused after emergency stop")
 	}

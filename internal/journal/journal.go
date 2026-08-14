@@ -284,7 +284,7 @@ func (j *Journal) Unacked(ctx context.Context, kind Kind, limit int) ([]Record, 
 
 func (j *Journal) UnackedPage(ctx context.Context, kind Kind, limit, offset int) ([]Record, error) {
 	rows, err := j.db.QueryContext(ctx,
-		`SELECT id, kind, payload, created_at FROM records WHERE kind = ? AND acked_at IS NULL ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?`,
+		`SELECT id, kind, payload, created_at FROM records WHERE kind = ? AND acked_at IS NULL ORDER BY rowid ASC LIMIT ? OFFSET ?`,
 		string(kind), limit, offset)
 	if err != nil {
 		return nil, err

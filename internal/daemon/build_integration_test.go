@@ -129,8 +129,9 @@ func TestBuildJobEndToEnd(t *testing.T) {
 	if payload["state"] != "succeeded" {
 		t.Fatalf("state = %v payload = %v", payload["state"], payload)
 	}
-	if payload["pushed"] != true {
-		t.Fatalf("expected push: %v", payload)
+	if payload["manifest_kind"] != "build" || payload["lease_id"] != job.LeaseID ||
+		payload["manifest_id"] != job.ManifestID || payload["manifest_digest"] != job.ManifestDigest {
+		t.Fatalf("terminal authority = %v", payload)
 	}
 
 	if len(cp.EventsByKind("test_results")) != 3 {
@@ -202,11 +203,8 @@ func TestBuildJobCheckFailure(t *testing.T) {
 	if payload["state"] != "failed" {
 		t.Fatalf("state = %v", payload["state"])
 	}
-	if payload["pushed"] != true {
-		t.Fatalf("failed attempt branch was not published: %v", payload)
-	}
-	if payload["branch"] != "job/build-2/att-1" || payload["head_sha"] == "" {
-		t.Fatalf("failed attempt provenance is incomplete: %v", payload)
+	if payload["failure_code"] != "required_checks_failed" {
+		t.Fatalf("failure evidence = %v", payload)
 	}
 	failed := 0
 	for _, e := range cp.EventsByKind("test_results") {
@@ -278,24 +276,11 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitFor(t, "job finished", 60*time.Second, func() bool {
-		return len(cp.EventsByKind("job_finished")) >= 1
+	waitFor(t, "provider capacity recorded", 60*time.Second, func() bool {
+		return len(cp.EventsByKind("provider_capacity_exhausted")) >= 1
 	})
-	payload := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
-	if payload["state"] != "waiting_for_provider_capacity" || payload["pushed"] != true {
-		t.Fatalf("agent failure provenance was not published: %v", payload)
-	}
-	if payload["failure_class"] != "provider_capacity_exhausted" || payload["resume_policy"] != "automatic" {
-		t.Fatalf("capacity failure was not normalized on job completion: %v", payload)
-	}
-	if !strings.Contains(payload["error"].(string), "provider quota exhausted") {
-		t.Fatalf("provider failure detail was not preserved: %v", payload)
-	}
-	if payload["checks_error"] != "required checks failed" {
-		t.Fatalf("partial-work check failure was not separated: %v", payload)
-	}
-	if payload["branch"] != "job/build-agent-failure/att-1" || payload["head_sha"] == "" {
-		t.Fatalf("agent failure provenance is incomplete: %v", payload)
+	if got := len(cp.EventsByKind("job_finished")); got != 0 {
+		t.Fatalf("provider capacity emitted %d competing terminal outcomes", got)
 	}
 	if len(cp.EventsByKind("artifact_registered")) != 1 {
 		t.Fatalf("agent failure patch artifacts = %d", len(cp.EventsByKind("artifact_registered")))
@@ -318,15 +303,15 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 		capacity["fencing_token"] != float64(job.FencingToken) || capacity["observed_at"] == "" {
 		t.Fatalf("provider capacity authority = %v", capacity)
 	}
-	if capacity["branch_ref"] != payload["branch"] || capacity["commit_sha"] != payload["head_sha"] ||
+	if capacity["branch_ref"] != "job/build-agent-failure/att-1" || capacity["commit_sha"] == "" ||
 		capacity["checkpoint_ref"] != "att-1" {
-		t.Fatalf("provider capacity lineage = %v, job result = %v", capacity, payload)
+		t.Fatalf("provider capacity lineage = %v", capacity)
 	}
 	checkpoint, err := collector.NewStore(stateDir).CheckpointForAttempt(job.JobID, job.AttemptID, job.FencingToken)
 	if err != nil {
 		t.Fatalf("load emitted recovery checkpoint: %v", err)
 	}
-	wantBranchState := payload["branch"].(string) + "@" + payload["head_sha"].(string)
+	wantBranchState := capacity["branch_ref"].(string) + "@" + capacity["commit_sha"].(string)
 	if checkpoint.BranchState != wantBranchState {
 		t.Fatalf("capacity checkpoint was overwritten after emission: %#v", checkpoint)
 	}
@@ -395,9 +380,8 @@ echo '{"type":"result","status":"success"}'
 	if payload["state"] != "succeeded" {
 		t.Fatalf("state = %v payload=%v", payload["state"], payload)
 	}
-	commitSet, ok := payload["commit_set"].(map[string]any)
-	if !ok || len(commitSet) != 2 {
-		t.Fatalf("commit set = %#v", payload["commit_set"])
+	if payload["manifest_kind"] != "build" || payload["manifest_id"] != job.ManifestID {
+		t.Fatalf("terminal authority = %v", payload)
 	}
 	if len(cp.EventsByKind("pr_ready")) != 2 {
 		t.Fatalf("pr_ready events = %d", len(cp.EventsByKind("pr_ready")))

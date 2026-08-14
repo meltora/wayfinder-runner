@@ -1,0 +1,42 @@
+package v1
+
+import "time"
+
+type JobFinishedState string
+
+const (
+	JobFinishedSucceeded   JobFinishedState = "succeeded"
+	JobFinishedFailed      JobFinishedState = "failed"
+	JobFinishedCancelled   JobFinishedState = "cancelled"
+	JobFinishedQuarantined JobFinishedState = "quarantined"
+)
+
+type JobFinishedFailureCode string
+
+const (
+	JobFailureAgentStart           JobFinishedFailureCode = "agent_start_failed"
+	JobFailureAgentExit            JobFinishedFailureCode = "agent_exit_failed"
+	JobFailureWorkspacePreparation JobFinishedFailureCode = "workspace_preparation_failed"
+	JobFailureBuildFinalization    JobFinishedFailureCode = "build_finalization_failed"
+	JobFailureRequiredChecks       JobFinishedFailureCode = "required_checks_failed"
+	JobFailureRunnerInternal       JobFinishedFailureCode = "runner_internal_error"
+	JobFailureCancelled            JobFinishedFailureCode = "cancelled"
+	JobFailureLeaseLost            JobFinishedFailureCode = "lease_lost"
+	JobFailureCleanup              JobFinishedFailureCode = "cleanup_failed"
+)
+
+type JobFinishedEvent struct {
+	Kind              string                 `json:"kind"`
+	ManifestKind      JobKind                `json:"manifest_kind"`
+	LeaseID           string                 `json:"lease_id"`
+	JobID             string                 `json:"job_id"`
+	AttemptID         string                 `json:"attempt_id"`
+	ManifestID        string                 `json:"manifest_id"`
+	ManifestDigest    string                 `json:"manifest_digest"`
+	FencingToken      uint64                 `json:"fencing_token"`
+	ObservedAt        time.Time              `json:"observed_at"`
+	State             JobFinishedState       `json:"state"`
+	ProviderSessionID string                 `json:"provider_session_id,omitempty"`
+	FailureCode       JobFinishedFailureCode `json:"failure_code,omitempty"`
+	FailureMessage    string                 `json:"failure_message,omitempty"`
+}

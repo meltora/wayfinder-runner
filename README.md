@@ -80,8 +80,8 @@ untrusted with respect to the runner identity and control plane.
    lease ID, manifest ID/kind/digest, workflow revision, fencing token, ticket
    context, one to sixteen registered repository IDs, and optionally a signed
    Agent Pack reference. The runner preserves this immutable authority on every
-   accepted progress, checkpoint, plan-publication, provider-capacity, and
-   artifact event.
+  accepted progress, checkpoint, plan-publication, provider-capacity, terminal,
+  and artifact event.
 2. The daemon durably records the command and acquires the single active lease.
 3. Each repository is cloned from a trusted local mirror into a self-contained
    job workspace. No job receives mirror metadata or host Git credentials.
@@ -105,9 +105,13 @@ a competing plan.
 6. For build jobs, administrator-defined checks run in fresh, credential-free
    containers. Successful changes are committed and bundled in isolation, then
    imported and optionally pushed from the trusted mirror.
-7. A terminal event is durably recorded before the lease is released. Workspaces,
-   job homes, sockets, tokens, and labeled containers are removed. Crash recovery
-   reconciles an unfinished lease and queued uploads after restart.
+7. A strict `job_finished` event records only the manifest-bound authority,
+   controlled terminal state/failure evidence, and optional provider session.
+   It is durably queued before the local lease is released. Durable events replay
+   in SQLite insertion order so preceding plan, progress, test, review, and
+   artifact evidence cannot be overtaken by completion after reconnect.
+   Workspaces, job homes, sockets, tokens, and labeled containers are removed.
+   Crash recovery reconciles an unfinished lease and queued uploads after restart.
 8. Cancellation kills the complete supervised process tree. Emergency stop also
    persists the paused state so no new job starts until an explicit resume.
 
@@ -122,6 +126,9 @@ the control plane applies its stored project policy. Protocol v1 also omits
 lineage for multi-repository jobs, because a single branch/commit pair cannot
 safely represent their full change set; those attempts remain paused for manual
 resolution until a versioned multi-repository lineage contract is available.
+Capacity exhaustion is a resumable non-terminal condition and emits no competing
+`job_finished` event; the capacity event itself is durably queued before the
+runner releases its local lease.
 
 The runner finishing a job or a merge request being merged does **not** mark a
 feature Done. Merge may move the control-plane workflow to Ready for QA, but only
