@@ -80,7 +80,8 @@ untrusted with respect to the runner identity and control plane.
    lease ID, manifest ID/kind/digest, workflow revision, fencing token, ticket
    context, one to sixteen registered repository IDs, and optionally a signed
    Agent Pack reference. The runner preserves this immutable authority on every
-   accepted progress, checkpoint, plan-publication, and artifact event.
+   accepted progress, checkpoint, plan-publication, provider-capacity, and
+   artifact event.
 2. The daemon durably records the command and acquires the single active lease.
 3. Each repository is cloned from a trusted local mirror into a self-contained
    job workspace. No job receives mirror metadata or host Git credentials.
@@ -113,12 +114,14 @@ a competing plan.
 When a provider reports subscription-capacity exhaustion during a single-
 repository build, trusted finalization commits and pushes the partial-work
 branch before the runner emits recovery lineage. The capacity event includes
-that exact branch and full commit SHA plus the opaque current-attempt checkpoint
-reference when a checkpoint exists. It omits recovery lineage if finalization
-or publication fails. Protocol v1 also omits lineage for multi-repository jobs,
-because a single branch/commit pair cannot safely represent their full change
-set; those attempts remain paused for manual resolution until a versioned
-multi-repository lineage contract is available.
+the exact retained lease and manifest authority, a bounded redacted provider
+message, and that branch and full commit SHA plus the opaque current-attempt
+checkpoint reference when a checkpoint exists. It omits recovery lineage if
+finalization or publication fails. The event's resume policy is descriptive;
+the control plane applies its stored project policy. Protocol v1 also omits
+lineage for multi-repository jobs, because a single branch/commit pair cannot
+safely represent their full change set; those attempts remain paused for manual
+resolution until a versioned multi-repository lineage contract is available.
 
 The runner finishing a job or a merge request being merged does **not** mark a
 feature Done. Merge may move the control-plane workflow to Ready for QA, but only

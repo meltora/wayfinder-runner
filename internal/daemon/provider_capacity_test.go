@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/collector"
@@ -53,6 +56,13 @@ func TestProviderCapacityEventUsesOnlyTrustedSingleRepositoryLineage(t *testing.
 		lineage,
 		checkpointRef,
 	)
+	if event.ManifestKind != job.Kind || event.LeaseID != job.LeaseID ||
+		event.ManifestID != job.ManifestID || event.ManifestDigest != job.ManifestDigest ||
+		event.JobID != job.JobID || event.AttemptID != job.AttemptID ||
+		event.FencingToken != job.FencingToken || event.ObservedAt.IsZero() ||
+		event.ObservedAt.Location() != time.UTC {
+		t.Fatalf("capacity event authority = %#v", event)
+	}
 	if event.BranchRef != lineage.BranchRef || event.CommitSHA != lineage.CommitSHA {
 		t.Fatalf("event lineage = %#v, want %#v", event, lineage)
 	}
@@ -77,6 +87,48 @@ func TestProviderCapacityEventUsesOnlyTrustedSingleRepositoryLineage(t *testing.
 	)
 	if legacy.BranchRef != "" || legacy.CommitSHA != "" || legacy.CheckpointRef != "" {
 		t.Fatalf("lineage-free event gained recovery authority: %#v", legacy)
+	}
+}
+
+func TestProviderCapacityEventMatchesStrictWireContract(t *testing.T) {
+	t.Parallel()
+	job := withTestAuthority(v1.JobSpec{
+		JobID: "job-wire", AttemptID: "attempt-wire", Kind: v1.JobKindPlan,
+		FencingToken: (1 << 53) - 1,
+	})
+	jr := &jobRunner{
+		d:   &Daemon{cfg: config.Config{Provider: "claude"}},
+		job: job,
+	}
+	jr.providerError = strings.Repeat("€", 400)
+	event := jr.providerCapacityEvent(
+		provider.CapacityFailure{Reason: provider.CapacityReasonQuotaExhausted},
+		nil,
+		"",
+	)
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "workflow_revision") {
+		t.Fatalf("event leaked non-contract workflow authority: %s", raw)
+	}
+	var decoded map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded["fencing_token"].(json.Number).String(); got != "9007199254740991" {
+		t.Fatalf("fencing token = %s", got)
+	}
+	for _, field := range []string{"manifest_kind", "lease_id", "job_id", "attempt_id", "manifest_id", "manifest_digest", "observed_at"} {
+		if decoded[field] == nil || decoded[field] == "" {
+			t.Fatalf("strict field %s missing from %s", field, raw)
+		}
+	}
+	if !utf8.ValidString(event.Message) || len(event.Message) > 512 {
+		t.Fatalf("provider message is not a bounded UTF-8 string: bytes=%d", len(event.Message))
 	}
 }
 

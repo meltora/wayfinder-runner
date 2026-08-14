@@ -320,7 +320,7 @@ func validAgentModel(model string) bool {
 		return false
 	}
 	provider, modelID, ok := strings.Cut(model, "/")
-	return ok && provider != "" && modelID != "" && !strings.HasPrefix(modelID, "/")
+	return ok && provider != "" && len(provider) <= 128 && modelID != "" && !strings.HasPrefix(modelID, "/")
 }
 
 func validateECDSAPublicKey(encoded string) error {

@@ -312,6 +312,12 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 		capacity["reason"] != "quota_exhausted" || capacity["resume_policy"] != "automatic" {
 		t.Fatalf("provider capacity payload = %v", capacity)
 	}
+	if capacity["manifest_kind"] != "build" || capacity["lease_id"] != job.LeaseID ||
+		capacity["job_id"] != job.JobID || capacity["attempt_id"] != job.AttemptID ||
+		capacity["manifest_id"] != job.ManifestID || capacity["manifest_digest"] != job.ManifestDigest ||
+		capacity["fencing_token"] != float64(job.FencingToken) || capacity["observed_at"] == "" {
+		t.Fatalf("provider capacity authority = %v", capacity)
+	}
 	if capacity["branch_ref"] != payload["branch"] || capacity["commit_sha"] != payload["head_sha"] ||
 		capacity["checkpoint_ref"] != "att-1" {
 		t.Fatalf("provider capacity lineage = %v, job result = %v", capacity, payload)

@@ -1,7 +1,6 @@
 package validation
 
 import (
-	"math"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +50,58 @@ func validRevisionContext() *v1.PlanRevisionContext {
 	}
 }
 
+func validProviderCapacityEvent() v1.ProviderCapacityExhaustedEvent {
+	return v1.ProviderCapacityExhaustedEvent{
+		Kind: "provider_capacity_exhausted", ManifestKind: v1.JobKindBuild,
+		LeaseID: "lease-1", JobID: "job-1", AttemptID: "attempt-1",
+		ManifestID: "manifest-1", ManifestDigest: strings.Repeat("a", 64),
+		FencingToken: 7, ObservedAt: time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC),
+		Adapter: "opencode", Provider: "kimi-for-coding", Model: "kimi-for-coding/k3",
+		Reason: "quota_exhausted", ResumePolicy: v1.CapacityResumeAutomatic,
+		ProviderSessionID: "session-1", BranchRef: "job/job-1/attempt-1",
+		CommitSHA: strings.Repeat("b", 40), CheckpointRef: "checkpoint-1",
+		Message: "Provider quota exhausted",
+	}
+}
+
+func TestProviderCapacityEventRejectsEveryWireBoundary(t *testing.T) {
+	if err := ProviderCapacityExhaustedEvent(validProviderCapacityEvent()); err != nil {
+		t.Fatal(err)
+	}
+	mutations := map[string]func(*v1.ProviderCapacityExhaustedEvent){
+		"kind":               func(event *v1.ProviderCapacityExhaustedEvent) { event.Kind = "capacity" },
+		"manifest kind":      func(event *v1.ProviderCapacityExhaustedEvent) { event.ManifestKind = "delete" },
+		"lease":              func(event *v1.ProviderCapacityExhaustedEvent) { event.LeaseID = "bad/id" },
+		"job":                func(event *v1.ProviderCapacityExhaustedEvent) { event.JobID = "" },
+		"attempt":            func(event *v1.ProviderCapacityExhaustedEvent) { event.AttemptID = "bad id" },
+		"manifest":           func(event *v1.ProviderCapacityExhaustedEvent) { event.ManifestID = "" },
+		"digest":             func(event *v1.ProviderCapacityExhaustedEvent) { event.ManifestDigest = strings.Repeat("A", 64) },
+		"fence":              func(event *v1.ProviderCapacityExhaustedEvent) { event.FencingToken = 0 },
+		"large fence":        func(event *v1.ProviderCapacityExhaustedEvent) { event.FencingToken = 1 << 53 },
+		"observed":           func(event *v1.ProviderCapacityExhaustedEvent) { event.ObservedAt = time.Time{} },
+		"adapter":            func(event *v1.ProviderCapacityExhaustedEvent) { event.Adapter = "  " },
+		"provider":           func(event *v1.ProviderCapacityExhaustedEvent) { event.Provider = strings.Repeat("p", 129) },
+		"model":              func(event *v1.ProviderCapacityExhaustedEvent) { event.Model = strings.Repeat("m", 257) },
+		"reason":             func(event *v1.ProviderCapacityExhaustedEvent) { event.Reason = "rate_limited" },
+		"policy":             func(event *v1.ProviderCapacityExhaustedEvent) { event.ResumePolicy = "eventually" },
+		"session":            func(event *v1.ProviderCapacityExhaustedEvent) { event.ProviderSessionID = "bad/session" },
+		"branch without sha": func(event *v1.ProviderCapacityExhaustedEvent) { event.CommitSHA = "" },
+		"checkpoint without lineage": func(event *v1.ProviderCapacityExhaustedEvent) {
+			event.BranchRef, event.CommitSHA = "", ""
+		},
+		"message": func(event *v1.ProviderCapacityExhaustedEvent) { event.Message = strings.Repeat("x", 513) },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			candidate := validProviderCapacityEvent()
+			mutate(&candidate)
+			if err := ProviderCapacityExhaustedEvent(candidate); err == nil {
+				t.Fatal("invalid provider capacity event accepted")
+			}
+		})
+	}
+}
+
 func TestJobSpecAcceptsValidPlanAndRejectsEveryUntrustedBoundary(t *testing.T) {
 	if err := JobSpec(validJob()); err != nil {
 		t.Fatal(err)
@@ -64,7 +115,7 @@ func TestJobSpecAcceptsValidPlanAndRejectsEveryUntrustedBoundary(t *testing.T) {
 		"workflow revision": func(j *v1.JobSpec) { j.WorkflowRevision = -1 },
 		"kind":              func(j *v1.JobSpec) { j.Kind = "delete" },
 		"zero fence":        func(j *v1.JobSpec) { j.FencingToken = 0 },
-		"oversized fence":   func(j *v1.JobSpec) { j.FencingToken = uint64(math.MaxInt64) + 1 },
+		"oversized fence":   func(j *v1.JobSpec) { j.FencingToken = 1 << 53 },
 		"no repository":     func(j *v1.JobSpec) { j.Repositories = nil },
 		"bad repository id": func(j *v1.JobSpec) { j.Repositories[0].RepositoryID = "bad/id" },
 		"duplicate repo":    func(j *v1.JobSpec) { j.Repositories = append(j.Repositories, j.Repositories[0]) },

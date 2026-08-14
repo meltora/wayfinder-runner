@@ -112,6 +112,12 @@ strict `plan_published` shape. They also cover both crash windows around durable
 event publication, reject a second idempotency key for the same attempt, and
 bind a revision event to the exact reviewed base revision ID.
 
+Provider-capacity tests assert the strict manifest-bound wire shape, local
+fail-closed validation, UTF-8 byte limits, exact single-repository recovery
+lineage, and omission of unsafe or incomplete lineage. The end-to-end build
+fixture proves the capacity event repeats the retained lease, manifest, attempt,
+and fencing authority accepted by the control plane.
+
 ## Troubleshooting
 
 ```sh

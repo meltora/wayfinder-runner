@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestOpenCodeProviderAllowsOptionalCustomerModel(t *testing.T) {
 	cfg := productionConfig()
@@ -13,7 +16,10 @@ func TestOpenCodeProviderAllowsOptionalCustomerModel(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("provider-neutral model rejected: %v", err)
 	}
-	for _, model := range []string{"customer-provider", "/model", "--help", "provider/model with spaces"} {
+	for _, model := range []string{
+		"customer-provider", "/model", "--help", "provider/model with spaces",
+		strings.Repeat("p", 129) + "/model",
+	} {
 		cfg.AgentModel = model
 		if err := cfg.Validate(); err == nil {
 			t.Fatalf("invalid agent model %q accepted", model)

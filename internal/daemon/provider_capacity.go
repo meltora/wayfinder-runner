@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/collector"
@@ -36,16 +38,21 @@ func (jr *jobRunner) providerCapacityEvent(
 	checkpointRef string,
 ) v1.ProviderCapacityExhaustedEvent {
 	event := v1.ProviderCapacityExhaustedEvent{
-		Kind:         "provider_capacity_exhausted",
-		JobID:        jr.job.JobID,
-		AttemptID:    jr.job.AttemptID,
-		FencingToken: jr.job.FencingToken,
-		Adapter:      jr.d.cfg.Provider,
-		Provider:     provider.ProviderIdentity(jr.d.cfg.Provider, jr.d.cfg.AgentModel),
-		Model:        jr.d.cfg.AgentModel,
-		Reason:       string(failure.Reason),
-		ResumePolicy: jr.job.ProviderCapacityResumePolicy,
-		Message:      jr.currentProviderError(),
+		Kind:           "provider_capacity_exhausted",
+		ManifestKind:   jr.job.Kind,
+		LeaseID:        jr.job.LeaseID,
+		JobID:          jr.job.JobID,
+		AttemptID:      jr.job.AttemptID,
+		ManifestID:     jr.job.ManifestID,
+		ManifestDigest: jr.job.ManifestDigest,
+		FencingToken:   jr.job.FencingToken,
+		ObservedAt:     time.Now().UTC(),
+		Adapter:        jr.d.cfg.Provider,
+		Provider:       provider.ProviderIdentity(jr.d.cfg.Provider, jr.d.cfg.AgentModel),
+		Model:          jr.d.cfg.AgentModel,
+		Reason:         string(failure.Reason),
+		ResumePolicy:   jr.job.ProviderCapacityResumePolicy,
+		Message:        truncateUTF8Bytes(jr.currentProviderError(), 512),
 	}
 	if event.ResumePolicy == "" {
 		event.ResumePolicy = v1.CapacityResumeManual
@@ -63,6 +70,21 @@ func (jr *jobRunner) providerCapacityEvent(
 		event.CheckpointRef = checkpointRef
 	}
 	return event
+}
+
+func truncateUTF8Bytes(value string, maximum int) string {
+	if maximum <= 0 {
+		return ""
+	}
+	value = strings.ToValidUTF8(value, "")
+	if len(value) <= maximum {
+		return value
+	}
+	cutoff := maximum
+	for cutoff > 0 && !utf8.ValidString(value[:cutoff]) {
+		cutoff--
+	}
+	return value[:cutoff]
 }
 
 func (jr *jobRunner) persistCapacityCheckpoint(lineage *capacityRecoveryLineage) string {

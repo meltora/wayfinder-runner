@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/url"
 	"regexp"
 	"strings"
@@ -77,8 +76,8 @@ func JobSpec(job v1.JobSpec) error {
 	if job.FencingToken == 0 {
 		return fmt.Errorf("fencing_token must be non-zero")
 	}
-	if job.FencingToken > math.MaxInt64 {
-		return fmt.Errorf("fencing_token exceeds supported durable range")
+	if job.FencingToken > maxJSONSafeInteger {
+		return fmt.Errorf("fencing_token exceeds the protocol JSON-safe range")
 	}
 	if len(job.Repositories) < 1 || len(job.Repositories) > 16 {
 		return fmt.Errorf("job must contain between 1 and 16 repositories")

@@ -534,7 +534,10 @@ func (jr *jobRunner) run() {
 			lineage := jr.capacityRecoveryLineage(extra)
 			checkpointRef := jr.persistCapacityCheckpoint(lineage)
 			capacityEvent := jr.providerCapacityEvent(capacityFailure, lineage, checkpointRef)
-			if err := jr.d.sendEvent(ctx, capacityEvent); err != nil {
+			if err := validation.ProviderCapacityExhaustedEvent(capacityEvent); err != nil {
+				extra["capacity_event_error"] = "provider capacity event failed local validation"
+				jr.logger.Error("validate provider capacity event", "err", err)
+			} else if err := jr.d.sendEvent(ctx, capacityEvent); err != nil {
 				extra["capacity_event_error"] = "provider capacity event could not be recorded"
 				jr.logger.Error("record provider capacity event", "err", err)
 			}
