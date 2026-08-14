@@ -107,6 +107,11 @@ structured feedback. Contract tests assert that passive evidence repeats that
 authority exactly and that legacy active-lease databases fail closed after their
 schema is migrated.
 
+Planning integration tests publish all required plan sections and assert the
+strict `plan_published` shape. They also cover both crash windows around durable
+event publication, reject a second idempotency key for the same attempt, and
+bind a revision event to the exact reviewed base revision ID.
+
 ## Troubleshooting
 
 ```sh

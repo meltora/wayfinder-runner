@@ -165,6 +165,108 @@ func TestLeasePersistenceRejectsMissingManifestAuthority(t *testing.T) {
 	}
 }
 
+func TestPlanPublicationClaimIsDurableAndSingleUsePerAttempt(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	claim := PlanPublicationClaim{
+		AttemptID: "attempt-1", Tool: "platform_publish_plan", IdempotencyKey: "plan-1",
+		EventID: "plan-event-1", InputDigest: strings.Repeat("a", 64),
+		Payload: []byte(`{"kind":"plan_published"}`), CreatedAt: time.Now(),
+	}
+	stored, inserted, err := j.ClaimPlanPublication(ctx, claim)
+	if err != nil || !inserted || stored.EventID != claim.EventID {
+		t.Fatalf("first claim = %+v, inserted=%v, err=%v", stored, inserted, err)
+	}
+	j.SetMaxBytes(1)
+	stored, inserted, err = j.ClaimPlanPublication(ctx, claim)
+	if err != nil || inserted || string(stored.Payload) != string(claim.Payload) {
+		t.Fatalf("same claim replay at capacity = %+v, inserted=%v, err=%v", stored, inserted, err)
+	}
+	conflict := claim
+	conflict.IdempotencyKey = "plan-2"
+	if _, _, err := j.ClaimPlanPublication(ctx, conflict); !errors.Is(err, ErrPlanPublicationConflict) {
+		t.Fatalf("second attempt publication = %v, want ErrPlanPublicationConflict", err)
+	}
+	conflict = claim
+	conflict.InputDigest = strings.Repeat("b", 64)
+	if _, _, err := j.ClaimPlanPublication(ctx, conflict); !errors.Is(err, ErrPlanPublicationConflict) {
+		t.Fatalf("changed same-key input = %v, want ErrPlanPublicationConflict", err)
+	}
+}
+
+func TestPlanPublicationClaimConcurrentKeysProduceOneOwner(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	const callers = 12
+	barrier := make(chan struct{})
+	inserted := make([]bool, callers)
+	errs := make([]error, callers)
+	var wait sync.WaitGroup
+	for index := range callers {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-barrier
+			_, inserted[index], errs[index] = j.ClaimPlanPublication(context.Background(), PlanPublicationClaim{
+				AttemptID: "attempt-concurrent", Tool: "platform_publish_plan",
+				IdempotencyKey: fmt.Sprintf("plan-%d", index), EventID: fmt.Sprintf("event-%d", index),
+				InputDigest: strings.Repeat(fmt.Sprintf("%x", index%16), 64),
+				Payload:     []byte(fmt.Sprintf(`{"owner":%d}`, index)), CreatedAt: time.Now(),
+			})
+		}(index)
+	}
+	close(barrier)
+	wait.Wait()
+	winners := 0
+	for index := range callers {
+		if inserted[index] {
+			winners++
+			continue
+		}
+		if !errors.Is(errs[index], ErrPlanPublicationConflict) {
+			t.Fatalf("loser %d error = %v", index, errs[index])
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("publication claim produced %d owners, want 1", winners)
+	}
+}
+
+func TestCompletedPlanPublicationClaimIsPrunedWithToolState(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	claim := PlanPublicationClaim{
+		AttemptID: "attempt-prune", Tool: "platform_publish_plan", IdempotencyKey: "plan-prune",
+		EventID: "event-prune", InputDigest: strings.Repeat("a", 64), Payload: []byte(`{"kind":"plan_published"}`),
+		CreatedAt: time.Now().Add(-60 * 24 * time.Hour),
+	}
+	if _, inserted, err := j.ClaimPlanPublication(ctx, claim); err != nil || !inserted {
+		t.Fatalf("claim = %v, %v", inserted, err)
+	}
+	if state, _, err := j.BeginToolCall(ctx, claim.AttemptID, claim.Tool, claim.IdempotencyKey); err != nil || state != ToolCallStarted {
+		t.Fatalf("begin = %s, %v", state, err)
+	}
+	if err := j.CompleteToolCall(ctx, claim.AttemptID, claim.Tool, claim.IdempotencyKey, []byte(`{"published":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-60 * 24 * time.Hour).Unix()
+	if _, err := j.db.Exec(`UPDATE tool_calls SET updated_at=? WHERE attempt_id=?`, old, claim.AttemptID); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := j.Prune(ctx, time.Now().Add(-30*24*time.Hour), 100)
+	if err != nil || removed != 2 {
+		t.Fatalf("prune removed %d rows, err=%v", removed, err)
+	}
+	replacement := claim
+	replacement.IdempotencyKey = "plan-replacement"
+	replacement.EventID = "event-replacement"
+	if _, inserted, err := j.ClaimPlanPublication(ctx, replacement); err != nil || !inserted {
+		t.Fatalf("replacement claim after prune = %v, %v", inserted, err)
+	}
+}
+
 func TestLegacyActiveLeaseSchemaMigratesAndFailsClosed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.db")
 	db, err := sql.Open("sqlite", path)

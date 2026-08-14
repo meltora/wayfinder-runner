@@ -129,6 +129,15 @@ func (j *Journal) migrate() error {
 			PRIMARY KEY (attempt_id, idempotency_key)
 		);
 		CREATE INDEX IF NOT EXISTS idx_check_claims_check ON check_claims(attempt_id, check_id);
+		CREATE TABLE IF NOT EXISTS plan_publications (
+			attempt_id TEXT PRIMARY KEY,
+			tool TEXT NOT NULL,
+			idempotency_key TEXT NOT NULL,
+			event_id TEXT NOT NULL UNIQUE,
+			input_digest TEXT NOT NULL,
+			payload BLOB NOT NULL,
+			created_at INTEGER NOT NULL
+		);
 `)
 	if err != nil {
 		return err
@@ -519,6 +528,20 @@ func (j *Journal) Prune(ctx context.Context, before time.Time, limit int) (int64
 	if err != nil {
 		return 0, err
 	}
+	publications, err := tx.ExecContext(ctx, `
+		DELETE FROM plan_publications WHERE rowid IN (
+			SELECT publication.rowid
+			FROM plan_publications AS publication
+			JOIN tool_calls AS tool_call
+			  ON tool_call.attempt_id = publication.attempt_id
+			 AND tool_call.tool = publication.tool
+			 AND tool_call.idempotency_key = publication.idempotency_key
+			WHERE tool_call.status='completed' AND tool_call.updated_at < ?
+			ORDER BY tool_call.updated_at ASC LIMIT ?
+		)`, before.Unix(), limit)
+	if err != nil {
+		return 0, err
+	}
 	tools, err := tx.ExecContext(ctx, `
 		DELETE FROM tool_calls WHERE rowid IN (
 			SELECT rowid FROM tool_calls
@@ -532,6 +555,10 @@ func (j *Journal) Prune(ctx context.Context, before time.Time, limit int) (int64
 	if err != nil {
 		return 0, err
 	}
+	publicationCount, err := publications.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
 	toolCount, err := tools.RowsAffected()
 	if err != nil {
 		return 0, err
@@ -539,7 +566,7 @@ func (j *Journal) Prune(ctx context.Context, before time.Time, limit int) (int64
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	return recordCount + toolCount, nil
+	return recordCount + publicationCount + toolCount, nil
 }
 
 func (j *Journal) Checkpoint(ctx context.Context) error {

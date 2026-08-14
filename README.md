@@ -80,7 +80,7 @@ untrusted with respect to the runner identity and control plane.
    lease ID, manifest ID/kind/digest, workflow revision, fencing token, ticket
    context, one to sixteen registered repository IDs, and optionally a signed
    Agent Pack reference. The runner preserves this immutable authority on every
-   accepted progress, checkpoint, and artifact event.
+   accepted progress, checkpoint, plan-publication, and artifact event.
 2. The daemon durably records the command and acquires the single active lease.
 3. Each repository is cloned from a trusted local mirror into a self-contained
    job workspace. No job receives mirror metadata or host Git credentials.
@@ -93,6 +93,14 @@ untrusted with respect to the runner identity and control plane.
    reviewed base plan and structured feedback with `platform_get_job_context`;
    the potentially large context is not copied into process arguments. Provider
    hooks are non-authoritative telemetry only.
+
+Planning tools publish the complete versioned plan content contract, not a
+runner-local summary or revision number. Initial plans have no base revision;
+revision plans must repeat the exact reviewed `base_revision_id` supplied in the
+immutable manifest. The control plane remains the sole authority that assigns
+revision numbers. Each planning attempt is durably bound to one stable event and
+one idempotency key before publication, allowing crash recovery without emitting
+a competing plan.
 6. For build jobs, administrator-defined checks run in fresh, credential-free
    containers. Successful changes are committed and bundled in isolation, then
    imported and optionally pushed from the trusted mirror.

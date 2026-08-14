@@ -81,22 +81,6 @@ const (
 	CmdRenewLease       = "renew_lease"
 )
 
-type PlanRevision struct {
-	JobID         string    `json:"job_id"`
-	AttemptID     string    `json:"attempt_id"`
-	FencingToken  uint64    `json:"fencing_token"`
-	BaseRevision  int       `json:"base_revision"`
-	Revision      int       `json:"revision"`
-	Summary       string    `json:"summary"`
-	Requirements  []string  `json:"requirements,omitempty"`
-	Approach      string    `json:"approach"`
-	ExpectedFiles []string  `json:"expected_files,omitempty"`
-	Risks         []string  `json:"risks,omitempty"`
-	Assumptions   []string  `json:"assumptions,omitempty"`
-	TestStrategy  string    `json:"test_strategy,omitempty"`
-	PublishedAt   time.Time `json:"published_at"`
-}
-
 type ProgressReport struct {
 	JobID        string `json:"job_id"`
 	AttemptID    string `json:"attempt_id"`

@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -83,6 +81,11 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 	memo := &toolCallMemo{done: make(chan struct{})}
 	jr.seenIdempotency[scope] = memo
 	jr.idempotencyMu.Unlock()
+	if isPlanPublicationTool(tool) {
+		result, encoded, publicationErr := jr.handlePlanPublication(ctx, tool, key, raw)
+		jr.finishToolMemo(scope, memo, encoded, publicationErr)
+		return result, publicationErr
+	}
 	state, storedResult, err := jr.d.journal.BeginToolCall(ctx, jr.job.AttemptID, scopeTool, key)
 	if err != nil {
 		jr.finishToolMemo(scope, memo, nil, err)
@@ -146,6 +149,9 @@ func decodeToolResult(encoded []byte) (any, error) {
 func toolAllowedForJob(kind v1.JobKind, tool string) bool {
 	if tool == mcpbridge.InternalHookEventTool {
 		return true
+	}
+	if isPlanPublicationTool(tool) {
+		return kind == v1.JobKindPlan
 	}
 	if kind == v1.JobKindBuild {
 		return true
@@ -215,35 +221,6 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		}
 		return result, nil
 
-	case "platform_publish_plan":
-		if err := requireToolText(raw, "summary", 16<<10); err != nil {
-			return nil, err
-		}
-		if err := requireToolText(raw, "approach", 128<<10); err != nil {
-			return nil, err
-		}
-		digest := digestOf(raw, "summary", "approach")
-		rev, err := jr.d.plans.NextRevision(jr.job.JobID, 0, digest)
-		if err != nil {
-			return nil, fmt.Errorf("plan already published; use platform_publish_plan_revision with base_revision %d", 1)
-		}
-		plan := v1.PlanRevision{
-			JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, FencingToken: jr.job.FencingToken,
-			Revision:      rev,
-			Summary:       str(raw, "summary"),
-			Approach:      str(raw, "approach"),
-			TestStrategy:  str(raw, "test_strategy"),
-			Requirements:  strSlice(raw, "requirements"),
-			ExpectedFiles: strSlice(raw, "expected_files"),
-			Risks:         strSlice(raw, "risks"),
-			Assumptions:   strSlice(raw, "assumptions"),
-			PublishedAt:   time.Now().UTC(),
-		}
-		if err := jr.d.sendEvent(ctx, map[string]any{"kind": "plan_published", "plan": plan}); err != nil {
-			return nil, err
-		}
-		return map[string]any{"revision": plan.Revision, "published": true}, nil
-
 	case "platform_report_progress":
 		if err := requireToolText(raw, "milestone", 1024); err != nil {
 			return nil, err
@@ -285,37 +262,6 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 			return nil, err
 		}
 		return map[string]any{"ok": true}, nil
-
-	case "platform_publish_plan_revision":
-		base, _ := raw["base_revision"].(float64)
-		if base < 1 || base != math.Trunc(base) {
-			return nil, fmt.Errorf("base_revision must be a positive integer")
-		}
-		for _, field := range []string{"change_summary", "summary", "approach"} {
-			if err := requireToolText(raw, field, 128<<10); err != nil {
-				return nil, err
-			}
-		}
-		digest := digestOf(raw, "summary", "approach", "change_summary")
-		rev, err := jr.d.plans.NextRevision(jr.job.JobID, int(base), digest)
-		if err != nil {
-			return nil, err
-		}
-		plan := v1.PlanRevision{
-			JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, FencingToken: jr.job.FencingToken,
-			BaseRevision: int(base), Revision: rev,
-			Summary: str(raw, "summary"), Approach: str(raw, "approach"),
-			TestStrategy: str(raw, "test_strategy"),
-			Requirements: strSlice(raw, "requirements"), ExpectedFiles: strSlice(raw, "expected_files"),
-			Risks: strSlice(raw, "risks"), Assumptions: strSlice(raw, "assumptions"),
-			PublishedAt: time.Now().UTC(),
-		}
-		if err := jr.d.sendEvent(ctx, map[string]any{
-			"kind": "plan_published", "change_summary": str(raw, "change_summary"), "plan": plan,
-		}); err != nil {
-			return nil, err
-		}
-		return map[string]any{"revision": rev, "published": true}, nil
 
 	case "platform_report_blocker":
 		if err := requireToolText(raw, "blocker_type", 1024); err != nil {
@@ -480,7 +426,7 @@ func validateToolArguments(value any, depth int) error {
 			}
 		}
 	case string:
-		if len(typed) > 64<<10 {
+		if len(typed) > 128<<10 {
 			return fmt.Errorf("tool argument string is too large")
 		}
 	}
@@ -521,14 +467,6 @@ func str(m map[string]any, key string) string {
 
 func (jr *jobRunner) sendJobEvent(ctx context.Context, kind string, fields map[string]any) error {
 	return jr.d.sendEvent(ctx, manifestBoundEvent(jr.job, kind, fields, time.Now()))
-}
-
-func digestOf(raw map[string]any, keys ...string) string {
-	h := sha256.New()
-	for _, k := range keys {
-		_, _ = fmt.Fprintf(h, "%s=%v;", k, raw[k])
-	}
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (jr *jobRunner) handlePublishArtifact(ctx context.Context, raw map[string]any) (any, error) {

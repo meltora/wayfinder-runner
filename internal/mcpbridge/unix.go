@@ -17,11 +17,12 @@ import (
 )
 
 const (
-	maxSocketRequestBytes = 256 << 10
-	maxSocketConnections  = 16
-	requestReadTimeout    = 10 * time.Second
-	toolCallTimeout       = 31 * time.Minute
-	responseWriteTimeout  = 10 * time.Second
+	maxSocketRequestBytes  = 1 << 20
+	maxSocketResponseBytes = 2 << 20
+	maxSocketConnections   = 16
+	requestReadTimeout     = 10 * time.Second
+	toolCallTimeout        = 31 * time.Minute
+	responseWriteTimeout   = 10 * time.Second
 )
 
 type socketRequest struct {
@@ -74,7 +75,7 @@ func (c *UnixClient) Call(ctx context.Context, tool string, args json.RawMessage
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return nil, err
 	}
-	line, err := scanJSONLine(conn, 1<<20)
+	line, err := scanJSONLine(conn, maxSocketResponseBytes)
 	if err != nil {
 		return nil, err
 	}

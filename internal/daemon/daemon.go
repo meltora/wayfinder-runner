@@ -50,7 +50,6 @@ type Daemon struct {
 	leases         *lease.Manager
 	recoveredLease atomic.Bool
 	collectors     *collector.Store
-	plans          *collector.PlanStore
 	uploader       *artifactUploader
 	supervisor     supervisor.Supervisor
 
@@ -163,7 +162,6 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		cfg: cfg, store: store, runnerID: runnerID, journal: j, runLock: lock, logger: logger,
 		leases:     leaseManager,
 		collectors: collector.NewStore(cfg.StateDir),
-		plans:      collector.NewPlanStore(cfg.StateDir),
 		uploader:   newArtifactUploader(httpURL),
 		supervisor: nil,
 		updateWake: make(chan struct{}, 1),

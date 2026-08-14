@@ -57,13 +57,7 @@ type ToolDef struct {
 
 var Tools = []ToolDef{
 	{Name: "platform_get_job_context", Description: "Returns approved ticket context, plan status, repository roles, and execution boundaries for the current job.", InputSchema: objectSchema(map[string]any{})},
-	{Name: "platform_publish_plan", Description: "Creates an immutable plan revision for human review.", InputSchema: objectSchema(map[string]any{
-		"summary": stringProp("Plan summary"), "approach": stringProp("Technical approach"),
-		"requirements": arrayProp("Requirements"), "expected_files": arrayProp("Expected file impact"),
-		"risks": arrayProp("Risks"), "assumptions": arrayProp("Assumptions"),
-		"test_strategy": stringProp("Test strategy"), "base_revision": numberProp("Base revision, 0 for first"),
-		"idempotency_key": stringProp("Idempotency key"),
-	})},
+	{Name: "platform_publish_plan", Description: "Publishes one complete immutable plan for human review. Available only to an initial planning manifest.", InputSchema: planPublicationInputSchema(false)},
 	{Name: "platform_report_progress", Description: "Publishes a structured progress milestone.", InputSchema: objectSchema(map[string]any{
 		"milestone": stringProp("Milestone"), "current_task": stringProp("Current task"),
 		"next_action": stringProp("Next action"), "idempotency_key": stringProp("Idempotency key"),
@@ -76,13 +70,7 @@ var Tools = []ToolDef{
 		"failure_type": stringProp("Failure type"), "message": stringProp("Message"),
 		"retryable": boolProp("Safe to retry"), "idempotency_key": stringProp("Idempotency key"),
 	})},
-	{Name: "platform_publish_plan_revision", Description: "Creates a new plan revision from an existing base revision. Rejected if the base is stale.", InputSchema: objectSchema(map[string]any{
-		"base_revision": numberProp("Base revision to build on"), "change_summary": stringProp("What changed and why"),
-		"summary": stringProp("Plan summary"), "approach": stringProp("Technical approach"),
-		"requirements": arrayProp("Requirements"), "expected_files": arrayProp("Expected file impact"),
-		"risks": arrayProp("Risks"), "assumptions": arrayProp("Assumptions"),
-		"test_strategy": stringProp("Test strategy"), "idempotency_key": stringProp("Idempotency key"),
-	})},
+	{Name: "platform_publish_plan_revision", Description: "Publishes one complete replacement plan bound to the exact reviewed base revision. Available only to a revision planning manifest.", InputSchema: planPublicationInputSchema(true)},
 	{Name: "platform_report_blocker", Description: "Reports a typed blocker and whether work can safely continue elsewhere.", InputSchema: objectSchema(map[string]any{
 		"blocker_type": stringProp("Blocker type"), "impact": stringProp("Impact"),
 		"attempted_resolution": stringProp("What was tried"), "recommended_action": stringProp("Recommended human or system action"),

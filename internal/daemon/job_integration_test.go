@@ -88,7 +88,7 @@ printf '%s\n' \
  '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"platform_get_job_context","arguments":{}}}' \
  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"platform_report_progress","arguments":{"milestone":"analysis","current_task":"reading repo","idempotency_key":"prog-1"}}}' \
- '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"platform_publish_plan","arguments":{"summary":"Add feature X","approach":"TDD in small steps","requirements":["req1"],"risks":["none"],"idempotency_key":"plan-1"}}}' \
+ '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"platform_publish_plan","arguments":{"plan":{"behavior":"Add feature X","in_scope":["Feature X"],"out_of_scope":[],"assumptions":[],"unanswered_questions":[],"architecture":"TDD in small steps","api_impact":"No public API change","data_impact":"No data change","security_impact":"No new trust boundary","operational_impact":"No runtime change","preview_requirements":"No preview required","automated_test_strategy":"Unit and integration tests","manual_test_plan":"Verify Feature X","rollout_strategy":"Merge after review","rollback_strategy":"Revert the change","risks":["Implementation regression"],"alternatives":[],"dependencies":[],"delivery_order":["Implement","test"]},"change_summary":"Initial implementation plan","idempotency_key":"plan-1"}}}' \
  | "$RUNNER_BIN" mcp-serve --socket "$PLATFORM_MCP_SOCKET" --token-file "$PLATFORM_MCP_TOKEN_FILE" >/dev/null 2>&1
 echo '{"type":"result","status":"success"}'
 `
@@ -161,12 +161,13 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 	})
 
 	planEvents := cp.EventsByKind("plan_published")
-	plan := planEvents[0].Payload.(map[string]any)["plan"].(map[string]any)
-	if plan["summary"] != "Add feature X" {
-		t.Fatalf("plan summary = %v", plan["summary"])
+	event := planEvents[0].Payload.(map[string]any)
+	plan := event["plan"].(map[string]any)
+	if plan["behavior"] != "Add feature X" {
+		t.Fatalf("plan behavior = %v", plan["behavior"])
 	}
-	if plan["fencing_token"].(float64) != 1 {
-		t.Fatalf("fencing token = %v", plan["fencing_token"])
+	if event["fencing_token"].(float64) != 1 || event["manifest_kind"] != "plan" || event["manifest_id"] != "manifest-job-1" {
+		t.Fatalf("plan authority = %v", event)
 	}
 
 	finished := cp.EventsByKind("job_finished")

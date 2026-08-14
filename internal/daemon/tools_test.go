@@ -56,7 +56,6 @@ func testJobRunner(t *testing.T) (*jobRunner, *capturedEvents) {
 		logger:     slog.Default(),
 		leases:     lease.NewManager(),
 		collectors: collector.NewStore(stateDir),
-		plans:      collector.NewPlanStore(stateDir),
 		uploader:   newArtifactUploader("http://127.0.0.1:1"),
 		eventSink:  cap.sink,
 	}
@@ -162,44 +161,182 @@ func TestToolCallLeaseValidation(t *testing.T) {
 
 func TestPlanAndRevisionFlow(t *testing.T) {
 	jr, cap := testJobRunner(t)
-	res, err := call(t, jr, "platform_publish_plan", `{"summary":"S","approach":"A","idempotency_key":"plan-1"}`)
+	jr.job.Kind = v1.JobKindPlan
+	args := planPublicationArgs(t, "plan-1", "Initial reviewed plan", "Initial behavior", "")
+	res, err := call(t, jr, "platform_publish_plan", args)
 	if err != nil {
 		t.Fatalf("publish plan: %v", err)
 	}
-	if res.(map[string]any)["revision"] != 1 {
-		t.Fatalf("revision = %v", res)
+	eventID, _ := res.(map[string]any)["event_id"].(string)
+	if res.(map[string]any)["published"] != true || eventID == "" {
+		t.Fatalf("publication result = %v", res)
 	}
-	duplicate, err := call(t, jr, "platform_publish_plan", `{"summary":"S","approach":"A","idempotency_key":"plan-1"}`)
-	if err != nil || fmt.Sprint(duplicate.(map[string]any)["revision"]) != "1" {
+	duplicate, err := call(t, jr, "platform_publish_plan", args)
+	if err != nil || duplicate.(map[string]any)["event_id"] != eventID {
 		t.Fatalf("in-memory retry did not recover plan result: %v, %v", duplicate, err)
 	}
 	jr.idempotencyMu.Lock()
 	jr.seenIdempotency = map[string]*toolCallMemo{}
 	jr.idempotencyMu.Unlock()
-	durableDuplicate, err := call(t, jr, "platform_publish_plan", `{"summary":"S","approach":"A","idempotency_key":"plan-1"}`)
-	if err != nil || fmt.Sprint(durableDuplicate.(map[string]any)["revision"]) != "1" {
+	durableDuplicate, err := call(t, jr, "platform_publish_plan", args)
+	if err != nil || durableDuplicate.(map[string]any)["event_id"] != eventID {
 		t.Fatalf("durable retry did not recover plan result: %v, %v", durableDuplicate, err)
 	}
-	if _, err := call(t, jr, "platform_publish_plan", `{"summary":"S2","approach":"A2","idempotency_key":"plan-2"}`); err == nil {
-		t.Fatal("second publish_plan must be rejected")
+	if _, err := call(t, jr, "platform_publish_plan", planPublicationArgs(t, "plan-2", "replacement", "Changed", "")); err == nil {
+		t.Fatal("a second publication under a different key was accepted")
 	}
-	if _, err := call(t, jr, "platform_publish_plan_revision", `{"base_revision":0,"change_summary":"c","summary":"S","approach":"A","idempotency_key":"revision-stale"}`); err == nil {
-		t.Fatal("stale base must be rejected")
+	jr.idempotencyMu.Lock()
+	jr.seenIdempotency = map[string]*toolCallMemo{}
+	jr.idempotencyMu.Unlock()
+	if _, err := call(t, jr, "platform_publish_plan", planPublicationArgs(t, "plan-1", "mutated replay", "Changed", "")); err == nil {
+		t.Fatal("a durable same-key replay with changed input was accepted")
 	}
-	res, err = call(t, jr, "platform_publish_plan_revision", `{"base_revision":1,"change_summary":"addressed feedback","summary":"S2","approach":"A2","idempotency_key":"revision-1"}`)
-	if err != nil {
-		t.Fatalf("revision: %v", err)
-	}
-	if res.(map[string]any)["revision"] != 2 {
-		t.Fatalf("revision = %v", res)
+	if _, err := call(t, jr, "platform_publish_plan_revision", planPublicationArgs(t, "revision-invalid", "revision", "Changed", "revision-1")); err == nil {
+		t.Fatal("revision publication without immutable revision context was accepted")
 	}
 	plans := cap.byKind("plan_published")
-	if len(plans) != 2 {
+	if len(plans) != 1 {
 		t.Fatalf("plan events = %d", len(plans))
 	}
-	if plans[1]["change_summary"] != "addressed feedback" {
-		t.Fatalf("revision event = %v", plans[1])
+	plan, ok := plans[0]["plan"].(v1.PlanContent)
+	if !ok || plan.Behavior != "Initial behavior" {
+		t.Fatalf("strict plan content = %#v", plans[0]["plan"])
 	}
+	for _, legacy := range []string{"summary", "approach", "revision", "base_revision"} {
+		if _, exists := plans[0][legacy]; exists {
+			t.Fatalf("legacy field %s survived in event: %v", legacy, plans[0])
+		}
+	}
+	if plans[0]["manifest_kind"] != "plan" || plans[0]["base_revision_id"] != nil || plans[0]["change_summary"] != "Initial reviewed plan" {
+		t.Fatalf("initial event authority = %v", plans[0])
+	}
+}
+
+func TestPlanRevisionMustUseReviewedBaseRevisionIdentity(t *testing.T) {
+	jr, cap := testJobRunner(t)
+	jr.job.Kind = v1.JobKindPlan
+	jr.job.PlanRevisionContext = validDaemonRevisionContext()
+
+	if _, err := call(t, jr, "platform_publish_plan", planPublicationArgs(t, "initial-invalid", "initial", "Changed", "")); err == nil {
+		t.Fatal("initial publication was accepted for a revision manifest")
+	}
+	if _, err := call(t, jr, "platform_publish_plan_revision", planPublicationArgs(t, "wrong-base", "addressed feedback", "Changed", "revision-other")); err == nil {
+		t.Fatal("revision publication accepted a stale base revision ID")
+	}
+	result, err := call(t, jr, "platform_publish_plan_revision", planPublicationArgs(t, "revision-1", "Addressed rollback feedback", "Changed behavior", "revision-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.(map[string]any)["published"] != true {
+		t.Fatalf("revision result = %v", result)
+	}
+	events := cap.byKind("plan_published")
+	if len(events) != 1 || events[0]["base_revision_id"] != "revision-1" || events[0]["manifest_kind"] != "plan" {
+		t.Fatalf("revision event = %v", events)
+	}
+}
+
+func TestBuildJobCannotPublishPlanningAuthority(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	if _, err := call(t, jr, "platform_publish_plan", planPublicationArgs(t, "build-plan", "invalid", "Behavior", "")); err == nil {
+		t.Fatal("build job published a plan event")
+	}
+}
+
+func TestPendingPlanPublicationRecoversAcrossEveryCrashWindow(t *testing.T) {
+	for _, publishBeforeCrash := range []bool{false, true} {
+		t.Run(fmt.Sprintf("event_published_%v", publishBeforeCrash), func(t *testing.T) {
+			jr, captured := testJobRunner(t)
+			jr.job.Kind = v1.JobKindPlan
+			args := planPublicationArgs(t, "plan-crash", "Crash-safe plan", "Recovered behavior", "")
+			raw := map[string]any{}
+			if err := json.Unmarshal([]byte(args), &raw); err != nil {
+				t.Fatal(err)
+			}
+			claim, err := jr.preparePlanPublicationClaim(publishPlanTool, "plan-crash", raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stored, _, err := jr.d.journal.ClaimPlanPublication(context.Background(), claim)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state, _, err := jr.d.journal.BeginToolCall(context.Background(), jr.job.AttemptID, publishPlanTool, "plan-crash"); err != nil || state != journal.ToolCallStarted {
+				t.Fatalf("stage pending tool call = %s, %v", state, err)
+			}
+			if publishBeforeCrash {
+				event, err := jr.validatePlanPublicationPayload(stored.Payload, publishPlanTool)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := jr.d.sendEventWithStableID(context.Background(), stored.EventID, event.asMap()); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			result, err := call(t, jr, publishPlanTool, args)
+			if err != nil || result.(map[string]any)["event_id"] != stored.EventID {
+				t.Fatalf("recovered result = %v, err=%v", result, err)
+			}
+			if events := captured.byKind("plan_published"); len(events) != 1 {
+				t.Fatalf("logical plan events = %d, want 1", len(events))
+			}
+		})
+	}
+}
+
+func TestPlanPublicationFailsClosedOnStableEventRecordCollision(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	jr.job.Kind = v1.JobKindPlan
+	key := "plan-collision"
+	eventID := planPublicationEventID(jr.job.AttemptID, jr.job.ManifestDigest, publishPlanTool, key)
+	if err := jr.d.journal.Append(context.Background(), journal.Record{
+		ID: eventID, Kind: journal.KindEvent, Payload: []byte(`{}`), CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call(t, jr, publishPlanTool, planPublicationArgs(t, key, "Plan", "Behavior", "")); err == nil {
+		t.Fatal("colliding durable event was trusted as plan evidence")
+	}
+}
+
+func TestPlanPublicationPreservesFencingTokenAboveFloatPrecision(t *testing.T) {
+	jr, captured := testJobRunner(t)
+	jr.job.Kind = v1.JobKindPlan
+	jr.job.FencingToken = (1 << 53) + 1
+	jr.d.leases.Release(jr.job.AttemptID)
+	if err := jr.d.leases.Acquire(lease.Lease{
+		LeaseID: jr.job.LeaseID, JobID: jr.job.JobID, AttemptID: jr.job.AttemptID,
+		Kind: jr.job.Kind, ManifestID: jr.job.ManifestID, ManifestDigest: jr.job.ManifestDigest,
+		WorkflowRevision: jr.job.WorkflowRevision, FencingToken: jr.job.FencingToken,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call(t, jr, publishPlanTool, planPublicationArgs(t, "plan-exact-fence", "Exact fence", "Behavior", "")); err != nil {
+		t.Fatal(err)
+	}
+	events := captured.byKind("plan_published")
+	if len(events) != 1 || events[0]["fencing_token"] != jr.job.FencingToken {
+		t.Fatalf("plan event lost fencing precision: %v", events)
+	}
+}
+
+func planPublicationArgs(t *testing.T, key, changeSummary, behavior, baseRevisionID string) string {
+	t.Helper()
+	plan := validDaemonRevisionContext().BasePlan.Content
+	plan.Behavior = behavior
+	args := map[string]any{
+		"plan": plan, "change_summary": changeSummary, "idempotency_key": key,
+	}
+	if baseRevisionID != "" {
+		args["base_revision_id"] = baseRevisionID
+	}
+	raw, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 func TestIdempotencyKeyDedupes(t *testing.T) {
@@ -372,7 +509,7 @@ func TestToolBoundaryRejectsMalformedAndResourceExhaustionInputs(t *testing.T) {
 	if err := validateToolArguments([]any{make([]any, 257)}, 0); err == nil {
 		t.Fatal("oversized array accepted")
 	}
-	if err := validateToolArguments(strings.Repeat("x", (64<<10)+1), 0); err == nil {
+	if err := validateToolArguments(strings.Repeat("x", (128<<10)+1), 0); err == nil {
 		t.Fatal("oversized string accepted")
 	}
 	deep := any("leaf")
@@ -401,7 +538,7 @@ func TestToolSpecificValidation(t *testing.T) {
 		args string
 	}{
 		{"platform_report_failure", `{"failure_type":"x","message":"","idempotency_key":"a"}`},
-		{"platform_publish_plan_revision", `{"base_revision":1.5,"change_summary":"x","summary":"x","approach":"x","idempotency_key":"b"}`},
+		{"platform_publish_plan_revision", `{"base_revision_id":"revision-1","change_summary":"x","plan":{},"idempotency_key":"b"}`},
 		{"platform_publish_test_results", `{"suite":"unit","result":"passed","duration_ms":-1,"idempotency_key":"c"}`},
 		{"platform_publish_preview", `{"url":"http://preview.example.test","health":"healthy","idempotency_key":"d"}`},
 		{"platform_publish_preview", `{"url":"https://preview.example.test","health":"unknown","idempotency_key":"e"}`},
