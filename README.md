@@ -67,8 +67,9 @@ policy itself must be enforced outside the runner.
   fresh credential-free container, produces a bundle, and the trusted host
   mirror verifies the exact commit before pushing with hooks disabled.
 - Events and artifacts are written locally before upload. SQLite replay,
-  bounded spools, integrity checks, retry, acknowledgement, retention, and
-  startup reconciliation protect against duplicate delivery and crashes.
+  monotonic keyset cursors, bounded spools, integrity checks, retry,
+  acknowledgement, retention, and startup reconciliation protect against
+  duplicate delivery, skipped pages, and crashes.
 - Support bundles use an allowlist and exclude identities, journals,
   repositories, agent homes, tokens, and job contents.
 
@@ -119,7 +120,10 @@ a competing plan.
    that is journaled is also used for live delivery, so an acknowledgement loss
    cannot replay the same event ID with different bytes. Durable events replay in
    SQLite insertion order so preceding plan, progress, test, review, and artifact
-   evidence cannot be overtaken by completion after reconnect.
+   evidence cannot be overtaken by completion after reconnect. Each reconnect
+   replays a finite sequence snapshot; acknowledgements may remove earlier rows
+   without shifting later pages, while events appended during the pass remain
+   queued for the next pass.
    Workspaces, job homes, sockets, tokens, and labeled containers are removed.
    Crash recovery reconciles an unfinished lease and queued uploads after restart.
 8. Cancellation kills the complete supervised process tree. Emergency stop also

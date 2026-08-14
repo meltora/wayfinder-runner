@@ -26,6 +26,7 @@ type Record struct {
 	ID        string
 	Kind      Kind
 	Payload   []byte
+	Sequence  Sequence
 	CreatedAt time.Time
 	AckedAt   *time.Time
 }
@@ -91,13 +92,13 @@ func (j *Journal) ensureCapacity(ctx context.Context, incoming int) error {
 func (j *Journal) migrate() error {
 	_, err := j.db.Exec(`
 		CREATE TABLE IF NOT EXISTS records (
-			id TEXT PRIMARY KEY,
+			sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+			id TEXT NOT NULL UNIQUE,
 			kind TEXT NOT NULL,
 			payload BLOB NOT NULL,
 			created_at INTEGER NOT NULL,
 			acked_at INTEGER
 		);
-			CREATE INDEX IF NOT EXISTS idx_records_unacked ON records(kind) WHERE acked_at IS NULL;
 			CREATE TABLE IF NOT EXISTS active_lease (
 				singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
 				lease_id TEXT NOT NULL,
@@ -140,6 +141,12 @@ func (j *Journal) migrate() error {
 		);
 `)
 	if err != nil {
+		return err
+	}
+	if err := j.ensureRecordSequenceSchema(); err != nil {
+		return err
+	}
+	if _, err := j.db.Exec(`CREATE INDEX IF NOT EXISTS idx_records_unacked ON records(kind, sequence) WHERE acked_at IS NULL`); err != nil {
 		return err
 	}
 	return j.ensureActiveLeaseAuthorityColumns()
@@ -231,16 +238,18 @@ func (j *Journal) HasRecord(ctx context.Context, id string) (bool, error) {
 func (j *Journal) LoadRecord(ctx context.Context, id string) (Record, bool, error) {
 	var r Record
 	var kind string
+	var sequence int64
 	var created int64
 	err := j.db.QueryRowContext(ctx,
-		`SELECT id, kind, payload, created_at FROM records WHERE id=?`, id).
-		Scan(&r.ID, &kind, &r.Payload, &created)
+		`SELECT sequence, id, kind, payload, created_at FROM records WHERE id=?`, id).
+		Scan(&sequence, &r.ID, &kind, &r.Payload, &created)
 	if err == sql.ErrNoRows {
 		return Record{}, false, nil
 	}
 	if err != nil {
 		return Record{}, false, err
 	}
+	r.Sequence = Sequence(sequence)
 	r.Kind = Kind(kind)
 	r.CreatedAt = time.Unix(created, 0)
 	return r, true, nil
@@ -276,33 +285,6 @@ func (j *Journal) AckKind(ctx context.Context, id string, kind Kind) error {
 		return fmt.Errorf("%s record %s not found or already acked", kind, id)
 	}
 	return nil
-}
-
-func (j *Journal) Unacked(ctx context.Context, kind Kind, limit int) ([]Record, error) {
-	return j.UnackedPage(ctx, kind, limit, 0)
-}
-
-func (j *Journal) UnackedPage(ctx context.Context, kind Kind, limit, offset int) ([]Record, error) {
-	rows, err := j.db.QueryContext(ctx,
-		`SELECT id, kind, payload, created_at FROM records WHERE kind = ? AND acked_at IS NULL ORDER BY rowid ASC LIMIT ? OFFSET ?`,
-		string(kind), limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []Record
-	for rows.Next() {
-		var r Record
-		var created int64
-		var k string
-		if err := rows.Scan(&r.ID, &k, &r.Payload, &created); err != nil {
-			return nil, err
-		}
-		r.Kind = Kind(k)
-		r.CreatedAt = time.Unix(created, 0)
-		out = append(out, r)
-	}
-	return out, rows.Err()
 }
 
 func (j *Journal) UnackedCount(ctx context.Context) (int, error) {
@@ -520,8 +502,8 @@ func (j *Journal) Prune(ctx context.Context, before time.Time, limit int) (int64
 	}
 	defer func() { _ = tx.Rollback() }()
 	records, err := tx.ExecContext(ctx, `
-		DELETE FROM records WHERE rowid IN (
-			SELECT rowid FROM records
+		DELETE FROM records WHERE sequence IN (
+			SELECT sequence FROM records
 			WHERE acked_at IS NOT NULL AND acked_at < ?
 			ORDER BY acked_at ASC LIMIT ?
 		)`, before.Unix(), limit)

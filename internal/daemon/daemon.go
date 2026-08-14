@@ -705,41 +705,6 @@ func (d *Daemon) sendCommandAck(ctx context.Context, commandID, status string, c
 	return d.client.SendCommandAck(ackCtx, commandID, payload)
 }
 
-func (d *Daemon) replayUnacked(ctx context.Context, send func(v1.Envelope) error) error {
-	total := 0
-	for offset := 0; ; {
-		recs, err := d.journal.UnackedPage(ctx, journal.KindEvent, 100, offset)
-		if err != nil {
-			return err
-		}
-		for _, r := range recs {
-			var env v1.Envelope
-			decoder := json.NewDecoder(bytes.NewReader(r.Payload))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&env); err != nil || decoder.Decode(&struct{}{}) != io.EOF ||
-				env.ID != r.ID || env.Type != v1.TypeEvent || env.Version != v1.ProtocolVersion {
-				d.logger.Error("discarding corrupt durable event", "record_id", r.ID)
-				if err := d.journal.AckKind(ctx, r.ID, journal.KindEvent); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := send(env); err != nil {
-				return err
-			}
-			total++
-		}
-		if len(recs) < 100 {
-			break
-		}
-		offset += len(recs)
-	}
-	if total > 0 {
-		d.logger.Info("replayed unacked events", "count", total)
-	}
-	return nil
-}
-
 func (d *Daemon) Paused() bool { return d.paused.Load() }
 
 func (d *Daemon) Pause() error {

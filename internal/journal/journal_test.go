@@ -465,19 +465,6 @@ func TestOpenAndMaintenanceValidation(t *testing.T) {
 	}
 }
 
-func TestUnackedPagination(t *testing.T) {
-	j := openTest(t)
-	for _, id := range []string{"a", "b", "c"} {
-		if err := j.Append(context.Background(), Record{ID: id, Kind: KindEvent, Payload: []byte(id), CreatedAt: time.Unix(100, 0)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	page, err := j.UnackedPage(context.Background(), KindEvent, 1, 1)
-	if err != nil || len(page) != 1 || page[0].ID != "b" {
-		t.Fatalf("page=%v err=%v", page, err)
-	}
-}
-
 func TestClaimCheckExecutionBindsKeyToExactlyOneCheck(t *testing.T) {
 	t.Parallel()
 	j := openTest(t)

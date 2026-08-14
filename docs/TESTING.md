@@ -123,7 +123,11 @@ Terminal-outcome tests assert the strict manifest-bound `job_finished` shape,
 state-to-failure-code consistency, bounded failure detail, and omission of build
 provenance that belongs in dedicated evidence events. Journal tests insert
 multiple event IDs with one timestamp and prove reconnect replay follows durable
-SQLite insertion order instead of lexical ID order.
+SQLite insertion order instead of lexical ID order. Keyset tests acknowledge a
+full first page while replaying 101 events and prove the last event is not
+skipped. They also cover finite replay snapshots, send interruption and
+reconnect, corrupt-row advancement, legacy schema migration, and monotonic
+sequence allocation after acknowledged rows are pruned.
 
 Lease-renewal tests prove the runner waits until the latter third of the current
 authority window, emits one stable manifest-bound request per window, rejects
