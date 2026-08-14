@@ -278,16 +278,13 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		if err := requireToolText(raw, "question", 16<<10); err != nil {
 			return nil, err
 		}
+		options, timeout, err := decisionRequestParameters(raw)
+		if err != nil {
+			return nil, err
+		}
 		questionID := str(raw, "idempotency_key")
 		if questionID == "" {
 			questionID = "q-" + newEventID()
-		}
-		timeout := defaultDecisionTimeout
-		if ts, ok := raw["timeout_seconds"].(float64); ok && ts > 0 {
-			timeout = time.Duration(ts) * time.Second
-			if timeout > maxDecisionTimeout {
-				timeout = maxDecisionTimeout
-			}
 		}
 		ch := make(chan v1.CommandPayload, 1)
 		jr.decisionMu.Lock()
@@ -299,15 +296,22 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 			jr.decisionMu.Unlock()
 		}()
 
-		if err := jr.sendJobEvent(ctx, "decision_request", map[string]any{
+		observedAt := time.Now()
+		fields := map[string]any{
 			"question_id": questionID,
-			"question":    str(raw, "question"), "options": strSlice(raw, "options"),
-			"recommendation":       str(raw, "recommendation"),
-			"consequence_of_delay": str(raw, "consequence_of_delay"),
-			"blocked_operation":    str(raw, "blocked_operation"),
-		}); err != nil {
+			"question":    str(raw, "question"), "options": options,
+			"expires_at": observedAt.Add(timeout).UTC().Format(time.RFC3339Nano),
+		}
+		for _, field := range []string{"recommendation", "consequence_of_delay", "blocked_operation"} {
+			if value := str(raw, field); value != "" {
+				fields[field] = value
+			}
+		}
+		if err := jr.d.sendEvent(ctx, manifestBoundEvent(jr.job, "decision_request", fields, observedAt)); err != nil {
 			return nil, err
 		}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
 		select {
 		case answer := <-ch:
 			return map[string]any{
@@ -316,12 +320,7 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 			}, nil
 		case <-jr.ctx.Done():
 			return nil, fmt.Errorf("job cancelled while waiting for human input")
-		case <-time.After(timeout):
-			_ = jr.sendJobEvent(context.Background(), "decision_timeout", map[string]any{
-				"question_id":     questionID,
-				"question":        str(raw, "question"),
-				"timeout_seconds": int(timeout.Seconds()),
-			})
+		case <-timer.C:
 			return map[string]any{"status": "timeout", "question_id": questionID}, nil
 		}
 
@@ -433,18 +432,16 @@ func validateToolArguments(value any, depth int) error {
 	return nil
 }
 
-const (
-	defaultDecisionTimeout = 4 * time.Hour
-	maxDecisionTimeout     = 4 * time.Hour
-)
-
 func (jr *jobRunner) deliverDecision(cmd v1.CommandPayload) error {
 	if err := validation.ID("question_id", cmd.QuestionID); err != nil {
 		return fmt.Errorf("decision_response: %w", err)
 	}
-	if cmd.Decision == "" || len(cmd.Decision) > 16<<10 || len(cmd.DecidedBy) > 1024 ||
+	if strings.TrimSpace(cmd.Decision) == "" || len(cmd.Decision) > 16<<10 ||
 		strings.ContainsRune(cmd.Decision, '\x00') || strings.ContainsRune(cmd.DecidedBy, '\x00') {
 		return fmt.Errorf("decision_response has invalid decision metadata")
+	}
+	if err := validation.ID("decided_by", cmd.DecidedBy); err != nil {
+		return fmt.Errorf("decision_response: %w", err)
 	}
 	jr.decisionMu.Lock()
 	defer jr.decisionMu.Unlock()

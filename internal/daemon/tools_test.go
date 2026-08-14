@@ -467,6 +467,35 @@ func TestHumanInputAndBlocker(t *testing.T) {
 	}
 }
 
+func TestHumanInputRejectsInvalidDecisionContractFields(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	tooMany := make([]string, 33)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("option-%d", i)
+	}
+	tooManyRaw, err := json.Marshal(map[string]any{
+		"question": "Which DB?", "options": tooMany,
+		"timeout_seconds": 1, "idempotency_key": "too-many",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []json.RawMessage{
+		tooManyRaw,
+		json.RawMessage(`{"question":"Which DB?","options":["pg","pg"],"timeout_seconds":1,"idempotency_key":"duplicate"}`),
+		json.RawMessage(`{"question":"Which DB?","options":["pg",7],"timeout_seconds":1,"idempotency_key":"wrong-type"}`),
+		json.RawMessage(`{"question":"Which DB?","options":[""],"timeout_seconds":1,"idempotency_key":"empty-option"}`),
+		json.RawMessage(`{"question":"Which DB?","timeout_seconds":0,"idempotency_key":"zero-timeout"}`),
+		json.RawMessage(`{"question":"Which DB?","timeout_seconds":1.5,"idempotency_key":"fractional-timeout"}`),
+		json.RawMessage(`{"question":"Which DB?","timeout_seconds":14401,"idempotency_key":"long-timeout"}`),
+	}
+	for _, raw := range cases {
+		if _, err := jr.handleToolCall(context.Background(), "platform_request_human_input", raw); err == nil {
+			t.Fatalf("invalid decision request accepted: %s", raw)
+		}
+	}
+}
+
 func TestRemainingAuthoritativeToolEvents(t *testing.T) {
 	jr, cap := testJobRunner(t)
 	calls := []struct {

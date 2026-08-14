@@ -106,7 +106,8 @@ func TestHTTPAdminEndpointsRejectMalformedOrDisconnectedRequests(t *testing.T) {
 		{http.MethodGet, "/admin/decisions", "", http.StatusMethodNotAllowed},
 		{http.MethodPost, "/admin/decisions", "not-json", http.StatusBadRequest},
 		{http.MethodPost, "/admin/decisions", `{}`, http.StatusBadRequest},
-		{http.MethodPost, "/admin/decisions", `{"question_id":"q1","decision":"yes"}`, http.StatusConflict},
+		{http.MethodPost, "/admin/decisions", `{"question_id":"q1","decision":"yes"}`, http.StatusBadRequest},
+		{http.MethodPost, "/admin/decisions", `{"question_id":"q1","decision":"yes","decided_by":"user-1","job_id":"job-1","attempt_id":"attempt-1","fencing_token":7}`, http.StatusConflict},
 		{http.MethodGet, "/v1/artifacts/job/attempt/name", "", http.StatusMethodNotAllowed},
 		{http.MethodPut, "/v1/artifacts/bad", "x", http.StatusBadRequest},
 	}

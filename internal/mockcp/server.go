@@ -235,23 +235,25 @@ func (s *Server) handleAdminDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		QuestionID string `json:"question_id"`
-		Decision   string `json:"decision"`
-		DecidedBy  string `json:"decided_by"`
+		QuestionID   string `json:"question_id"`
+		Decision     string `json:"decision"`
+		DecidedBy    string `json:"decided_by"`
+		JobID        string `json:"job_id"`
+		AttemptID    string `json:"attempt_id"`
+		FencingToken uint64 `json:"fencing_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if body.QuestionID == "" || body.Decision == "" {
-		http.Error(w, "question_id and decision required", http.StatusBadRequest)
+	if body.QuestionID == "" || body.Decision == "" || body.DecidedBy == "" ||
+		body.JobID == "" || body.AttemptID == "" || body.FencingToken == 0 {
+		http.Error(w, "question, decision, responder, and exact job authority required", http.StatusBadRequest)
 		return
 	}
-	if body.DecidedBy == "" {
-		body.DecidedBy = "admin"
-	}
 	if err := s.SendCommand(r.Context(), v1.CommandPayload{
-		Command: v1.CmdDecisionResponse, QuestionID: body.QuestionID,
+		Command: v1.CmdDecisionResponse, JobID: body.JobID, AttemptID: body.AttemptID,
+		FencingToken: body.FencingToken, QuestionID: body.QuestionID,
 		Decision: body.Decision, DecidedBy: body.DecidedBy,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)

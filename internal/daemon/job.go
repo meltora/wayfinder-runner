@@ -80,6 +80,32 @@ type decisionAnswer struct {
 	DecidedBy string
 }
 
+func (jr *jobRunner) startupFailureOutcome(
+	failureCode v1.JobFinishedFailureCode,
+	failureMessage string,
+) jobOutcome {
+	jr.procMu.Lock()
+	leaseLost := jr.leaseLost
+	cancelled := jr.cancelled
+	jr.procMu.Unlock()
+	if leaseLost {
+		return jobOutcome{
+			State: v1.JobFinishedQuarantined, FailureCode: v1.JobFailureLeaseLost,
+			FailureMessage: "authoritative lease was lost",
+		}
+	}
+	if cancelled || jr.ctx.Err() != nil {
+		return jobOutcome{
+			State: v1.JobFinishedCancelled, FailureCode: v1.JobFailureCancelled,
+		}
+	}
+	return jobOutcome{
+		State:          v1.JobFinishedFailed,
+		FailureCode:    failureCode,
+		FailureMessage: failureMessage,
+	}
+}
+
 func (d *Daemon) startJob(ctx context.Context, job v1.JobSpec) error {
 	if err := validation.JobSpec(job); err != nil {
 		return fmt.Errorf("invalid job: %w", err)
@@ -259,7 +285,13 @@ func (jr *jobRunner) run() {
 	}
 
 	if err := os.MkdirAll(jr.workDir, 0o700); err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "create job workspace"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureWorkspacePreparation,
+				"create job workspace",
+			),
+			nil,
+		)
 		return
 	}
 
@@ -267,7 +299,13 @@ func (jr *jobRunner) run() {
 	workDir, cleanup, err := jr.prepareWorkspace(ctx)
 	if err != nil {
 		jr.logger.Error("workspace preparation failed", "err", err)
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "workspace preparation failed"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureWorkspacePreparation,
+				"workspace preparation failed",
+			),
+			nil,
+		)
 		return
 	}
 	defer cleanup()
@@ -278,26 +316,50 @@ func (jr *jobRunner) run() {
 		socketsRoot = os.TempDir()
 	}
 	if err := os.MkdirAll(socketsRoot, 0o700); err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "create job socket directory"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureWorkspacePreparation,
+				"create job socket directory",
+			),
+			nil,
+		)
 		return
 	}
 	socketDir, err := os.MkdirTemp(socketsRoot, "job-")
 	if err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "create job socket"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureWorkspacePreparation,
+				"create job socket",
+			),
+			nil,
+		)
 		return
 	}
 	defer func() { _ = os.RemoveAll(socketDir) }()
 	sockPath := filepath.Join(socketDir, "mcp.sock")
 	tokenPath := filepath.Join(socketDir, "job.token")
 	if err := os.WriteFile(tokenPath, []byte(jr.jobToken+"\n"), 0o400); err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "create MCP token file"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureWorkspacePreparation,
+				"create MCP token file",
+			),
+			nil,
+		)
 		return
 	}
 	mcpSrv := &mcpbridge.UnixServer{SocketPath: sockPath, Token: jr.jobToken, Handler: jr.handleToolCall}
 	mcpCtx, stopMCP := context.WithCancel(ctx)
 	defer stopMCP()
 	if err := mcpSrv.Start(mcpCtx); err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "start MCP bridge"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureWorkspacePreparation,
+				"start MCP bridge",
+			),
+			nil,
+		)
 		return
 	}
 	agentSockPath := mcpSrv.SocketPath
@@ -305,7 +367,13 @@ func (jr *jobRunner) run() {
 	adapterName := d.cfg.Provider
 	adapter, err := provider.For(adapterName)
 	if err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "select agent provider"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureAgentStart,
+				"select agent provider",
+			),
+			nil,
+		)
 		return
 	}
 	spec, err := adapter.BuildSpec(provider.StartParams{
@@ -322,12 +390,24 @@ func (jr *jobRunner) run() {
 		ReadOnly:        job.Kind == v1.JobKindPlan,
 	})
 	if err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "build agent start specification"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureAgentStart,
+				"build agent start specification",
+			),
+			nil,
+		)
 		return
 	}
 	iso, err := isolation.Select(d.cfg.Isolation, d.cfg.AllowUnsafeDirect)
 	if err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "select job isolation"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureAgentStart,
+				"select job isolation",
+			),
+			nil,
+		)
 		return
 	}
 	isoPolicy := isolation.Policy{
@@ -365,13 +445,25 @@ func (jr *jobRunner) run() {
 			HardenedRuntime: true,
 		})
 		if err != nil {
-			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "build isolated agent start specification"}, nil)
+			finish(
+				jr.startupFailureOutcome(
+					v1.JobFailureAgentStart,
+					"build isolated agent start specification",
+				),
+				nil,
+			)
 			return
 		}
 		isoPolicy.Environment = provider.ContainerEnvironment(spec.Env)
 		jobHome, err := isolation.PrepareHome(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName)
 		if err != nil {
-			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation, FailureMessage: "prepare isolated job home"}, nil)
+			finish(
+				jr.startupFailureOutcome(
+					v1.JobFailureWorkspacePreparation,
+					"prepare isolated job home",
+				),
+				nil,
+			)
 			return
 		}
 		defer func() {
@@ -383,7 +475,13 @@ func (jr *jobRunner) run() {
 	}
 	spec.Command, spec.Args, err = iso.Wrap(spec.Command, spec.Args, isoPolicy)
 	if err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "apply job isolation"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureAgentStart,
+				"apply job isolation",
+			),
+			nil,
+		)
 		return
 	}
 	spec.Env = append(spec.Env,
@@ -392,7 +490,13 @@ func (jr *jobRunner) run() {
 	)
 	supervisorRoot := filepath.Join(d.cfg.StateDir, "supervisor")
 	if err := os.MkdirAll(supervisorRoot, 0o700); err != nil {
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "create supervisor runtime"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureAgentStart,
+				"create supervisor runtime",
+			),
+			nil,
+		)
 		return
 	}
 	spec.RuntimeDir = supervisorRoot
@@ -405,13 +509,25 @@ func (jr *jobRunner) run() {
 	jr.procMu.Lock()
 	if jr.cancelled {
 		jr.procMu.Unlock()
-		finish(jobOutcome{State: v1.JobFinishedCancelled, FailureCode: v1.JobFailureCancelled}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureCancelled,
+				"job cancelled before agent start",
+			),
+			nil,
+		)
 		return
 	}
 	proc, err := d.supervisor.Start(ctx, spec)
 	if err != nil {
 		jr.procMu.Unlock()
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentStart, FailureMessage: "start agent process"}, nil)
+		finish(
+			jr.startupFailureOutcome(
+				v1.JobFailureAgentStart,
+				"start agent process",
+			),
+			nil,
+		)
 		return
 	}
 	jr.proc = proc

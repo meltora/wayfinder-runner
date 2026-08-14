@@ -51,6 +51,11 @@ func Open(path string) (*Journal, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open journal: %w", err)
 	}
+	// The journal is process-local and SQLite permits only one writer at a time.
+	// Keeping a single connection serializes read-to-write transactions so an
+	// emergency command cannot be lost to SQLITE_BUSY while events are appended.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	j := &Journal{db: db, path: path, maxBytes: 512 << 20}
 	if err := j.migrate(); err != nil {
 		_ = db.Close()

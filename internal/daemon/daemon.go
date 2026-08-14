@@ -662,13 +662,7 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 		}
 		return nil
 	case v1.CmdDecisionResponse:
-		d.jobMu.Lock()
-		jr := d.activeJob
-		d.jobMu.Unlock()
-		if jr == nil {
-			return fmt.Errorf("no active job to answer")
-		}
-		return jr.deliverDecision(cmd)
+		return d.executeDecisionResponse(cmd)
 	case v1.CmdEmergencyStop:
 		if err := d.Pause(); err != nil {
 			return err

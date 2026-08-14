@@ -28,6 +28,12 @@ func TestHumanInputBlocksUntilAnswer(t *testing.T) {
 	waitForTest(t, "decision_request event", func() bool {
 		return len(cap.byKind("decision_request")) == 1
 	})
+	event := cap.byKind("decision_request")[0]
+	observedAt, observedErr := time.Parse(time.RFC3339Nano, event["observed_at"].(string))
+	expiresAt, expiryErr := time.Parse(time.RFC3339Nano, event["expires_at"].(string))
+	if observedErr != nil || expiryErr != nil || expiresAt.Sub(observedAt) != 5*time.Second {
+		t.Fatalf("decision expiry = %v -> %v (errors %v, %v)", observedAt, expiresAt, observedErr, expiryErr)
+	}
 
 	if err := jr.deliverDecision(v1.CommandPayload{QuestionID: "q-1", Decision: "pg", DecidedBy: "omar"}); err != nil {
 		t.Fatalf("deliverDecision: %v", err)
@@ -60,12 +66,8 @@ func TestHumanInputTimeout(t *testing.T) {
 	if res.(map[string]any)["status"] != "timeout" {
 		t.Fatalf("result = %v", res)
 	}
-	timeouts := cap.byKind("decision_timeout")
-	if len(timeouts) != 1 {
-		t.Fatalf("decision_timeout events = %d", len(timeouts))
-	}
-	if timeouts[0]["question"] != "Pick one" || timeouts[0]["question_id"] != "timeout-1" {
-		t.Fatalf("timeout event = %v", timeouts[0])
+	if timeouts := cap.byKind("decision_timeout"); len(timeouts) != 0 {
+		t.Fatalf("decision_timeout events = %d, want PostgreSQL-owned expiry only", len(timeouts))
 	}
 }
 
@@ -100,6 +102,45 @@ func TestDeliverDecisionUnknownQuestion(t *testing.T) {
 	}
 	if err := jr.deliverDecision(v1.CommandPayload{Decision: "x"}); err == nil {
 		t.Fatal("expected missing question_id error")
+	}
+	if err := jr.deliverDecision(v1.CommandPayload{QuestionID: "nope", Decision: "x"}); err == nil {
+		t.Fatal("expected missing decided_by error")
+	}
+}
+
+func TestDecisionCommandRequiresExactActiveAuthority(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	jr.decisions = map[string]chan v1.CommandPayload{"q-1": make(chan v1.CommandPayload, 1)}
+	jr.d.jobMu.Lock()
+	jr.d.activeJob = jr
+	jr.d.jobMu.Unlock()
+
+	valid := v1.CommandPayload{
+		Command: v1.CmdDecisionResponse, JobID: jr.job.JobID, AttemptID: jr.job.AttemptID,
+		FencingToken: jr.job.FencingToken, QuestionID: "q-1", Decision: "postgres", DecidedBy: "reviewer-1",
+	}
+	cases := []struct {
+		name string
+		cmd  v1.CommandPayload
+	}{
+		{"workflow", func() v1.CommandPayload { c := valid; c.JobID = "other-job"; return c }()},
+		{"attempt", func() v1.CommandPayload { c := valid; c.AttemptID = "other-attempt"; return c }()},
+		{"fence", func() v1.CommandPayload { c := valid; c.FencingToken--; return c }()},
+		{"actor", func() v1.CommandPayload { c := valid; c.DecidedBy = ""; return c }()},
+	}
+	for _, tc := range cases {
+		if err := jr.d.executeCommand(context.Background(), v1.Envelope{}, tc.cmd); err == nil {
+			t.Fatalf("%s mismatch was accepted", tc.name)
+		}
+	}
+	if len(jr.decisions["q-1"]) != 0 {
+		t.Fatal("rejected authority delivered an answer")
+	}
+	if err := jr.d.executeCommand(context.Background(), v1.Envelope{}, valid); err != nil {
+		t.Fatalf("exact decision command: %v", err)
+	}
+	if len(jr.decisions["q-1"]) != 1 {
+		t.Fatal("exact decision command was not delivered")
 	}
 }
 
