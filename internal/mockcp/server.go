@@ -28,6 +28,7 @@ type Server struct {
 
 	mu           sync.Mutex
 	events       []v1.Envelope
+	commandAcks  []v1.Envelope
 	heartbeats   int
 	helloCount   int
 	DropOnHello  int
@@ -343,6 +344,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				Version: v1.ProtocolVersion, Type: v1.TypeHeartbeatAck, ID: "ack-" + env.ID,
 				SentAt: time.Now(), InReplyTo: env.ID,
 			})
+		case v1.TypeCommandAck:
+			s.commandAcks = append(s.commandAcks, env)
 		}
 		s.mu.Unlock()
 	}
@@ -352,16 +355,28 @@ func (s *Server) EnrollURL() string { return s.enrollSrv.URL }
 func (s *Server) WSURL() string     { return s.wsSrv.URL }
 
 func (s *Server) SendCommand(ctx context.Context, cmd v1.CommandPayload) error {
+	return s.SendCommandEnvelope(ctx, v1.Envelope{
+		Version: v1.ProtocolVersion, Type: v1.TypeCommand, ID: fmt.Sprintf("cmd-%d", time.Now().UnixNano()),
+		SentAt: time.Now(), Payload: cmd,
+	})
+}
+
+func (s *Server) SendCommandEnvelope(ctx context.Context, envelope v1.Envelope) error {
 	s.connMu.Lock()
 	conn := s.conn
 	s.connMu.Unlock()
 	if conn == nil {
 		return fmt.Errorf("no runner connected")
 	}
-	return write(conn, ctx, v1.Envelope{
-		Version: v1.ProtocolVersion, Type: v1.TypeCommand, ID: fmt.Sprintf("cmd-%d", time.Now().UnixNano()),
-		SentAt: time.Now(), Payload: cmd,
-	})
+	return write(conn, ctx, envelope)
+}
+
+func (s *Server) CommandAcks() []v1.Envelope {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]v1.Envelope, len(s.commandAcks))
+	copy(out, s.commandAcks)
+	return out
 }
 
 func (s *Server) EventsByKind(kind string) []v1.Envelope {

@@ -46,8 +46,9 @@ type jobRunner struct {
 	providerError   string
 	capacityFailure *provider.CapacityFailure
 
-	decisionMu sync.Mutex
-	decisions  map[string]chan v1.CommandPayload
+	decisionMu         sync.Mutex
+	decisions          map[string]chan v1.CommandPayload
+	deliveredDecisions map[string]decisionAnswer
 
 	checkMu sync.Mutex
 
@@ -72,6 +73,11 @@ type toolCallMemo struct {
 	done   chan struct{}
 	result []byte
 	err    error
+}
+
+type decisionAnswer struct {
+	Decision  string
+	DecidedBy string
 }
 
 func (d *Daemon) startJob(ctx context.Context, job v1.JobSpec) error {

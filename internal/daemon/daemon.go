@@ -1,10 +1,10 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -63,6 +63,8 @@ type Daemon struct {
 	updateExpiredAtStartup *pendingUpdate
 	controlReady           atomic.Bool
 	rotationMu             sync.Mutex
+	commandMu              sync.Mutex
+	commandOwner           string
 
 	eventSink   func(ctx context.Context, payload any) error
 	httpMu      sync.RWMutex
@@ -160,12 +162,13 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	updateClient.ExpectedServerUID = 0
 	d := &Daemon{
 		cfg: cfg, store: store, runnerID: runnerID, journal: j, runLock: lock, logger: logger,
-		leases:     leaseManager,
-		collectors: collector.NewStore(cfg.StateDir),
-		uploader:   newArtifactUploader(httpURL),
-		supervisor: nil,
-		updateWake: make(chan struct{}, 1),
-		updateIPC:  updateClient,
+		commandOwner: "process-" + newEventID(),
+		leases:       leaseManager,
+		collectors:   collector.NewStore(cfg.StateDir),
+		uploader:     newArtifactUploader(httpURL),
+		supervisor:   nil,
+		updateWake:   make(chan struct{}, 1),
+		updateIPC:    updateClient,
 	}
 	d.collectors.SetMaxSpoolBytes(int64(cfg.ArtifactSpoolMB) << 20)
 	d.recoveredLease.Store(recoveredLease)
@@ -541,58 +544,76 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		_ = d.sendCommandAck(ctx, env.ID, "rejected", err)
 		return nil
 	}
+	d.commandMu.Lock()
+	defer d.commandMu.Unlock()
+
+	contentDigest, err := commandContentDigest(env.Payload)
+	if err != nil {
+		_ = d.sendCommandAck(ctx, env.ID, "rejected", fmt.Errorf("encode command content"))
+		return nil
+	}
 	payload, err := json.Marshal(env)
 	if err != nil {
+		_ = d.sendCommandAck(ctx, env.ID, "rejected", fmt.Errorf("encode command envelope"))
 		return nil
 	}
-	inserted, err := d.journal.AppendIfNew(ctx, journal.Record{
+	receipt, _, err := d.journal.ReceiveCommand(ctx, journal.Record{
 		ID: env.ID, Kind: journal.KindCommand, Payload: payload, CreatedAt: time.Now(),
-	})
-	if err != nil {
-		d.logger.Error("journal command", "err", err)
-		_ = d.sendCommandAck(ctx, env.ID, "rejected", fmt.Errorf("command could not be durably recorded"))
-		return nil
-	}
-	if !inserted {
-		_ = d.sendCommandAck(ctx, env.ID, "duplicate", nil)
-		return nil
-	}
-
-	var cmd v1.CommandPayload
-	raw, err := json.Marshal(env.Payload)
-	if err != nil {
-		_ = d.journal.Ack(ctx, env.ID)
+	}, contentDigest)
+	if errors.Is(err, journal.ErrCommandContentConflict) {
+		d.logger.Error("command ID reused with different content", "id", env.ID)
 		_ = d.sendCommandAck(ctx, env.ID, "rejected", err)
 		return nil
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cmd); err != nil {
-		_ = d.journal.Ack(ctx, env.ID)
-		_ = d.sendCommandAck(ctx, env.ID, "rejected", fmt.Errorf("decode command payload: %w", err))
+	if err != nil {
+		d.logger.Error("journal command", "err", err)
+		return fmt.Errorf("durably receive command %s: %w", env.ID, err)
+	}
+	if commandReceiptTerminal(receipt) {
+		d.sendDurableCommandAck(ctx, receipt)
+		d.recordCommandAckAttempt(env.Payload, receipt)
 		return nil
 	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		_ = d.journal.Ack(ctx, env.ID)
-		_ = d.sendCommandAck(ctx, env.ID, "rejected", fmt.Errorf("decode command payload: trailing JSON"))
+	effectMayHaveRun := receipt.State == journal.CommandProcessing
+	claimOwner := d.commandOwner + "-" + newEventID()
+	receipt, claimed, err := d.journal.ClaimCommand(ctx, env.ID, claimOwner)
+	if err != nil {
+		d.logger.Error("claim durable command", "id", env.ID, "err", err)
+		return fmt.Errorf("claim durable command %s: %w", env.ID, err)
+	}
+	if !claimed {
+		if commandReceiptTerminal(receipt) {
+			d.sendDurableCommandAck(ctx, receipt)
+		}
 		return nil
 	}
-	execErr := d.executeCommand(ctx, env, cmd)
-	if err := d.journal.Ack(ctx, env.ID); err != nil {
-		d.logger.Warn("mark command complete", "id", env.ID, "err", err)
+
+	cmd, decodeErr := decodeCommandPayload(env.Payload)
+	execErr := decodeErr
+	if execErr == nil {
+		alreadyApplied := false
+		if effectMayHaveRun {
+			alreadyApplied = d.commandEffectAlreadyApplied(cmd)
+		}
+		if !alreadyApplied {
+			execErr = d.executeCommand(ctx, env, cmd)
+		}
 	}
 	status := "accepted"
 	if execErr != nil {
 		status = "rejected"
 	}
-	if err := d.sendCommandAck(ctx, env.ID, status, execErr); err != nil {
-		d.logger.Debug("send command ack", "id", env.ID, "err", err)
+	errorText := ""
+	if execErr != nil {
+		errorText = truncate(execErr.Error(), 500)
 	}
-	if cmd.Command == v1.CmdUpdate && execErr == nil {
-		if err := d.markUpdateAckAttempted(cmd.UpdateID); err != nil {
-			d.logger.Error("persist update command acknowledgement attempt", "id", env.ID, "err", err)
-		}
+	receipt, err = d.journal.CompleteCommand(ctx, env.ID, claimOwner, status, errorText)
+	if err != nil {
+		d.logger.Error("persist command outcome", "id", env.ID, "err", err)
+		return fmt.Errorf("persist command outcome %s: %w", env.ID, err)
 	}
+	d.sendDurableCommandAck(ctx, receipt)
+	d.recordCommandAckAttempt(env.Payload, receipt)
 	return nil
 }
 
@@ -688,6 +709,9 @@ func (d *Daemon) validateCommandEnvelope(env v1.Envelope) error {
 	}
 	if env.RunnerID != "" && env.RunnerID != d.runnerID {
 		return fmt.Errorf("command is addressed to a different runner")
+	}
+	if env.InReplyTo != "" {
+		return fmt.Errorf("command cannot reply to another message")
 	}
 	return nil
 }

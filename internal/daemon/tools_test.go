@@ -62,12 +62,13 @@ func testJobRunner(t *testing.T) (*jobRunner, *capturedEvents) {
 	stateDir := t.TempDir()
 	cap := &capturedEvents{}
 	d := &Daemon{
-		cfg:        config.Config{StateDir: stateDir},
-		logger:     slog.Default(),
-		leases:     lease.NewManager(),
-		collectors: collector.NewStore(stateDir),
-		uploader:   newArtifactUploader("http://127.0.0.1:1"),
-		eventSink:  cap.sink,
+		cfg:          config.Config{StateDir: stateDir},
+		logger:       slog.Default(),
+		commandOwner: "process-test",
+		leases:       lease.NewManager(),
+		collectors:   collector.NewStore(stateDir),
+		uploader:     newArtifactUploader("http://127.0.0.1:1"),
+		eventSink:    cap.sink,
 	}
 	var err error
 	d.journal, err = journal.Open(filepath.Join(stateDir, "journal.db"))

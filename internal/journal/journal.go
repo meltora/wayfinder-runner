@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
@@ -32,9 +33,10 @@ type Record struct {
 }
 
 type Journal struct {
-	db       *sql.DB
-	path     string
-	maxBytes int64
+	db        *sql.DB
+	path      string
+	maxBytes  int64
+	commandMu sync.Mutex
 }
 
 func Open(path string) (*Journal, error) {
@@ -45,7 +47,7 @@ func Open(path string) (*Journal, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("open journal: %w", err)
 	}
@@ -147,6 +149,9 @@ func (j *Journal) migrate() error {
 		return err
 	}
 	if _, err := j.db.Exec(`CREATE INDEX IF NOT EXISTS idx_records_unacked ON records(kind, sequence) WHERE acked_at IS NULL`); err != nil {
+		return err
+	}
+	if err := j.ensureCommandReceiptSchema(); err != nil {
 		return err
 	}
 	return j.ensureActiveLeaseAuthorityColumns()

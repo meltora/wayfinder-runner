@@ -137,6 +137,14 @@ strict `renew_lease` command, and proves that the job completes under renewed
 authority. Transport tests also assert that live delivery sends the exact
 journaled envelope rather than rebuilding mutable metadata such as `sent_at`.
 
+Inbound-command recovery tests cover durable receive/claim/terminal receipt
+transitions, canonical content-digest conflicts, concurrent duplicate delivery,
+legacy pending-command adoption, acknowledgement replay, journal pruning, and
+effect-before-outcome crash windows. The integration fixture sends the same
+command ID with refreshed delivery metadata, verifies the exact accepted
+acknowledgement is replayed, and confirms that changed content under that ID is
+rejected without applying its effect.
+
 ## Troubleshooting
 
 ```sh

@@ -447,13 +447,25 @@ func (jr *jobRunner) deliverDecision(cmd v1.CommandPayload) error {
 		return fmt.Errorf("decision_response has invalid decision metadata")
 	}
 	jr.decisionMu.Lock()
+	defer jr.decisionMu.Unlock()
+	if delivered, ok := jr.deliveredDecisions[cmd.QuestionID]; ok {
+		if delivered.Decision == cmd.Decision && delivered.DecidedBy == cmd.DecidedBy {
+			return nil
+		}
+		return fmt.Errorf("question %s already received a different answer", cmd.QuestionID)
+	}
 	ch, ok := jr.decisions[cmd.QuestionID]
-	jr.decisionMu.Unlock()
 	if !ok {
 		return fmt.Errorf("no pending question %s", cmd.QuestionID)
 	}
 	select {
 	case ch <- cmd:
+		next := make(map[string]decisionAnswer, len(jr.deliveredDecisions)+1)
+		for questionID, answer := range jr.deliveredDecisions {
+			next[questionID] = answer
+		}
+		next[cmd.QuestionID] = decisionAnswer{Decision: cmd.Decision, DecidedBy: cmd.DecidedBy}
+		jr.deliveredDecisions = next
 		return nil
 	default:
 		return fmt.Errorf("question %s already answered", cmd.QuestionID)

@@ -86,8 +86,13 @@ untrusted with respect to the runner identity and control plane.
    Agent Pack reference. The runner preserves this immutable authority on every
   accepted progress, checkpoint, plan-publication, provider-capacity, terminal,
   and artifact event.
-2. The daemon durably records the command and acquires the single active lease.
-   While the job remains active, the daemon emits at most one durable
+2. The daemon durably records immutable command content and a receipt state
+   before applying any effect. Redelivery replays the original terminal
+   acknowledgement; reuse of a command ID with changed content fails closed.
+   An interrupted processing receipt is reclaimed after reconnect or restart,
+   including exact-authority recovery for a start whose lease was installed
+   before its acknowledgement was persisted. The daemon then acquires the
+   single active lease. While the job remains active, it emits at most one durable
    `lease_renewal` request per authority window. A successful `renew_lease`
    command must repeat the owning attempt and fencing token and strictly extend
    the current expiration; the renewed window is persisted before execution
@@ -413,7 +418,7 @@ tests, upgrade/rollback tests, and disaster-recovery exercises pass in CI.
 
 - `api/runner/v1`: versioned wire protocol and job/tool schemas
 - `internal/identity`, `internal/enroll`, `internal/daemon/rotate.go`: identity lifecycle
-- `internal/transport`, `journal`, `lease`: durable outbound command channel
+- `internal/transport`, `journal`, `lease`: durable command/event channel and execution authority
 - `internal/repo`, `isolation`, `supervisor`: repository and process boundary
 - `internal/scanner`, `agentpack`, `provider`: customer agent configuration
 - `internal/mcpbridge`, `hookspool`: authoritative MCP and telemetry hooks

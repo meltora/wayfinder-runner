@@ -103,6 +103,26 @@ func TestDeliverDecisionUnknownQuestion(t *testing.T) {
 	}
 }
 
+func TestDeliverDecisionIsIdempotentForCommandRecovery(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	jr.decisions = map[string]chan v1.CommandPayload{"q-1": make(chan v1.CommandPayload, 1)}
+	answer := v1.CommandPayload{QuestionID: "q-1", Decision: "postgres", DecidedBy: "reviewer-1"}
+	if err := jr.deliverDecision(answer); err != nil {
+		t.Fatal(err)
+	}
+	if err := jr.deliverDecision(answer); err != nil {
+		t.Fatalf("identical redelivery was not idempotent: %v", err)
+	}
+	changed := answer
+	changed.Decision = "mysql"
+	if err := jr.deliverDecision(changed); err == nil {
+		t.Fatal("changed answer for an already-delivered question was accepted")
+	}
+	if got := len(jr.decisions["q-1"]); got != 1 {
+		t.Fatalf("delivered answers = %d, want 1", got)
+	}
+}
+
 func waitForTest(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	for i := 0; i < 100; i++ {
