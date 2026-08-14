@@ -215,7 +215,10 @@ func TestServerHealthDeadlineTimerRollsBackAndExits(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(2 * time.Second):
+	// Repository-wide race and integration suites can saturate filesystem sync
+	// on shared CI hosts. The production deadline remains 30 ms in this test;
+	// this bound only gives the resulting rollback enough time to persist.
+	case <-time.After(10 * time.Second):
 		t.Fatal("deadline timer did not exit")
 	}
 	state, err := core.loadState()
