@@ -372,18 +372,7 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		})
 
 	case "platform_publish_preview":
-		if err := validation.WebURL("preview url", str(raw, "url")); err != nil {
-			return nil, err
-		}
-		health := str(raw, "health")
-		if health != "healthy" && health != "degraded" && health != "down" {
-			return nil, fmt.Errorf("preview health must be healthy, degraded, or down")
-		}
-		return map[string]any{"ok": true}, jr.sendJobEvent(ctx, "preview", map[string]any{
-			"url": str(raw, "url"), "commit_sha": str(raw, "commit_sha"),
-			"health": str(raw, "health"), "expires_at": str(raw, "expires_at"),
-			"known_limitations": strSlice(raw, "known_limitations"),
-		})
+		return jr.executePreviewPublication(ctx, raw)
 
 	case "platform_publish_artifact":
 		return jr.handlePublishArtifact(ctx, raw)

@@ -574,6 +574,10 @@ func TestHumanInputRejectsInvalidDecisionContractFields(t *testing.T) {
 
 func TestRemainingAuthoritativeToolEvents(t *testing.T) {
 	jr, cap := testJobRunner(t)
+	previewDir := t.TempDir()
+	initRunCheckRepo(t, previewDir)
+	jr.repositories = []checkedOutRepository{{ID: "primary", WorkDir: previewDir, Primary: true}}
+	previewExpiry := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
 	calls := []struct {
 		tool string
 		args string
@@ -581,7 +585,7 @@ func TestRemainingAuthoritativeToolEvents(t *testing.T) {
 		{"platform_report_failure", `{"failure_type":"build","message":"compiler failed","retryable":true,"idempotency_key":"failure-1"}`},
 		{"platform_publish_decision", `{"decision":"use postgres","rationale":"existing stack","evidence":["ADR-1"],"idempotency_key":"decision-1"}`},
 		{"platform_publish_manual_test_plan", `{"steps":["open preview","submit form"],"expected_results":["success"],"cleanup":"none","idempotency_key":"manual-1"}`},
-		{"platform_publish_preview", `{"url":"https://preview.example.test/feature","health":"healthy","commit_sha":"abc","idempotency_key":"preview-1"}`},
+		{"platform_publish_preview", fmt.Sprintf(`{"url":"https://preview.example.test/feature","health":"healthy","expires_at":%q,"idempotency_key":"preview-1"}`, previewExpiry)},
 	}
 	for _, tc := range calls {
 		if _, err := call(t, jr, tc.tool, tc.args); err != nil {
