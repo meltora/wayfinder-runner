@@ -42,6 +42,7 @@ func (p StartParams) mcpBin() string {
 type Adapter interface {
 	Name() string
 	Available() bool
+	ManagedHooks() ManagedHookCapability
 	BuildSpec(p StartParams) (supervisor.Spec, error)
 	ParseLine(line []byte) (map[string]any, bool)
 }
@@ -60,6 +61,9 @@ type Codex struct {
 func NewCodex() *Codex { return &Codex{} }
 
 func (c *Codex) Name() string { return "codex" }
+func (c *Codex) ManagedHooks() ManagedHookCapability {
+	return managedHookCapability("codex-command-hooks/v1", codexManagedHookDefinitions)
+}
 func (c *Codex) Available() bool {
 	if c.LookPath != nil {
 		_, err := c.LookPath("codex")
@@ -98,12 +102,17 @@ func (c *Codex) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		args = append(args, "resume", p.ResumeSessionID)
 	}
 	args = append(args, p.Prompt)
+	managedConfigMounts, err := writeCodexManagedHooks(p)
+	if err != nil {
+		return supervisor.Spec{}, err
+	}
 	return supervisor.Spec{
-		Name:    "codex-" + p.Job.AttemptID,
-		Command: bin,
-		Args:    args,
-		Dir:     p.WorkDir,
-		Env:     allowedEnvironment(),
+		Name:                "codex-" + p.Job.AttemptID,
+		Command:             bin,
+		Args:                args,
+		Dir:                 p.WorkDir,
+		Env:                 allowedEnvironment(),
+		ManagedConfigMounts: managedConfigMounts,
 	}, nil
 }
 
@@ -122,6 +131,9 @@ type Claude struct {
 func NewClaude() *Claude { return &Claude{} }
 
 func (c *Claude) Name() string { return "claude" }
+func (c *Claude) ManagedHooks() ManagedHookCapability {
+	return managedHookCapability("claude-command-hooks/v1", claudeManagedHookDefinitions)
+}
 func (c *Claude) Available() bool {
 	if c.LookPath != nil {
 		_, err := c.LookPath("claude")
@@ -168,6 +180,13 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 			},
 			"network": map[string]any{"strictAllowlist": true, "allowedDomains": []string{}},
 		},
+	}
+	hooks, err := claudeManagedHooks(p)
+	if err != nil {
+		return supervisor.Spec{}, err
+	}
+	if len(hooks) > 0 {
+		settings["hooks"] = hooks
 	}
 	settingsRaw, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {

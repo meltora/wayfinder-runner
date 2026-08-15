@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+
+	"github.com/example/app-runner/internal/hookevent"
 )
 
 func decodeStrict(data []byte, out any) error {
@@ -347,11 +349,5 @@ func ValidateRequestID(raw json.RawMessage) error {
 // names. Hook payloads are deliberately not accepted because repository code
 // and provider output are untrusted and may contain source or credentials.
 func ValidateHookEventType(name string) error {
-	switch name {
-	case "session-start", "session-end", "pre-tool", "post-tool", "tool-error",
-		"stop", "subagent-stop", "notification", "user-prompt-submit":
-		return nil
-	default:
-		return fmt.Errorf("unsupported hook event type %q", name)
-	}
+	return hookevent.ValidateType(name)
 }

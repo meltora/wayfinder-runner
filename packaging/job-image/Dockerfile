@@ -47,5 +47,13 @@ RUN npm ci --omit=dev --prefix /opt/agent-tools \
 RUN useradd --create-home --uid 10001 runner
 COPY --chown=root:root --chmod=0755 bin/our-runner-linux /usr/local/bin/our-runner
 
+# The runner bind-mounts a private, per-job Codex requirements file over this
+# root-owned placeholder. Creating the exact target at image build time avoids
+# Docker treating a missing file target as a directory.
+RUN mkdir -p /etc/codex \
+    && touch /etc/codex/requirements.toml \
+    && chown root:root /etc/codex/requirements.toml \
+    && chmod 0644 /etc/codex/requirements.toml
+
 USER runner
 WORKDIR /home/runner

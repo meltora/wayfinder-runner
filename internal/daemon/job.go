@@ -457,6 +457,7 @@ func (jr *jobRunner) run() {
 			return
 		}
 		isoPolicy.Environment = provider.ContainerEnvironment(spec.Env)
+		isoPolicy.ManagedConfigMounts = append([]supervisor.ManagedConfigMount(nil), spec.ManagedConfigMounts...)
 		jobHome, err := isolation.PrepareHome(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName)
 		if err != nil {
 			finish(

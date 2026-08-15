@@ -263,6 +263,54 @@ func TestHookEventCommandRoundTrip(t *testing.T) {
 	}
 }
 
+func TestHookEventCommandHasABoundedDaemonCall(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hook-deadline-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(dir, "job.sock")
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("token-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := &mcpbridge.UnixServer{
+		SocketPath: socket,
+		Token:      "token-1",
+		Handler: func(ctx context.Context, _ string, _ json.RawMessage) (any, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	if err := server.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	oldStdin := os.Stdin
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	os.Stdin = reader
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		_ = reader.Close()
+	})
+	started := time.Now()
+	if err := cmdHookEvent([]string{"--socket", socket, "--token-file", tokenFile, "--type", "stop"}); err == nil {
+		t.Fatal("timed-out daemon call unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed < time.Second || elapsed > 3*time.Second {
+		t.Fatalf("hook deadline elapsed=%s", elapsed)
+	}
+}
+
 func TestMCPServeCommandRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {

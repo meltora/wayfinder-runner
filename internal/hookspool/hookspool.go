@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/hookevent"
 	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/validation"
 )
@@ -24,11 +26,15 @@ const (
 )
 
 type Event struct {
-	Type      string         `json:"type"`
-	Timestamp time.Time      `json:"timestamp"`
-	JobID     string         `json:"job_id,omitempty"`
-	AttemptID string         `json:"attempt_id,omitempty"`
-	Data      map[string]any `json:"data,omitempty"`
+	Type           string     `json:"type"`
+	Timestamp      time.Time  `json:"timestamp"`
+	ManifestKind   v1.JobKind `json:"manifest_kind"`
+	LeaseID        string     `json:"lease_id"`
+	JobID          string     `json:"job_id"`
+	AttemptID      string     `json:"attempt_id"`
+	ManifestID     string     `json:"manifest_id"`
+	ManifestDigest string     `json:"manifest_digest"`
+	FencingToken   uint64     `json:"fencing_token"`
 }
 
 var secretKeyPattern = regexp.MustCompile(`(?i)(^|[_-])(api[_-]?key|token|secret|password|cookie|authorization)($|[_-])`)
@@ -82,10 +88,14 @@ func redactValue(value any, depth int) any {
 
 type Spool struct {
 	Dir      string
-	mu       sync.Mutex
 	maxBytes int64
 	maxFiles int
 }
+
+// appendMu covers the quota check and atomic publication across every Spool
+// handle in this runner process. Hook calls construct short-lived handles, so a
+// per-handle lock would allow concurrent providers to race past quotas.
+var appendMu sync.Mutex
 
 func NewSpool(dir string) (*Spool, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -95,16 +105,13 @@ func NewSpool(dir string) (*Spool, error) {
 }
 
 func (s *Spool) Append(ev Event) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	appendMu.Lock()
+	defer appendMu.Unlock()
 	if ev.Timestamp.IsZero() {
 		ev.Timestamp = time.Now().UTC()
 	}
 	if err := validateEvent(ev); err != nil {
 		return err
-	}
-	if ev.Data != nil {
-		ev.Data = Redact(ev.Data)
 	}
 	raw, err := json.Marshal(ev)
 	if err != nil {
@@ -221,18 +228,25 @@ func (s *Spool) Process(max int, deliver func(Event) error) error {
 }
 
 func validateEvent(ev Event) error {
-	if err := validation.DisplayName("hook event type", ev.Type); err != nil {
+	if err := hookevent.ValidateType(ev.Type); err != nil {
 		return err
 	}
-	if ev.JobID != "" {
-		if err := validation.ID("job_id", ev.JobID); err != nil {
+	if ev.Timestamp.IsZero() {
+		return fmt.Errorf("hook event timestamp is required")
+	}
+	if err := validation.ManifestAuthority(v1.ManifestAuthority{
+		Kind: ev.ManifestKind, LeaseID: ev.LeaseID,
+		ManifestID: ev.ManifestID, ManifestDigest: ev.ManifestDigest,
+	}); err != nil {
+		return err
+	}
+	for field, value := range map[string]string{"job_id": ev.JobID, "attempt_id": ev.AttemptID} {
+		if err := validation.ID(field, value); err != nil {
 			return err
 		}
 	}
-	if ev.AttemptID != "" {
-		if err := validation.ID("attempt_id", ev.AttemptID); err != nil {
-			return err
-		}
+	if ev.FencingToken == 0 || ev.FencingToken > 9_007_199_254_740_991 {
+		return fmt.Errorf("hook event fencing token is invalid")
 	}
 	return nil
 }

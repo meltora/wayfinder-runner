@@ -39,6 +39,14 @@ type Spec struct {
 	Stdout     io.Writer
 	Stderr     io.Writer
 	RuntimeDir string
+	// ManagedConfigMounts are runner-generated, read-only provider policy files.
+	// The production isolator applies a fixed target allowlist before mounting.
+	ManagedConfigMounts []ManagedConfigMount
+}
+
+type ManagedConfigMount struct {
+	Source string
+	Target string
 }
 
 type Process interface {

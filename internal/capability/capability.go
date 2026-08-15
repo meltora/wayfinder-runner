@@ -18,6 +18,7 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/isolation"
+	"github.com/example/app-runner/internal/provider"
 )
 
 type Detector struct {
@@ -93,18 +94,24 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	if _, err := os.Stat("/dev/kvm"); err == nil {
 		m.KVM = true
 	}
-	for _, agent := range []struct{ provider, bin string }{
+	for _, agent := range []struct{ adapter, bin string }{
 		{"codex", "codex"},
 		{"claude", "claude"},
 		{"opencode", "opencode"},
 	} {
-		ac := v1.AgentCapability{Provider: agent.provider}
+		ac := v1.AgentCapability{Provider: agent.adapter}
+		if adapter, err := provider.For(agent.adapter); err == nil {
+			hooks := adapter.ManagedHooks()
+			ac.ManagedHooksSupported = hooks.Supported
+			ac.ManagedHooksVersion = hooks.Version
+			ac.ManagedHookEvents = append([]string(nil), hooks.Events...)
+		}
 		if _, err := d.LookPath(agent.bin); err == nil {
 			ac.Available = true
 			if out, err := d.RunVersion(ctx, agent.bin, "--version"); err == nil {
 				ac.Version = out
 			}
-			ac.AuthReady = authReady(agent.provider)
+			ac.AuthReady = authReady(agent.adapter)
 		}
 		m.Agents = append(m.Agents, ac)
 	}

@@ -8,28 +8,32 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/example/app-runner/internal/safeio"
+	"github.com/example/app-runner/internal/supervisor"
 )
 
 type Policy struct {
-	Mode            string
-	MemoryMB        int
-	CPUs            float64
-	PIDs            int
-	NetworkNone     bool
-	NetworkName     string
-	ReadOnlyFS      bool
-	ReadOnlyWorkDir bool
-	WorkDir         string
-	WorkspaceRoot   string
-	AgentPackDir    string
-	JobHome         string
-	MCPSock         string
-	MCPTokenFile    string
-	Image           string
-	RunnerID        string
-	AttemptID       string
-	NestedSandbox   bool
-	Environment     []string
+	Mode                string
+	MemoryMB            int
+	CPUs                float64
+	PIDs                int
+	NetworkNone         bool
+	NetworkName         string
+	ReadOnlyFS          bool
+	ReadOnlyWorkDir     bool
+	WorkDir             string
+	WorkspaceRoot       string
+	AgentPackDir        string
+	JobHome             string
+	MCPSock             string
+	MCPTokenFile        string
+	Image               string
+	RunnerID            string
+	AttemptID           string
+	NestedSandbox       bool
+	Environment         []string
+	ManagedConfigMounts []supervisor.ManagedConfigMount
 }
 
 const DefaultJobImage = "app-runner-job:latest"
@@ -139,6 +143,15 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 			dockerArgs = append(dockerArgs, "-e", "PLATFORM_MCP_TOKEN_FILE="+p.MCPTokenFile)
 		}
 	}
+	if len(p.ManagedConfigMounts) > 4 {
+		return "", nil, fmt.Errorf("too many managed provider config mounts")
+	}
+	for _, mount := range p.ManagedConfigMounts {
+		if err := validateManagedConfigMount(mount, p.MCPSock); err != nil {
+			return "", nil, err
+		}
+		dockerArgs = append(dockerArgs, "-v", mount.Source+":"+mount.Target+":ro")
+	}
 	for _, entry := range p.Environment {
 		key, _, ok := strings.Cut(entry, "=")
 		if !ok || !containerEnvironmentKey.MatchString(key) || len(entry) > 64<<10 || strings.ContainsAny(entry, "\x00\r\n") {
@@ -156,6 +169,19 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 }
 
 var containerEnvironmentKey = regexp.MustCompile(`^(CLAUDE_CODE_SUBPROCESS_ENV_SCRUB|OPENCODE_(CONFIG_CONTENT|CONFIG_DIR|DISABLE_[A-Z0-9_]+))$`)
+
+func validateManagedConfigMount(mount supervisor.ManagedConfigMount, mcpSocket string) error {
+	if mount.Target != "/etc/codex/requirements.toml" || !filepath.IsAbs(mount.Source) || mcpSocket == "" {
+		return fmt.Errorf("managed provider config mount is not allowlisted")
+	}
+	if filepath.Dir(filepath.Clean(mount.Source)) != filepath.Dir(filepath.Clean(mcpSocket)) || strings.ContainsAny(mount.Source, "\x00\r\n:") {
+		return fmt.Errorf("managed provider config source is outside the private job directory")
+	}
+	if _, err := safeio.ReadRegularFile(mount.Source, 1<<20, 0o077); err != nil {
+		return fmt.Errorf("validate managed provider config: %w", err)
+	}
+	return nil
+}
 
 func Select(preferred string, allowUnsafeDirect bool) (Isolator, error) {
 	switch preferred {

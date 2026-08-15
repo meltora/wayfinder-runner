@@ -27,8 +27,11 @@ type CapabilityManifest struct {
 }
 
 type AgentCapability struct {
-	Provider  string `json:"provider"`
-	Version   string `json:"version,omitempty"`
-	AuthReady bool   `json:"auth_ready"`
-	Available bool   `json:"available"`
+	Provider              string   `json:"provider"`
+	Version               string   `json:"version,omitempty"`
+	AuthReady             bool     `json:"auth_ready"`
+	Available             bool     `json:"available"`
+	ManagedHooksSupported bool     `json:"managed_hooks_supported"`
+	ManagedHooksVersion   string   `json:"managed_hooks_version,omitempty"`
+	ManagedHookEvents     []string `json:"managed_hook_events,omitempty"`
 }

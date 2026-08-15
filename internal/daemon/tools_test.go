@@ -112,8 +112,11 @@ func TestInternalHookEventOnlySpoolsAllowlistedMetadata(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("hook events = %v, %v", events, err)
 	}
-	if len(events[0].Data) != 0 {
-		t.Fatalf("hook telemetry included arbitrary data: %v", events[0].Data)
+	event := events[0]
+	if event.JobID != jr.job.JobID || event.AttemptID != jr.job.AttemptID ||
+		event.LeaseID != jr.job.LeaseID || event.FencingToken != jr.job.FencingToken ||
+		event.ManifestID != jr.job.ManifestID || event.ManifestDigest != jr.job.ManifestDigest {
+		t.Fatalf("hook telemetry authority=%+v", event)
 	}
 	if _, err := call(t, jr, mcpbridge.InternalHookEventTool, `{"event_type":"post-tool","data":{"source":"repository contents"},"idempotency_key":"hook-2"}`); err == nil {
 		t.Fatal("hook telemetry accepted arbitrary data")
@@ -167,6 +170,22 @@ func TestToolCallLeaseValidation(t *testing.T) {
 	jr.d.leases.Release("a1")
 	if _, err := call(t, jr, "platform_report_progress", `{"milestone":"x"}`); err == nil {
 		t.Fatal("expected lease validation error")
+	}
+}
+
+func TestLateHookCannotSpoolAfterLeaseLoss(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	jr.d.leases.Release(jr.job.AttemptID)
+	if _, err := call(t, jr, mcpbridge.InternalHookEventTool, `{"event_type":"stop","idempotency_key":"late-hook"}`); err == nil {
+		t.Fatal("late hook retained lease authority")
+	}
+	spool, err := hookspool.NewSpool(filepath.Join(jr.d.cfg.StateDir, "hook-spool"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := spool.Drain(10)
+	if err != nil || len(events) != 0 {
+		t.Fatalf("late hook entered spool: events=%v err=%v", events, err)
 	}
 }
 

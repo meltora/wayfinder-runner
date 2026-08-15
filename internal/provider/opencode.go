@@ -27,6 +27,13 @@ func NewOpenCode() *OpenCode { return &OpenCode{} }
 
 func (o *OpenCode) Name() string { return "opencode" }
 
+func (o *OpenCode) ManagedHooks() ManagedHookCapability {
+	return ManagedHookCapability{
+		Supported:         false,
+		UnavailableReason: "OpenCode v1 plugin hooks can fail intercepted operations; runner supervision and MCP remain authoritative",
+	}
+}
+
 func (o *OpenCode) Available() bool {
 	if o.LookPath != nil {
 		_, err := o.LookPath("opencode")

@@ -335,7 +335,7 @@ func (d *Daemon) drainHookSpool(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := spool.Process(100, func(ev hookspool.Event) error {
-				return d.sendEvent(ctx, map[string]any{"kind": "hook_event", "event": ev})
+				return d.sendEvent(ctx, hookEventPayload(ev))
 			}); err != nil {
 				d.logger.Warn("hook spool delivery", "err", err)
 			}

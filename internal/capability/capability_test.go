@@ -55,6 +55,9 @@ func TestCollect(t *testing.T) {
 	if codex == nil || !codex.Available || codex.Version != "codex version 1.0" {
 		t.Fatalf("codex capability = %+v", codex)
 	}
+	if !codex.ManagedHooksSupported || codex.ManagedHooksVersion != "codex-command-hooks/v1" || len(codex.ManagedHookEvents) == 0 {
+		t.Fatalf("codex managed hook capability = %+v", codex)
+	}
 	var openCode *v1.AgentCapability
 	for i := range m.Agents {
 		if m.Agents[i].Provider == "opencode" {
@@ -63,6 +66,9 @@ func TestCollect(t *testing.T) {
 	}
 	if openCode == nil || !openCode.Available || openCode.Version != "opencode version 1.0" {
 		t.Fatalf("OpenCode capability = %+v", openCode)
+	}
+	if openCode.ManagedHooksSupported || openCode.ManagedHooksVersion != "" || len(openCode.ManagedHookEvents) != 0 {
+		t.Fatalf("OpenCode must not claim managed hook events: %+v", openCode)
 	}
 	if len(m.Supervisors) != 1 || m.Supervisors[0] != "tmux" {
 		t.Fatalf("Supervisors = %v", m.Supervisors)

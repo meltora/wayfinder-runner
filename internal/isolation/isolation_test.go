@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/example/app-runner/internal/supervisor"
 )
 
 func TestDirectPassthrough(t *testing.T) {
@@ -103,6 +105,38 @@ func TestDockerWrapRejectsUnapprovedContainerEnvironment(t *testing.T) {
 		p.Environment = []string{entry}
 		if _, _, err := d.Wrap("opencode", nil, p); err == nil {
 			t.Fatalf("invalid container environment %q accepted", entry)
+		}
+	}
+}
+
+func TestDockerWrapAllowsOnlyPrivateRunnerManagedConfigMount(t *testing.T) {
+	d := Docker{}
+	configDir := t.TempDir()
+	requirements := filepath.Join(configDir, "codex-requirements.toml")
+	if err := os.WriteFile(requirements, []byte("[features]\nhooks = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := Policy{
+		NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1",
+		MCPSock: filepath.Join(configDir, "mcp.sock"), MCPTokenFile: filepath.Join(configDir, "job.token"),
+	}
+	base.ManagedConfigMounts = []supervisor.ManagedConfigMount{{Source: requirements, Target: "/etc/codex/requirements.toml"}}
+	_, args, err := d.Wrap("codex", nil, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(args, " "), requirements+":/etc/codex/requirements.toml:ro") {
+		t.Fatalf("managed mount absent: %v", args)
+	}
+
+	for _, mount := range []supervisor.ManagedConfigMount{
+		{Source: "/etc/passwd", Target: "/etc/codex/requirements.toml"},
+		{Source: requirements, Target: "/root/.ssh/authorized_keys"},
+	} {
+		policy := base
+		policy.ManagedConfigMounts = []supervisor.ManagedConfigMount{mount}
+		if _, _, err := d.Wrap("codex", nil, policy); err == nil {
+			t.Fatalf("unsafe managed mount accepted: %+v", mount)
 		}
 	}
 }

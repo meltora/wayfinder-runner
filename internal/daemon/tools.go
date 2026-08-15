@@ -220,8 +220,10 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 			return nil, err
 		}
 		if err := spool.Append(hookspool.Event{
-			Type: eventType, Timestamp: time.Now().UTC(), JobID: jr.job.JobID,
-			AttemptID: jr.job.AttemptID,
+			Type: eventType, Timestamp: time.Now().UTC(), ManifestKind: jr.job.Kind,
+			LeaseID: jr.job.LeaseID, JobID: jr.job.JobID, AttemptID: jr.job.AttemptID,
+			ManifestID: jr.job.ManifestID, ManifestDigest: jr.job.ManifestDigest,
+			FencingToken: jr.job.FencingToken,
 		}); err != nil {
 			return nil, err
 		}

@@ -400,7 +400,9 @@ func cmdHookEvent(args []string) error {
 		return err
 	}
 	client := &mcpbridge.UnixClient{SocketPath: socketPath, Token: token}
-	_, err = client.Call(context.Background(), mcpbridge.InternalHookEventTool, argsJSON)
+	callCtx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	_, err = client.Call(callCtx, mcpbridge.InternalHookEventTool, argsJSON)
 	return err
 }
 
