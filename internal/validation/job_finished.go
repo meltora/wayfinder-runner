@@ -16,6 +16,13 @@ var failedJobCodes = map[v1.JobFinishedFailureCode]struct{}{
 	v1.JobFailureRunnerInternal:           {},
 }
 
+var agentPackFailureRetryability = map[v1.AgentPackMaterializationFailureCategory]bool{
+	v1.AgentPackFailureDownloadUnavailable: true,
+	v1.AgentPackFailureStorageUnavailable:  true,
+	v1.AgentPackFailureDigestMismatch:      false,
+	v1.AgentPackFailureArchiveInvalid:      false,
+}
+
 // JobFinishedEvent validates terminal evidence before it is durably queued.
 func JobFinishedEvent(event v1.JobFinishedEvent) error {
 	if err := validateJobFinishedAuthority(event); err != nil {
@@ -63,16 +70,26 @@ func validateJobFinishedAuthority(event v1.JobFinishedEvent) error {
 }
 
 func jobFinishedEvidenceMatchesState(event v1.JobFinishedEvent) bool {
+	categoryRetryable, categoryKnown := agentPackFailureRetryability[event.FailureCategory]
+	hasRetryable := event.Retryable != nil
+	hasMaterializationEvidence := event.FailureCategory != "" || hasRetryable
 	switch event.State {
 	case v1.JobFinishedSucceeded:
-		return event.FailureCode == "" && event.FailureMessage == ""
+		return event.FailureCode == "" && event.FailureMessage == "" && !hasMaterializationEvidence
 	case v1.JobFinishedFailed:
 		_, ok := failedJobCodes[event.FailureCode]
-		return ok
+		if !ok {
+			return false
+		}
+		if event.FailureCode == v1.JobFailureAgentPackMaterialization {
+			return categoryKnown && hasRetryable && *event.Retryable == categoryRetryable
+		}
+		return !hasMaterializationEvidence
 	case v1.JobFinishedCancelled:
-		return event.FailureCode == v1.JobFailureCancelled
+		return event.FailureCode == v1.JobFailureCancelled && !hasMaterializationEvidence
 	case v1.JobFinishedQuarantined:
-		return event.FailureCode == v1.JobFailureLeaseLost || event.FailureCode == v1.JobFailureCleanup
+		return (event.FailureCode == v1.JobFailureLeaseLost || event.FailureCode == v1.JobFailureCleanup) &&
+			!hasMaterializationEvidence
 	default:
 		return false
 	}

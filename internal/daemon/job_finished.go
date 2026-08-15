@@ -7,9 +7,11 @@ import (
 )
 
 type jobOutcome struct {
-	State          v1.JobFinishedState
-	FailureCode    v1.JobFinishedFailureCode
-	FailureMessage string
+	State           v1.JobFinishedState
+	FailureCode     v1.JobFinishedFailureCode
+	FailureCategory v1.AgentPackMaterializationFailureCategory
+	Retryable       *bool
+	FailureMessage  string
 }
 
 func (jr *jobRunner) jobFinishedEvent(outcome jobOutcome) v1.JobFinishedEvent {
@@ -26,6 +28,8 @@ func (jr *jobRunner) jobFinishedEvent(outcome jobOutcome) v1.JobFinishedEvent {
 		State:             outcome.State,
 		ProviderSessionID: jr.currentSessionID(),
 		FailureCode:       outcome.FailureCode,
+		FailureCategory:   outcome.FailureCategory,
+		Retryable:         outcome.Retryable,
 		FailureMessage:    truncateUTF8Bytes(outcome.FailureMessage, 512),
 	}
 }

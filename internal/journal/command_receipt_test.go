@@ -69,15 +69,15 @@ func TestCommandReceiptClaimsRecoverAndReplayTerminalOutcome(t *testing.T) {
 	if _, err := j.CompleteCommand(ctx, "command-1", "process-1", "accepted", ""); !errors.Is(err, ErrCommandClaimConflict) {
 		t.Fatalf("stale owner completion = %v, want ErrCommandClaimConflict", err)
 	}
-	receipt, err = j.CompleteCommand(ctx, "command-1", "process-2", "rejected", "runner paused")
-	if err != nil || receipt.State != CommandRejected || receipt.AckStatus != "rejected" || receipt.AckError != "runner paused" {
+	receipt, err = j.CompleteCommand(ctx, "command-1", "process-2", "rejected", v1.CommandAckReasonRunnerPaused)
+	if err != nil || receipt.State != CommandRejected || receipt.AckStatus != "rejected" || receipt.AckReasonCode != v1.CommandAckReasonRunnerPaused {
 		t.Fatalf("completion = %+v, %v", receipt, err)
 	}
 	if records, err := j.Unacked(ctx, KindCommand, 10); err != nil || len(records) != 0 {
 		t.Fatalf("completed command remained unacked: %+v, %v", records, err)
 	}
 	receipt, created, err = j.ReceiveCommand(ctx, commandRecord("command-1"), digest)
-	if err != nil || created || receipt.State != CommandRejected || receipt.AckError != "runner paused" {
+	if err != nil || created || receipt.State != CommandRejected || receipt.AckReasonCode != v1.CommandAckReasonRunnerPaused {
 		t.Fatalf("terminal replay = %+v, %v, %v", receipt, created, err)
 	}
 }
@@ -137,6 +137,52 @@ func TestReceiveCommandRejectsInvalidBoundaryValues(t *testing.T) {
 	}
 	if _, err := j.CompleteCommand(ctx, "missing", "process-1", "accepted", ""); err == nil {
 		t.Fatal("missing command completed")
+	}
+}
+
+func TestCommandReceiptMigrationRedactsLegacyRawDiagnostics(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	digest := strings.Repeat("f", 64)
+	if _, _, err := j.ReceiveCommand(ctx, commandRecord("legacy-raw-rejection"), digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, claimed, err := j.ClaimCommand(ctx, "legacy-raw-rejection", "process-1"); err != nil || !claimed {
+		t.Fatalf("claim = %v, %v", claimed, err)
+	}
+	if _, err := j.CompleteCommand(
+		ctx,
+		"legacy-raw-rejection",
+		"process-1",
+		"rejected",
+		v1.CommandAckReasonInternalRejection,
+	); err != nil {
+		t.Fatal(err)
+	}
+	const rawDiagnostic = "https://token:secret@example.test/private"
+	if _, err := j.db.ExecContext(
+		ctx,
+		`UPDATE command_receipts SET ack_error=? WHERE command_id=?`,
+		rawDiagnostic,
+		"legacy-raw-rejection",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := j.ensureCommandReceiptSchema(); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := j.db.QueryRowContext(
+		ctx,
+		`SELECT ack_error FROM command_receipts WHERE command_id=?`,
+		"legacy-raw-rejection",
+	).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != string(v1.CommandAckReasonInternalRejection) || strings.Contains(stored, "secret") {
+		t.Fatalf("legacy diagnostic was not redacted: %q", stored)
 	}
 }
 

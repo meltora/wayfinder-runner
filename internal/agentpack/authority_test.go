@@ -97,3 +97,22 @@ func TestVerifyDeliveryAuthorityChecksSignatureProviderVersionAndBinding(t *test
 		})
 	}
 }
+
+func TestVerifyDeliveryAuthorityReturnsTypedSafeClassification(t *testing.T) {
+	t.Parallel()
+	authority, trustedKey := signAuthority(t, goldenAuthority())
+
+	invalid := authority
+	invalid.AttestationDigest = strings.Repeat("b", 64)
+	if err := VerifyDeliveryAuthority(invalid, invalid.AgentPack, trustedKey, "claude", "1.4.0"); err == nil {
+		t.Fatal("invalid authority accepted")
+	} else if kind, ok := DeliveryAuthorityFailureKindOf(err); !ok || kind != DeliveryAuthorityInvalid {
+		t.Fatalf("invalid authority classification = %q %v: %v", kind, ok, err)
+	}
+
+	if err := VerifyDeliveryAuthority(authority, authority.AgentPack, trustedKey, "codex", "1.4.0"); err == nil {
+		t.Fatal("incompatible provider accepted")
+	} else if kind, ok := DeliveryAuthorityFailureKindOf(err); !ok || kind != DeliveryAuthorityIncompatible {
+		t.Fatalf("incompatible authority classification = %q %v: %v", kind, ok, err)
+	}
+}

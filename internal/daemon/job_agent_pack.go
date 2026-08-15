@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -21,25 +22,49 @@ const (
 	agentPackResponseHeaderLimit = 1 << 20
 )
 
-type agentPackMaterializationError struct{ cause error }
+type agentPackMaterializationError struct {
+	category  v1.AgentPackMaterializationFailureCategory
+	retryable bool
+	cause     error
+}
 
 func (failure *agentPackMaterializationError) Error() string {
-	return "Agent Pack materialization failed: " + failure.cause.Error()
+	return "Agent Pack materialization failed"
 }
 
 func (failure *agentPackMaterializationError) Unwrap() error { return failure.cause }
+
+func newAgentPackMaterializationError(
+	category v1.AgentPackMaterializationFailureCategory,
+	retryable bool,
+	cause error,
+) error {
+	return &agentPackMaterializationError{
+		category: category, retryable: retryable, cause: cause,
+	}
+}
+
+func agentPackMaterializationEvidence(
+	err error,
+) (v1.AgentPackMaterializationFailureCategory, bool, bool) {
+	var failure *agentPackMaterializationError
+	if !errors.As(err, &failure) {
+		return "", false, false
+	}
+	return failure.category, failure.retryable, true
+}
 
 func (d *Daemon) verifyJobAgentPackAuthority(job v1.JobSpec) error {
 	if job.AgentPack == nil && job.AgentPackAuthority == nil {
 		return nil
 	}
 	if job.AgentPack == nil || job.AgentPackAuthority == nil {
-		return fmt.Errorf("Agent Pack and signed authority must be provided together")
+		return rejectCommand(v1.CommandAckReasonAgentPackAuthorityInvalid, nil)
 	}
 	keyID := job.AgentPack.KeyID
 	trustedKey, ok := d.cfg.AgentPackPublicKeys[keyID]
 	if !ok || trustedKey == "" {
-		return fmt.Errorf("Agent Pack signing key %q is not trusted by this runner", keyID)
+		return rejectCommand(v1.CommandAckReasonAgentPackKeyUntrusted, nil)
 	}
 	if err := agentpack.VerifyDeliveryAuthority(
 		*job.AgentPackAuthority,
@@ -48,17 +73,24 @@ func (d *Daemon) verifyJobAgentPackAuthority(job v1.JobSpec) error {
 		d.cfg.Provider,
 		Version,
 	); err != nil {
-		return fmt.Errorf("verify signed Agent Pack delivery authority: %w", err)
+		kind, _ := agentpack.DeliveryAuthorityFailureKindOf(err)
+		if kind == agentpack.DeliveryAuthorityIncompatible {
+			return rejectCommand(v1.CommandAckReasonAgentPackIncompatible, err)
+		}
+		return rejectCommand(v1.CommandAckReasonAgentPackAuthorityInvalid, err)
+	}
+	if err := d.validateArtifactURL(job.AgentPack.URL); err != nil {
+		return rejectCommand(v1.CommandAckReasonAgentPackOriginUnapproved, err)
 	}
 	return nil
 }
 
 func (jr *jobRunner) materializeAgentPack(reference *v1.AgentPackRef, destination string) error {
 	if reference == nil {
-		return fmt.Errorf("Agent Pack reference is required")
+		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, nil)
 	}
 	if err := jr.d.validateArtifactURL(reference.URL); err != nil {
-		return err
+		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, err)
 	}
 	cache := agentpack.ArchiveCache{
 		Root:            filepath.Join(jr.d.cfg.StateDir, "agent-pack-cache", "archives"),
@@ -68,20 +100,30 @@ func (jr *jobRunner) materializeAgentPack(reference *v1.AgentPackRef, destinatio
 		return jr.d.downloadAgentPack(ctx, reference.URL, writer)
 	})
 	if err != nil {
-		return err
+		if _, _, classified := agentPackMaterializationEvidence(err); classified {
+			return err
+		}
+		switch {
+		case errors.Is(err, agentpack.ErrArchiveDigestMismatch):
+			return newAgentPackMaterializationError(v1.AgentPackFailureDigestMismatch, false, err)
+		case errors.Is(err, agentpack.ErrArchiveInvalid), errors.Is(err, agentpack.ErrArchiveSizeLimit):
+			return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, err)
+		default:
+			return newAgentPackMaterializationError(v1.AgentPackFailureStorageUnavailable, true, err)
+		}
 	}
 	archiveName := reference.Digest + ".tgz"
 	if archivePath != filepath.Join(cache.Root, archiveName) {
-		return fmt.Errorf("Agent Pack cache returned an unexpected path")
+		return newAgentPackMaterializationError(v1.AgentPackFailureStorageUnavailable, true, nil)
 	}
 	cacheRoot, err := os.OpenRoot(cache.Root)
 	if err != nil {
-		return fmt.Errorf("open Agent Pack cache root: %w", err)
+		return newAgentPackMaterializationError(v1.AgentPackFailureStorageUnavailable, true, err)
 	}
 	defer func() { _ = cacheRoot.Close() }()
 	archive, err := cacheRoot.Open(archiveName)
 	if err != nil {
-		return fmt.Errorf("open verified Agent Pack cache artifact: %w", err)
+		return newAgentPackMaterializationError(v1.AgentPackFailureStorageUnavailable, true, err)
 	}
 	defer func() { _ = archive.Close() }()
 	_, err = agentpack.MountAuthenticatedArchiveWithPolicy(
@@ -90,7 +132,7 @@ func (jr *jobRunner) materializeAgentPack(reference *v1.AgentPackRef, destinatio
 		agentpack.MountPolicy{Version: reference.Version, Provider: jr.d.cfg.Provider},
 	)
 	if err != nil {
-		return err
+		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, err)
 	}
 	if err := cache.Prune(agentpack.DefaultMaxCacheEntries, agentpack.DefaultMaxCacheBytes, reference.Digest); err != nil && jr.logger != nil {
 		jr.logger.Warn("prune Agent Pack cache", "err", err)
@@ -103,26 +145,37 @@ func (d *Daemon) downloadAgentPack(ctx context.Context, rawURL string, destinati
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return fmt.Errorf("create artifact request")
+		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, err)
 	}
 	request.Header.Set("Accept-Encoding", "identity")
 	client := d.hardenedArtifactClient(rawURL)
 	response, err := client.Do(request)
 	if err != nil {
-		return fmt.Errorf("artifact request failed")
+		return newAgentPackMaterializationError(v1.AgentPackFailureDownloadUnavailable, true, err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("artifact server returned status %d", response.StatusCode)
+		if response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooEarly ||
+			response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= http.StatusInternalServerError {
+			return newAgentPackMaterializationError(v1.AgentPackFailureDownloadUnavailable, true, nil)
+		}
+		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, nil)
 	}
 	if response.ContentLength > agentpack.DefaultMaxArchiveBytes {
-		return fmt.Errorf("Agent Pack archive exceeds compressed size limit")
+		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, agentpack.ErrArchiveSizeLimit)
 	}
 	if encoding := strings.TrimSpace(response.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {
-		return fmt.Errorf("Agent Pack response uses unsupported content encoding")
+		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, nil)
 	}
 	if _, err := io.Copy(destination, response.Body); err != nil {
-		return fmt.Errorf("read Agent Pack response")
+		var pathError *os.PathError
+		if errors.As(err, &pathError) {
+			return newAgentPackMaterializationError(v1.AgentPackFailureStorageUnavailable, true, err)
+		}
+		if errors.Is(err, agentpack.ErrArchiveSizeLimit) {
+			return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, err)
+		}
+		return newAgentPackMaterializationError(v1.AgentPackFailureDownloadUnavailable, true, err)
 	}
 	return nil
 }

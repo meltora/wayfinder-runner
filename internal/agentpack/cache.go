@@ -22,6 +22,12 @@ const (
 	DefaultMaxCacheEntries       = 32
 )
 
+var (
+	ErrArchiveDigestMismatch = errors.New("Agent Pack archive digest mismatch")
+	ErrArchiveInvalid        = errors.New("Agent Pack archive is invalid")
+	ErrArchiveSizeLimit      = errors.New("Agent Pack archive exceeds the size limit")
+)
+
 type ArchiveFetcher func(context.Context, io.Writer) error
 
 // ArchiveCache stores exact signed archive bytes by SHA-256. Publication uses
@@ -200,10 +206,10 @@ func (cache ArchiveCache) Acquire(ctx context.Context, digest string, fetch Arch
 		return "", err
 	}
 	if bounded.written == 0 {
-		return "", fmt.Errorf("fetched Agent Pack archive is empty")
+		return "", ErrArchiveInvalid
 	}
 	if got := hex.EncodeToString(hash.Sum(nil)); got != digest {
-		return "", fmt.Errorf("fetched Agent Pack archive digest mismatch")
+		return "", ErrArchiveDigestMismatch
 	}
 	if err := temporary.Sync(); err != nil {
 		return "", fmt.Errorf("sync Agent Pack cache temporary: %w", err)
@@ -233,7 +239,7 @@ type boundedArchiveWriter struct {
 
 func (writer *boundedArchiveWriter) Write(data []byte) (int, error) {
 	if int64(len(data)) > writer.remaining {
-		return 0, fmt.Errorf("Agent Pack archive exceeds compressed size limit")
+		return 0, ErrArchiveSizeLimit
 	}
 	written, err := writer.writer.Write(data)
 	writer.remaining -= int64(written)

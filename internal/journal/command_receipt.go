@@ -32,7 +32,7 @@ type CommandReceipt struct {
 	State         CommandState
 	ClaimOwner    string
 	AckStatus     string
-	AckError      string
+	AckReasonCode v1.CommandAckReasonCode
 }
 
 type commandReceiptQuery interface {
@@ -40,7 +40,7 @@ type commandReceiptQuery interface {
 }
 
 func (j *Journal) ensureCommandReceiptSchema() error {
-	_, err := j.db.Exec(`
+	if _, err := j.db.Exec(`
 		CREATE TABLE IF NOT EXISTS command_receipts (
 			command_id TEXT PRIMARY KEY,
 			content_digest TEXT NOT NULL,
@@ -52,6 +52,27 @@ func (j *Journal) ensureCommandReceiptSchema() error {
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (command_id) REFERENCES records(id) ON DELETE CASCADE
 		)
+	`); err != nil {
+		return err
+	}
+	_, err := j.db.Exec(`
+		UPDATE command_receipts
+		SET ack_error = 'internal_rejection'
+		WHERE ack_error IS NOT NULL
+		  AND ack_error NOT IN (
+			'invalid_command',
+			'unsupported_command',
+			'command_conflict',
+			'runner_paused',
+			'runner_busy',
+			'runner_draining',
+			'lease_rejected',
+			'agent_pack_key_untrusted',
+			'agent_pack_authority_invalid',
+			'agent_pack_incompatible',
+			'agent_pack_origin_unapproved',
+			'internal_rejection'
+		  )
 	`)
 	return err
 }
@@ -79,7 +100,14 @@ func loadCommandReceipt(ctx context.Context, query commandReceiptQuery, id strin
 	}
 	receipt.ClaimOwner = claimOwner.String
 	receipt.AckStatus = ackStatus.String
-	receipt.AckError = ackError.String
+	if ackError.String != "" {
+		receipt.AckReasonCode = v1.CommandAckReasonCode(ackError.String)
+		if !v1.IsCommandAckReasonCode(receipt.AckReasonCode) {
+			// Older runner versions stored raw diagnostics in this local-only
+			// column. Never replay them across the control-plane boundary.
+			receipt.AckReasonCode = v1.CommandAckReasonInternalRejection
+		}
+	}
 	return receipt, true, nil
 }
 
@@ -250,23 +278,25 @@ func (j *Journal) ClaimCommand(ctx context.Context, id, owner string) (CommandRe
 	return receipt, true, nil
 }
 
-func validateCommandCompletion(status, errorText string) error {
-	if status != "accepted" && status != "rejected" {
-		return fmt.Errorf("invalid command acknowledgement status")
-	}
-	if len(errorText) > 500 || (status == "accepted" && errorText != "") {
-		return fmt.Errorf("invalid command acknowledgement error")
-	}
-	return nil
+func validateCommandCompletion(status string, reasonCode v1.CommandAckReasonCode) error {
+	return v1.ValidateCommandAckPayload(v1.CommandAckPayload{
+		Status: v1.CommandAckStatus(status), ReasonCode: reasonCode,
+	})
 }
 
-func (j *Journal) CompleteCommand(ctx context.Context, id, owner, status, errorText string) (CommandReceipt, error) {
+func (j *Journal) CompleteCommand(
+	ctx context.Context,
+	id string,
+	owner string,
+	status string,
+	reasonCode v1.CommandAckReasonCode,
+) (CommandReceipt, error) {
 	j.commandMu.Lock()
 	defer j.commandMu.Unlock()
 	if id == "" || len(id) > 128 || !validClaimOwner(owner) {
 		return CommandReceipt{}, fmt.Errorf("invalid command completion")
 	}
-	if err := validateCommandCompletion(status, errorText); err != nil {
+	if err := validateCommandCompletion(status, reasonCode); err != nil {
 		return CommandReceipt{}, err
 	}
 	state := CommandAccepted
@@ -282,7 +312,7 @@ func (j *Journal) CompleteCommand(ctx context.Context, id, owner, status, errorT
 		UPDATE command_receipts
 		SET state=?, ack_status=?, ack_error=?, updated_at=?
 		WHERE command_id=? AND state='processing' AND claim_owner=?`,
-		string(state), status, nullableDBText(errorText), time.Now().Unix(), id, owner)
+		string(state), status, nullableDBText(string(reasonCode)), time.Now().Unix(), id, owner)
 	if err != nil {
 		return CommandReceipt{}, err
 	}
@@ -295,7 +325,7 @@ func (j *Journal) CompleteCommand(ctx context.Context, id, owner, status, errorT
 		if loadErr != nil {
 			return CommandReceipt{}, loadErr
 		}
-		if ok && receipt.State == state && receipt.AckStatus == status && receipt.AckError == errorText {
+		if ok && receipt.State == state && receipt.AckStatus == status && receipt.AckReasonCode == reasonCode {
 			return receipt, nil
 		}
 		return CommandReceipt{}, ErrCommandClaimConflict
@@ -317,7 +347,7 @@ func (j *Journal) CompleteCommand(ctx context.Context, id, owner, status, errorT
 		return CommandReceipt{}, err
 	}
 	return CommandReceipt{
-		ID: id, State: state, ClaimOwner: owner, AckStatus: status, AckError: errorText,
+		ID: id, State: state, ClaimOwner: owner, AckStatus: status, AckReasonCode: reasonCode,
 	}, nil
 }
 

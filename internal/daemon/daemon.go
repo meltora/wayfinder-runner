@@ -374,7 +374,7 @@ func (d *Daemon) OnConnected(ctx context.Context) {
 	pending := d.updateDrain
 	d.jobMu.Unlock()
 	if pending != nil && !pending.AckAttempted {
-		_ = d.sendCommandAck(ctx, pending.CommandID, "accepted", nil)
+		_ = d.sendCommandAck(ctx, pending.CommandID, v1.CommandAckAccepted, "")
 		if err := d.markUpdateAckAttempted(pending.UpdateID); err != nil {
 			d.logger.Warn("persist recovered update acknowledgement", "err", err)
 		}
@@ -571,7 +571,7 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 	d.logger.Info("command received", "type", env.Type, "id", env.ID)
 	if err := d.validateCommandEnvelope(env); err != nil {
 		d.logger.Warn("command envelope rejected", "id", env.ID, "err", err)
-		_ = d.sendCommandAck(ctx, env.ID, "rejected", err)
+		_ = d.sendCommandAck(ctx, env.ID, v1.CommandAckRejected, v1.CommandAckReasonInvalidCommand)
 		return nil
 	}
 	d.commandMu.Lock()
@@ -579,12 +579,12 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 
 	contentDigest, err := commandContentDigest(env.Payload)
 	if err != nil {
-		_ = d.sendCommandAck(ctx, env.ID, "rejected", fmt.Errorf("encode command content"))
+		_ = d.sendCommandAck(ctx, env.ID, v1.CommandAckRejected, v1.CommandAckReasonInvalidCommand)
 		return nil
 	}
 	payload, err := json.Marshal(env)
 	if err != nil {
-		_ = d.sendCommandAck(ctx, env.ID, "rejected", fmt.Errorf("encode command envelope"))
+		_ = d.sendCommandAck(ctx, env.ID, v1.CommandAckRejected, v1.CommandAckReasonInternalRejection)
 		return nil
 	}
 	receipt, _, err := d.journal.ReceiveCommand(ctx, journal.Record{
@@ -592,7 +592,7 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 	}, contentDigest)
 	if errors.Is(err, journal.ErrCommandContentConflict) {
 		d.logger.Error("command ID reused with different content", "id", env.ID)
-		_ = d.sendCommandAck(ctx, env.ID, "rejected", err)
+		_ = d.sendCommandAck(ctx, env.ID, v1.CommandAckRejected, v1.CommandAckReasonCommandConflict)
 		return nil
 	}
 	if err != nil {
@@ -629,15 +629,12 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 			execErr = d.executeCommand(ctx, env, cmd)
 		}
 	}
-	status := "accepted"
+	status := v1.CommandAckAccepted
 	if execErr != nil {
-		status = "rejected"
+		status = v1.CommandAckRejected
 	}
-	errorText := ""
-	if execErr != nil {
-		errorText = truncate(execErr.Error(), 500)
-	}
-	receipt, err = d.journal.CompleteCommand(ctx, env.ID, claimOwner, status, errorText)
+	reasonCode := commandRejectionReason(execErr)
+	receipt, err = d.journal.CompleteCommand(ctx, env.ID, claimOwner, string(status), reasonCode)
 	if err != nil {
 		d.logger.Error("persist command outcome", "id", env.ID, "err", err)
 		return fmt.Errorf("persist command outcome %s: %w", env.ID, err)
@@ -651,18 +648,18 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	switch cmd.Command {
 	case v1.CmdStartJob:
 		if d.Paused() {
-			return fmt.Errorf("runner paused; refusing job")
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		if cmd.Job == nil {
-			return fmt.Errorf("start_job missing job spec")
+			return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
 		}
 		return d.startJob(ctx, *cmd.Job)
 	case v1.CmdReviewComment:
 		if d.Paused() {
-			return fmt.Errorf("runner paused; refusing continuation")
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		if cmd.Job == nil {
-			return fmt.Errorf("review_comment missing job spec")
+			return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
 		}
 		if cmd.Job.ResumeSessionID == "" {
 			if cp, err := d.collectors.LatestCheckpoint(cmd.Job.JobID); err == nil && cp.ProviderSessionID != "" {
@@ -718,7 +715,7 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	case v1.CmdUpdate:
 		return d.beginUpdateDrain(env.ID, cmd, time.Now())
 	}
-	return fmt.Errorf("unsupported command %q", cmd.Command)
+	return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 }
 
 func (d *Daemon) validateCommandEnvelope(env v1.Envelope) error {
@@ -740,13 +737,18 @@ func (d *Daemon) validateCommandEnvelope(env v1.Envelope) error {
 	return nil
 }
 
-func (d *Daemon) sendCommandAck(ctx context.Context, commandID, status string, commandErr error) error {
+func (d *Daemon) sendCommandAck(
+	ctx context.Context,
+	commandID string,
+	status v1.CommandAckStatus,
+	reasonCode v1.CommandAckReasonCode,
+) error {
 	if d.client == nil || commandID == "" {
 		return nil
 	}
-	payload := v1.CommandAckPayload{Status: status}
-	if commandErr != nil {
-		payload.Error = truncate(commandErr.Error(), 500)
+	payload := v1.CommandAckPayload{Status: status, ReasonCode: reasonCode}
+	if err := v1.ValidateCommandAckPayload(payload); err != nil {
+		return fmt.Errorf("validate command acknowledgement: %w", err)
 	}
 	ackCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

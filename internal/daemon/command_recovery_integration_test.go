@@ -52,7 +52,7 @@ func TestCommandRedeliveryReplaysOriginalAckAndChangedReuseFailsClosed(t *testin
 	})
 	for _, acknowledgement := range cp.CommandAcks() {
 		payload := acknowledgement.Payload.(map[string]any)
-		if acknowledgement.InReplyTo != envelope.ID || payload["status"] != "accepted" || payload["error"] != nil {
+		if acknowledgement.InReplyTo != envelope.ID || payload["status"] != "accepted" || payload["reason_code"] != nil || payload["error"] != nil {
 			t.Fatalf("replayed acknowledgement = %+v", acknowledgement)
 		}
 	}
@@ -67,7 +67,7 @@ func TestCommandRedeliveryReplaysOriginalAckAndChangedReuseFailsClosed(t *testin
 		return len(cp.CommandAcks()) == 3
 	})
 	conflict := cp.CommandAcks()[2].Payload.(map[string]any)
-	if conflict["status"] != "rejected" || conflict["error"] == nil {
+	if conflict["status"] != "rejected" || conflict["reason_code"] != "command_conflict" || conflict["error"] != nil {
 		t.Fatalf("conflict acknowledgement = %v", conflict)
 	}
 	if d.Paused() {

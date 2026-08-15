@@ -37,11 +37,12 @@ func commandReceiptTerminal(receipt journal.CommandReceipt) bool {
 }
 
 func (d *Daemon) sendDurableCommandAck(ctx context.Context, receipt journal.CommandReceipt) {
-	var commandErr error
-	if receipt.AckError != "" {
-		commandErr = fmt.Errorf("%s", receipt.AckError)
-	}
-	if err := d.sendCommandAck(ctx, receipt.ID, receipt.AckStatus, commandErr); err != nil {
+	if err := d.sendCommandAck(
+		ctx,
+		receipt.ID,
+		v1.CommandAckStatus(receipt.AckStatus),
+		receipt.AckReasonCode,
+	); err != nil {
 		d.logger.Debug("send command ack", "id", receipt.ID, "err", err)
 	}
 }

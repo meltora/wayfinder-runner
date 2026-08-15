@@ -104,36 +104,36 @@ func (jr *jobRunner) startupFailureOutcome(
 
 func (d *Daemon) startJob(ctx context.Context, job v1.JobSpec) error {
 	if err := validation.JobSpec(job); err != nil {
-		return fmt.Errorf("invalid job: %w", err)
+		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
 	}
 	if err := d.verifyJobAgentPackAuthority(job); err != nil {
-		return fmt.Errorf("invalid job: %w", err)
+		return err
 	}
 	job, err := v1.CloneJobSpec(job)
 	if err != nil {
-		return fmt.Errorf("isolate job command: %w", err)
+		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
 	}
 	jobToken, err := newSecretToken()
 	if err != nil {
-		return err
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 	}
 	d.jobMu.Lock()
 	defer d.jobMu.Unlock()
 	if d.updateDrain != nil {
-		return fmt.Errorf("runner is draining for update %s", d.updateDrain.UpdateID)
+		return rejectCommand(v1.CommandAckReasonRunnerDraining, nil)
 	}
 	if d.activeJob != nil {
-		return fmt.Errorf("runner busy with job %s", d.activeJob.job.JobID)
+		return rejectCommand(v1.CommandAckReasonRunnerBusy, nil)
 	}
 	expiresAt := job.LeaseExpiresAt
 	if expiresAt.IsZero() && d.cfg.AllowUnsafeDirect {
 		expiresAt = time.Now().Add(30 * time.Minute)
 	}
 	if !expiresAt.After(time.Now()) {
-		return fmt.Errorf("job requires an unexpired control-plane lease")
+		return rejectCommand(v1.CommandAckReasonLeaseRejected, nil)
 	}
 	if expiresAt.After(time.Now().Add(24 * time.Hour)) {
-		return fmt.Errorf("job lease cannot exceed 24 hours")
+		return rejectCommand(v1.CommandAckReasonLeaseRejected, nil)
 	}
 	now := time.Now()
 	l := lease.Lease{
@@ -144,7 +144,7 @@ func (d *Daemon) startJob(ctx context.Context, job v1.JobSpec) error {
 		ExpiresAt:    expiresAt,
 	}
 	if err := d.leases.Acquire(l); err != nil {
-		return err
+		return rejectCommand(v1.CommandAckReasonLeaseRejected, err)
 	}
 	if err := d.journal.SaveLease(ctx, l); err != nil {
 		d.leases.Release(job.AttemptID)
@@ -298,12 +298,14 @@ func (jr *jobRunner) run() {
 	workDir, cleanup, err := jr.prepareWorkspace(ctx)
 	if err != nil {
 		jr.logger.Error("workspace preparation failed", "err", err)
-		failureCode, failureMessage := classifyWorkspacePreparationFailure(err)
+		failure := classifyWorkspacePreparationFailure(err)
+		outcome := jr.startupFailureOutcome(failure.FailureCode, failure.FailureMessage)
+		if outcome.State == v1.JobFinishedFailed {
+			outcome.FailureCategory = failure.FailureCategory
+			outcome.Retryable = failure.Retryable
+		}
 		finish(
-			jr.startupFailureOutcome(
-				failureCode,
-				failureMessage,
-			),
+			outcome,
 			nil,
 		)
 		return
@@ -731,19 +733,27 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 		packDir := filepath.Join(jr.workDir, "pack")
 		if err := jr.materializeAgentPack(job.AgentPack, packDir); err != nil {
 			cleanup()
-			return "", func() {}, &agentPackMaterializationError{cause: err}
+			return "", func() {}, err
 		}
 		jr.packDir = packDir
 	}
 	return primaryDir, cleanup, nil
 }
 
-func classifyWorkspacePreparationFailure(err error) (v1.JobFinishedFailureCode, string) {
+func classifyWorkspacePreparationFailure(err error) jobOutcome {
 	var materializationFailure *agentPackMaterializationError
 	if errors.As(err, &materializationFailure) {
-		return v1.JobFailureAgentPackMaterialization, "Agent Pack materialization failed"
+		retryable := materializationFailure.retryable
+		return jobOutcome{
+			State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentPackMaterialization,
+			FailureCategory: materializationFailure.category, Retryable: &retryable,
+			FailureMessage: "Agent Pack materialization failed",
+		}
 	}
-	return v1.JobFailureWorkspacePreparation, "workspace preparation failed"
+	return jobOutcome{
+		State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation,
+		FailureMessage: "workspace preparation failed",
+	}
 }
 
 func (jr *jobRunner) buildPrompt() string {

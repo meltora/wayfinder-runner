@@ -63,42 +63,71 @@ func TestRunnerVerifiesSignedAgentPackAuthorityBeforeStartingJob(t *testing.T) {
 	job, trustedKey := signedTestPackJob(t)
 	d := &Daemon{cfg: config.Config{
 		Provider: "codex", AgentPackPublicKeys: map[string]string{"pack-key-1": trustedKey},
+		AllowedArtifactOrigins: []string{"https://packs.example.test"},
 	}}
 	if err := d.verifyJobAgentPackAuthority(job); err != nil {
 		t.Fatalf("valid authority rejected: %v", err)
 	}
 
-	tests := map[string]func(*Daemon, *v1.JobSpec){
-		"untrusted key":  func(d *Daemon, _ *v1.JobSpec) { d.cfg.AgentPackPublicKeys = nil },
-		"wrong provider": func(d *Daemon, _ *v1.JobSpec) { d.cfg.Provider = "opencode" },
-		"tampered signature": func(_ *Daemon, job *v1.JobSpec) {
-			raw, _ := base64.StdEncoding.DecodeString(job.AgentPackAuthority.SignatureBase64)
-			raw[0] ^= 0xff
-			job.AgentPackAuthority.SignatureBase64 = base64.StdEncoding.EncodeToString(raw)
+	tests := map[string]struct {
+		mutate func(*Daemon, *v1.JobSpec)
+		reason v1.CommandAckReasonCode
+	}{
+		"untrusted key": {
+			mutate: func(d *Daemon, _ *v1.JobSpec) { d.cfg.AgentPackPublicKeys = nil },
+			reason: v1.CommandAckReasonAgentPackKeyUntrusted,
+		},
+		"wrong provider": {
+			mutate: func(d *Daemon, _ *v1.JobSpec) { d.cfg.Provider = "opencode" },
+			reason: v1.CommandAckReasonAgentPackIncompatible,
+		},
+		"tampered signature": {
+			mutate: func(_ *Daemon, job *v1.JobSpec) {
+				raw, _ := base64.StdEncoding.DecodeString(job.AgentPackAuthority.SignatureBase64)
+				raw[0] ^= 0xff
+				job.AgentPackAuthority.SignatureBase64 = base64.StdEncoding.EncodeToString(raw)
+			},
+			reason: v1.CommandAckReasonAgentPackAuthorityInvalid,
+		},
+		"origin unapproved": {
+			mutate: func(d *Daemon, _ *v1.JobSpec) { d.cfg.AllowedArtifactOrigins = []string{"https://other.example.test"} },
+			reason: v1.CommandAckReasonAgentPackOriginUnapproved,
 		},
 	}
-	for name, mutate := range tests {
+	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			candidate := job
 			authority := *job.AgentPackAuthority
 			candidate.AgentPackAuthority = &authority
 			candidateDaemon := &Daemon{cfg: config.Normalize(d.cfg)}
-			mutate(candidateDaemon, &candidate)
+			test.mutate(candidateDaemon, &candidate)
 			if err := candidateDaemon.verifyJobAgentPackAuthority(candidate); err == nil {
 				t.Fatal("invalid authority accepted")
+			} else if reason := commandRejectionReason(err); reason != test.reason {
+				t.Fatalf("rejection reason = %q, want %q", reason, test.reason)
 			}
 		})
 	}
 }
 
 func TestAgentPackMaterializationFailureHasControlledTerminalClassification(t *testing.T) {
-	code, message := classifyWorkspacePreparationFailure(&agentPackMaterializationError{cause: context.Canceled})
-	if code != v1.JobFailureAgentPackMaterialization || message != "Agent Pack materialization failed" {
-		t.Fatalf("classification = %q %q", code, message)
+	failure := &agentPackMaterializationError{
+		category:  v1.AgentPackFailureDownloadUnavailable,
+		retryable: true,
+		cause:     context.Canceled,
 	}
-	code, message = classifyWorkspacePreparationFailure(context.Canceled)
-	if code != v1.JobFailureWorkspacePreparation || message != "workspace preparation failed" {
-		t.Fatalf("ordinary classification = %q %q", code, message)
+	outcome := classifyWorkspacePreparationFailure(failure)
+	if outcome.FailureCode != v1.JobFailureAgentPackMaterialization ||
+		outcome.FailureMessage != "Agent Pack materialization failed" ||
+		outcome.FailureCategory != v1.AgentPackFailureDownloadUnavailable ||
+		outcome.Retryable == nil || !*outcome.Retryable {
+		t.Fatalf("classification = %#v", outcome)
+	}
+	outcome = classifyWorkspacePreparationFailure(context.Canceled)
+	if outcome.FailureCode != v1.JobFailureWorkspacePreparation ||
+		outcome.FailureMessage != "workspace preparation failed" ||
+		outcome.FailureCategory != "" || outcome.Retryable != nil {
+		t.Fatalf("ordinary classification = %#v", outcome)
 	}
 }
 

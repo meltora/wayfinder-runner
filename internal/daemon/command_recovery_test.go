@@ -102,7 +102,7 @@ func TestCompletedCommandReplaysOriginalRejectionAndRejectsChangedReuse(t *testi
 	}
 	first := commandReceipt(t, d, rejected)
 	if first.State != journal.CommandRejected || first.AckStatus != "rejected" ||
-		!strings.Contains(first.AckError, "missing job spec") {
+		first.AckReasonCode != v1.CommandAckReasonInvalidCommand {
 		t.Fatalf("first rejection = %+v", first)
 	}
 	rejected.SentAt = time.Now().Add(time.Second)
@@ -204,7 +204,7 @@ func TestStartRecoveryRejectsMismatchedImmutableAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := commandReceipt(t, d, envelope)
-	if receipt.State != journal.CommandRejected || !strings.Contains(receipt.AckError, "runner busy") {
+	if receipt.State != journal.CommandRejected || receipt.AckReasonCode != v1.CommandAckReasonLeaseRejected {
 		t.Fatalf("mismatched authority was mistaken for an applied command: %+v", receipt)
 	}
 }

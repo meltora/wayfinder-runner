@@ -38,46 +38,46 @@ func VerifyDeliveryAuthority(
 	runnerVersion string,
 ) error {
 	if err := validation.SignedAgentPackAuthority(authority); err != nil {
-		return fmt.Errorf("invalid signed Agent Pack authority: %w", err)
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, err)
 	}
 	if err := validation.AgentPackReference(reference); err != nil {
-		return fmt.Errorf("invalid Agent Pack reference: %w", err)
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, err)
 	}
 	if !validation.AgentPackAuthorityBindsReference(authority, reference) {
-		return fmt.Errorf("signed Agent Pack authority does not bind the requested archive")
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, fmt.Errorf("authority does not bind archive"))
 	}
 	if canonicalProvider(authority.Provider) != canonicalProvider(runnerProvider) {
-		return fmt.Errorf("signed Agent Pack provider %q does not match runner provider", authority.Provider)
+		return newDeliveryAuthorityError(DeliveryAuthorityIncompatible, fmt.Errorf("provider mismatch"))
 	}
 	compatible, err := runnerMeetsMinimum(runnerVersion, authority.MinimumRunnerVersion)
 	if err != nil {
-		return fmt.Errorf("compare runner version: %w", err)
+		return newDeliveryAuthorityError(DeliveryAuthorityIncompatible, err)
 	}
 	if !compatible {
-		return fmt.Errorf("runner %s is below Agent Pack minimum %s", runnerVersion, authority.MinimumRunnerVersion)
+		return newDeliveryAuthorityError(DeliveryAuthorityIncompatible, fmt.Errorf("runner version below minimum"))
 	}
 
 	digest, err := PublicationAttestationDigest(authority)
 	if err != nil {
-		return err
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, err)
 	}
 	if digest != authority.AttestationDigest {
-		return fmt.Errorf("Agent Pack attestation digest mismatch")
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, fmt.Errorf("attestation digest mismatch"))
 	}
 	publicKey, err := ed25519PublicKeyFromSPKIBase64(publicKeySPKIBase64)
 	if err != nil {
-		return fmt.Errorf("trusted Agent Pack key: %w", err)
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, err)
 	}
 	signature, err := base64.StdEncoding.Strict().DecodeString(authority.SignatureBase64)
 	if err != nil || len(signature) != ed25519.SignatureSize {
-		return fmt.Errorf("Agent Pack attestation has an invalid signature encoding")
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, fmt.Errorf("signature encoding invalid"))
 	}
 	digestBytes, err := hex.DecodeString(digest)
 	if err != nil {
-		return fmt.Errorf("decode Agent Pack attestation digest: %w", err)
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, err)
 	}
 	if !ed25519.Verify(publicKey, digestBytes, signature) {
-		return fmt.Errorf("Agent Pack attestation signature verification failed")
+		return newDeliveryAuthorityError(DeliveryAuthorityInvalid, fmt.Errorf("signature verification failed"))
 	}
 	return nil
 }

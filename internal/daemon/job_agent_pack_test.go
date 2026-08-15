@@ -74,7 +74,7 @@ func TestMaterializeAgentPackUsesVerifiedDigestCacheAndReadOnlyJobViews(t *testi
 	}
 }
 
-func TestMaterializeAgentPackRejectsRedirectEncodingAndDigestMismatch(t *testing.T) {
+func TestMaterializeAgentPackClassifiesControlledFailureEvidence(t *testing.T) {
 	archive, reference := authenticatedArchiveFixture(t)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -83,6 +83,10 @@ func TestMaterializeAgentPackRejectsRedirectEncodingAndDigestMismatch(t *testing
 		case "/encoded":
 			writer.Header().Set("Content-Encoding", "gzip")
 			_, _ = writer.Write(archive)
+		case "/unavailable":
+			http.Error(writer, "unavailable", http.StatusServiceUnavailable)
+		case "/invalid":
+			_, _ = writer.Write([]byte("not a gzip archive"))
 		default:
 			_, _ = writer.Write(archive)
 		}
@@ -95,30 +99,70 @@ func TestMaterializeAgentPackRejectsRedirectEncodingAndDigestMismatch(t *testing
 		},
 		ctx: context.Background(),
 	}
-	for name, mutate := range map[string]func(*v1.AgentPackRef){
-		"redirect":         func(ref *v1.AgentPackRef) { ref.URL = server.URL + "/redirect" },
-		"content encoding": func(ref *v1.AgentPackRef) { ref.URL = server.URL + "/encoded" },
-		"digest mismatch": func(ref *v1.AgentPackRef) {
-			ref.URL = server.URL + "/pack"
-			prefix := "a"
-			if ref.Digest[0] == 'a' {
-				prefix = "b"
-			}
-			ref.Digest = prefix + ref.Digest[1:]
+	for name, test := range map[string]struct {
+		mutate    func(*v1.AgentPackRef)
+		category  v1.AgentPackMaterializationFailureCategory
+		retryable bool
+	}{
+		"redirect": {
+			mutate:   func(ref *v1.AgentPackRef) { ref.URL = server.URL + "/redirect" },
+			category: v1.AgentPackFailureArchiveInvalid,
+		},
+		"content encoding": {
+			mutate:   func(ref *v1.AgentPackRef) { ref.URL = server.URL + "/encoded" },
+			category: v1.AgentPackFailureArchiveInvalid,
+		},
+		"download unavailable": {
+			mutate:   func(ref *v1.AgentPackRef) { ref.URL = server.URL + "/unavailable" },
+			category: v1.AgentPackFailureDownloadUnavailable, retryable: true,
+		},
+		"digest mismatch": {
+			mutate:   func(ref *v1.AgentPackRef) { ref.URL = server.URL + "/invalid" },
+			category: v1.AgentPackFailureDigestMismatch,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := reference
-			mutate(&candidate)
+			test.mutate(&candidate)
 			destination := filepath.Join(t.TempDir(), "job-view")
 			writableCleanupJobView(t, destination)
-			if err := runner.materializeAgentPack(&candidate, destination); err == nil {
+			err := runner.materializeAgentPack(&candidate, destination)
+			if err == nil {
 				t.Fatal("unsafe artifact accepted")
+			}
+			category, retryable, ok := agentPackMaterializationEvidence(err)
+			if !ok || category != test.category || retryable != test.retryable {
+				t.Fatalf("classification = %q %v %v, want %q %v", category, retryable, ok, test.category, test.retryable)
 			}
 			if _, err := os.Stat(destination); !os.IsNotExist(err) {
 				t.Fatalf("failed materialization created job view: %v", err)
 			}
 		})
+	}
+}
+
+func TestMaterializeAgentPackClassifiesLocalCacheFailureAsRetryableStorage(t *testing.T) {
+	archive, reference := authenticatedArchiveFixture(t)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write(archive)
+	}))
+	defer server.Close()
+	reference.URL = server.URL + "/pack"
+	stateDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stateDir, "agent-pack-cache"), []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &jobRunner{
+		d: &Daemon{
+			cfg:         config.Config{StateDir: stateDir, Provider: "codex", ControlPlaneHTTPURL: server.URL, AllowedArtifactOrigins: []string{server.URL}},
+			controlHTTP: server.Client(),
+		},
+		ctx: context.Background(),
+	}
+	err := runner.materializeAgentPack(&reference, filepath.Join(t.TempDir(), "job-view"))
+	category, retryable, ok := agentPackMaterializationEvidence(err)
+	if !ok || category != v1.AgentPackFailureStorageUnavailable || !retryable {
+		t.Fatalf("classification = %q %v %v: %v", category, retryable, ok, err)
 	}
 }
 

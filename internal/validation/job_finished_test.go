@@ -25,13 +25,25 @@ func TestJobFinishedEventAcceptsStateConsistentEvidence(t *testing.T) {
 		code  v1.JobFinishedFailureCode
 	}{
 		{v1.JobFinishedFailed, v1.JobFailureAgentExit},
-		{v1.JobFinishedFailed, v1.JobFailureAgentPackMaterialization},
 		{v1.JobFinishedCancelled, v1.JobFailureCancelled},
 		{v1.JobFinishedQuarantined, v1.JobFailureLeaseLost},
 		{v1.JobFinishedQuarantined, v1.JobFailureCleanup},
 	} {
 		event := validJobFinishedEvent()
 		event.State, event.FailureCode, event.FailureMessage = pair.state, pair.code, "bounded detail"
+		valid = append(valid, event)
+	}
+	for category, retryable := range map[v1.AgentPackMaterializationFailureCategory]bool{
+		v1.AgentPackFailureDownloadUnavailable: true,
+		v1.AgentPackFailureStorageUnavailable:  true,
+		v1.AgentPackFailureDigestMismatch:      false,
+		v1.AgentPackFailureArchiveInvalid:      false,
+	} {
+		event := validJobFinishedEvent()
+		event.State = v1.JobFinishedFailed
+		event.FailureCode = v1.JobFailureAgentPackMaterialization
+		event.FailureCategory = category
+		event.Retryable = boolPointer(retryable)
 		valid = append(valid, event)
 	}
 	for _, event := range valid {
@@ -61,6 +73,17 @@ func TestJobFinishedEventRejectsInvalidAuthorityAndFailureCombinations(t *testin
 		"quarantine mismatch": func(event *v1.JobFinishedEvent) {
 			event.State, event.FailureCode = v1.JobFinishedQuarantined, v1.JobFailureAgentExit
 		},
+		"materialization category missing": func(event *v1.JobFinishedEvent) {
+			event.State, event.FailureCode = v1.JobFinishedFailed, v1.JobFailureAgentPackMaterialization
+		},
+		"materialization retryability mismatch": func(event *v1.JobFinishedEvent) {
+			event.State, event.FailureCode = v1.JobFinishedFailed, v1.JobFailureAgentPackMaterialization
+			event.FailureCategory, event.Retryable = v1.AgentPackFailureDigestMismatch, boolPointer(true)
+		},
+		"unrelated category": func(event *v1.JobFinishedEvent) {
+			event.State, event.FailureCode = v1.JobFinishedFailed, v1.JobFailureAgentExit
+			event.FailureCategory, event.Retryable = v1.AgentPackFailureDownloadUnavailable, boolPointer(true)
+		},
 		"message": func(event *v1.JobFinishedEvent) {
 			event.State, event.FailureCode, event.FailureMessage = v1.JobFinishedFailed, v1.JobFailureAgentExit, strings.Repeat("x", 513)
 		},
@@ -75,3 +98,5 @@ func TestJobFinishedEventRejectsInvalidAuthorityAndFailureCombinations(t *testin
 		})
 	}
 }
+
+func boolPointer(value bool) *bool { return &value }
