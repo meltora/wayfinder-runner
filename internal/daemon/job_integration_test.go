@@ -181,8 +181,14 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 		t.Fatalf("terminal authority = %v", terminal)
 	}
 
-	if len(cp.EventsByKind("config_inventory")) == 0 {
-		t.Fatal("expected config inventory event")
+	discoveryEvents := cp.EventsByKind(v1.EventKindAgentConfigDiscovery)
+	if len(discoveryEvents) != 1 {
+		t.Fatalf("discovery events = %d, want one per repository", len(discoveryEvents))
+	}
+	discovery := discoveryEvents[0].Payload.(map[string]any)
+	if discovery["project_id"] != job.ProjectID || discovery["repository_id"] != "repo-1" ||
+		discovery["catalog_version"] != v1.AgentConfigCatalogVersion || discovery["commit_sha"] == "" {
+		t.Fatalf("discovery authority = %v", discovery)
 	}
 	if len(cp.EventsByKind("progress")) == 0 {
 		t.Fatal("expected progress events")

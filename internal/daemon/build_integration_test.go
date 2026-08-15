@@ -386,6 +386,18 @@ echo '{"type":"result","status":"success"}'
 	if len(cp.EventsByKind("pr_ready")) != 2 {
 		t.Fatalf("pr_ready events = %d", len(cp.EventsByKind("pr_ready")))
 	}
+	discoveryEvents := cp.EventsByKind(v1.EventKindAgentConfigDiscovery)
+	if len(discoveryEvents) != 2 {
+		t.Fatalf("discovery events = %d, want one per repository", len(discoveryEvents))
+	}
+	discoveredRepositories := map[string]bool{}
+	for _, event := range discoveryEvents {
+		payload := event.Payload.(map[string]any)
+		discoveredRepositories[payload["repository_id"].(string)] = true
+	}
+	if !discoveredRepositories["primary"] || !discoveredRepositories["secondary"] {
+		t.Fatalf("discovered repositories = %v", discoveredRepositories)
+	}
 	for _, origin := range []string{primaryOrigin, secondaryOrigin} {
 		cmd := exec.Command("git", "--git-dir", origin, "rev-parse", "job/multi-1/att-1")
 		if out, err := cmd.CombinedOutput(); err != nil {

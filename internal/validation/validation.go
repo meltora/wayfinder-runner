@@ -58,6 +58,9 @@ func JobSpec(job v1.JobSpec) error {
 	if err := ID("attempt_id", job.AttemptID); err != nil {
 		return err
 	}
+	if err := ID("project_id", job.ProjectID); err != nil {
+		return err
+	}
 	if job.Kind != v1.JobKindPlan && job.Kind != v1.JobKindBuild {
 		return fmt.Errorf("unsupported job kind %q", job.Kind)
 	}

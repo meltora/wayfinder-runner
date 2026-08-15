@@ -23,11 +23,19 @@ func TestDisplayNameAllowsOrdinaryCharactersAndRejectsPathSyntax(t *testing.T) {
 
 func validJob() v1.JobSpec {
 	return v1.JobSpec{
-		JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindPlan,
+		JobID: "job-1", AttemptID: "attempt-1", ProjectID: "project-1", Kind: v1.JobKindPlan,
 		LeaseID: "lease-1", ManifestID: "manifest-1", ManifestDigest: strings.Repeat("a", 64),
 		WorkflowRevision: 2, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
 		Ticket:       v1.TicketContext{Key: "PROJ-1", Summary: "Implement feature"},
+	}
+}
+
+func TestJobSpecRequiresProjectAuthority(t *testing.T) {
+	job := validJob()
+	job.ProjectID = ""
+	if err := JobSpec(job); err == nil || !strings.Contains(err.Error(), "project_id is required") {
+		t.Fatalf("JobSpec() error = %v, want missing project authority", err)
 	}
 }
 

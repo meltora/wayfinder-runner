@@ -12,6 +12,7 @@ const (
 type JobSpec struct {
 	JobID               string               `json:"job_id"`
 	AttemptID           string               `json:"attempt_id"`
+	ProjectID           string               `json:"project_id"`
 	Kind                JobKind              `json:"kind"`
 	LeaseID             string               `json:"lease_id"`
 	ManifestID          string               `json:"manifest_id"`

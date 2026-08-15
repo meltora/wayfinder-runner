@@ -81,11 +81,11 @@ untrusted with respect to the runner identity and control plane.
 ## Execution flow
 
 1. The control plane sends a validated `start_job` command containing the exact
-   lease ID, manifest ID/kind/digest, workflow revision, fencing token, ticket
-   context, one to sixteen registered repository IDs, and optionally a signed
-   Agent Pack reference. The runner preserves this immutable authority on every
-  accepted progress, checkpoint, plan-publication, provider-capacity, terminal,
-  and artifact event.
+   project ID, lease ID, manifest ID/kind/digest, workflow revision, fencing
+   token, ticket context, one to sixteen registered repository IDs, and
+   optionally a signed Agent Pack reference. The runner preserves this
+   immutable authority on every accepted progress, checkpoint, plan-publication,
+   provider-capacity, terminal, and artifact event.
 2. The daemon durably records immutable command content and a receipt state
    before applying any effect. Redelivery replays the original terminal
    acknowledgement; reuse of a command ID with changed content fails closed.
@@ -99,8 +99,11 @@ untrusted with respect to the runner identity and control plane.
    continues.
 3. Each repository is cloned from a trusted local mirror into a self-contained
    job workspace. No job receives mirror metadata or host Git credentials.
-4. The runner publishes a non-executing agent-configuration inventory, verifies
-   and mounts the Agent Pack, prepares an isolated provider home, and starts a
+4. For each repository, the runner scans only the versioned catalog beneath the
+   exact checkout and durably publishes one metadata-only
+   `agent_config_discovery` event. It never executes discovered material,
+   follows catalog symlinks, or publishes raw content. It then verifies and
+   mounts the Agent Pack, prepares an isolated provider home, and starts a
    token-scoped Unix MCP bridge.
 5. Codex, Claude, or OpenCode receives the ticket/approved plan and invokes platform MCP
    tools to publish plan revisions, progress, decisions, checkpoints, preview

@@ -24,7 +24,6 @@ import (
 	"github.com/example/app-runner/internal/mcpbridge"
 	"github.com/example/app-runner/internal/provider"
 	"github.com/example/app-runner/internal/repo"
-	"github.com/example/app-runner/internal/scanner"
 	"github.com/example/app-runner/internal/supervisor"
 	"github.com/example/app-runner/internal/validation"
 )
@@ -720,15 +719,9 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 			primaryDir = wtDir
 		}
 
-		inv, err := scanner.Scan(wtDir)
-		if err != nil {
-			jr.logger.Warn("config scan failed", "repository", ref.RepositoryID, "err", err)
-		} else if err := d.sendEvent(ctx, map[string]any{
-			"kind": "config_inventory", "job_id": job.JobID,
-			"attempt_id": job.AttemptID, "fencing_token": job.FencingToken,
-			"repository_id": ref.RepositoryID, "inventory": inv,
-		}); err != nil {
-			jr.logger.Warn("send config inventory", "repository", ref.RepositoryID, "err", err)
+		if err := jr.publishRepositoryDiscovery(ctx, rm, runtimeRepository); err != nil {
+			cleanup()
+			return "", func() {}, fmt.Errorf("repository %s discovery: %w", ref.RepositoryID, err)
 		}
 	}
 

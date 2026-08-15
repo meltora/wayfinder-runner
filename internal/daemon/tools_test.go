@@ -77,7 +77,7 @@ func testJobRunner(t *testing.T) (*jobRunner, *capturedEvents) {
 	}
 	t.Cleanup(func() { _ = d.journal.Close() })
 	job := v1.JobSpec{
-		JobID: "j1", AttemptID: "a1", FencingToken: 7, Kind: v1.JobKindBuild,
+		JobID: "j1", AttemptID: "a1", ProjectID: "project-1", FencingToken: 7, Kind: v1.JobKindBuild,
 		LeaseID: "lease-1", ManifestID: "manifest-1", ManifestDigest: strings.Repeat("a", 64),
 		WorkflowRevision: 2, ApprovedPlanRevision: 1,
 	}

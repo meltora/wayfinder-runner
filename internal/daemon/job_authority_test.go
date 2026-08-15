@@ -10,6 +10,7 @@ import (
 )
 
 func withTestAuthority(job v1.JobSpec) v1.JobSpec {
+	job.ProjectID = "project-1"
 	job.LeaseID = "lease-" + job.AttemptID
 	job.ManifestID = "manifest-" + job.JobID
 	job.ManifestDigest = strings.Repeat("a", 64)
