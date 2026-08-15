@@ -4,9 +4,10 @@ import "testing"
 
 func TestRunCheckToolSchema(t *testing.T) {
 	var def *ToolDef
-	for i := range Tools {
-		if Tools[i].Name == "platform_run_check" {
-			def = &Tools[i]
+	definitions := ToolDefinitions()
+	for i := range definitions {
+		if definitions[i].Name == "platform_run_check" {
+			def = &definitions[i]
 		}
 	}
 	if def == nil {

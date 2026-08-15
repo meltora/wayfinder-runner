@@ -31,8 +31,118 @@ func TestStdioServerToolsList(t *testing.T) {
 	}
 	result := resp.Result.(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != len(Tools) {
-		t.Fatalf("tools = %d, want %d", len(tools), len(Tools))
+	if len(tools) != len(ToolDefinitions()) {
+		t.Fatalf("tools = %d, want %d", len(tools), len(ToolDefinitions()))
+	}
+}
+
+func TestStdioServerUsesAttemptScopedToolsForDiscoveryAndCalls(t *testing.T) {
+	var calls atomic.Int32
+	server := &Server{
+		Caller: func(_ context.Context, tool string, _ json.RawMessage) (any, error) {
+			calls.Add(1)
+			return map[string]any{"tool": tool}, nil
+		},
+		ListTools: func(context.Context) ([]ToolDef, error) {
+			return ToolDefinitionsForNames([]string{"platform_get_job_context"})
+		},
+	}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"platform_publish_preview","arguments":{"idempotency_key":"preview-1"}}}`,
+	}, "\n") + "\n"
+	var output bytes.Buffer
+	if err := server.Serve(context.Background(), strings.NewReader(input), &output); err != nil {
+		t.Fatal(err)
+	}
+	responses := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(responses) != 2 {
+		t.Fatalf("responses=%q", output.String())
+	}
+	var listed struct {
+		Result struct {
+			Tools []ToolDef `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(responses[0]), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Result.Tools) != 1 || listed.Result.Tools[0].Name != "platform_get_job_context" {
+		t.Fatalf("scoped tools=%+v", listed.Result.Tools)
+	}
+	var rejected Response
+	if err := json.Unmarshal([]byte(responses[1]), &rejected); err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Error == nil || rejected.Error.Code != ErrParams || calls.Load() != 0 {
+		t.Fatalf("rejected=%+v calls=%d", rejected, calls.Load())
+	}
+}
+
+func TestStrictJSONRejectsDuplicateKeysAtEveryDepth(t *testing.T) {
+	for _, input := range []string{
+		`{"jsonrpc":"2.0","jsonrpc":"2.0","id":1,"method":"initialize"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"platform_get_job_context","arguments":{"project_id":"one","project_id":"two"}}}`,
+	} {
+		var output bytes.Buffer
+		if err := (&Server{}).Serve(context.Background(), strings.NewReader(input+"\n"), &output); err != nil {
+			t.Fatal(err)
+		}
+		var response Response
+		if err := json.Unmarshal(output.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Error == nil || response.Error.Code != ErrParse {
+			t.Fatalf("duplicate input accepted: %s => %+v", input, response)
+		}
+	}
+}
+
+func TestStdioServerRejectsInvalidRequestIDsAndDoesNotExecuteToolNotifications(t *testing.T) {
+	var calls atomic.Int32
+	server := &Server{Caller: func(context.Context, string, json.RawMessage) (any, error) {
+		calls.Add(1)
+		return map[string]any{"ok": true}, nil
+	}}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":{"nested":true},"method":"initialize"}`,
+		`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"platform_get_job_context","arguments":{}}}`,
+	}, "\n") + "\n"
+	var output bytes.Buffer
+	if err := server.Serve(context.Background(), strings.NewReader(input), &output); err != nil {
+		t.Fatal(err)
+	}
+	responses := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(responses) != 1 {
+		t.Fatalf("unexpected notification response: %q", output.String())
+	}
+	var response Response
+	if err := json.Unmarshal([]byte(responses[0]), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || response.Error.Code != ErrInvalid || calls.Load() != 0 {
+		t.Fatalf("response=%+v calls=%d", response, calls.Load())
+	}
+}
+
+func TestStdioServerBoundsEncodedToolResponses(t *testing.T) {
+	server := &Server{Caller: func(context.Context, string, json.RawMessage) (any, error) {
+		return map[string]any{"content": strings.Repeat("x", maxSocketResponseBytes)}, nil
+	}}
+	input := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"platform_get_job_context","arguments":{}}}` + "\n"
+	var output bytes.Buffer
+	if err := server.Serve(context.Background(), strings.NewReader(input), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() > maxSocketResponseBytes+1 {
+		t.Fatalf("stdio response exceeded limit: %d", output.Len())
+	}
+	var response Response
+	if err := json.Unmarshal(output.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || response.Error.Code != ErrInternal {
+		t.Fatalf("oversized response was not replaced safely: %+v", response)
 	}
 }
 
@@ -121,7 +231,7 @@ func TestStdioServerAcceptsReservedToolCallMetadataOnly(t *testing.T) {
 }
 
 func TestUnixBridgeRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	sock := filepath.Join(dir, "job.sock")
 	srv := &UnixServer{
 		SocketPath: sock,
@@ -152,7 +262,7 @@ func TestUnixBridgeRoundTrip(t *testing.T) {
 }
 
 func TestUnixSocketPermissions(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	sock := filepath.Join(dir, "job.sock")
 	srv := &UnixServer{SocketPath: sock, Token: "t", Handler: func(ctx context.Context, tool string, args json.RawMessage) (any, error) { return nil, nil }}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -170,7 +280,7 @@ func TestUnixSocketPermissions(t *testing.T) {
 }
 
 func TestUnixServerRefusesToReplaceRegularFile(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateTempDir(t)
 	path := filepath.Join(dir, "job.sock")
 	if err := os.WriteFile(path, []byte("do not delete"), 0o600); err != nil {
 		t.Fatal(err)
@@ -182,6 +292,32 @@ func TestUnixServerRefusesToReplaceRegularFile(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || string(data) != "do not delete" {
 		t.Fatalf("regular file changed: %q %v", data, err)
+	}
+}
+
+func TestUnixServerRefusesExistingSocketAndInsecureParent(t *testing.T) {
+	privateDir := privateTempDir(t)
+	path := filepath.Join(privateDir, "job.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	server := &UnixServer{SocketPath: path, Token: "token", Handler: func(context.Context, string, json.RawMessage) (any, error) { return nil, nil }}
+	if err := server.Start(context.Background()); err == nil {
+		t.Fatal("existing socket was replaced")
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("existing socket was removed: %v", err)
+	}
+
+	insecureDir := filepath.Join(t.TempDir(), "shared")
+	if err := os.Mkdir(insecureDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	insecure := &UnixServer{SocketPath: filepath.Join(insecureDir, "job.sock"), Token: "token", Handler: server.Handler}
+	if err := insecure.Start(context.Background()); err == nil {
+		t.Fatal("socket started in group/world-accessible directory")
 	}
 }
 
@@ -236,8 +372,8 @@ func TestUnixBridgeConfigurationAndWireErrors(t *testing.T) {
 	handler := func(context.Context, string, json.RawMessage) (any, error) { return nil, nil }
 	for _, server := range []*UnixServer{
 		{SocketPath: "relative.sock", Token: "t", Handler: handler},
-		{SocketPath: filepath.Join(t.TempDir(), "job.sock"), Handler: handler},
-		{SocketPath: filepath.Join(t.TempDir(), "job.sock"), Token: "t"},
+		{SocketPath: filepath.Join(privateTempDir(t), "job.sock"), Handler: handler},
+		{SocketPath: filepath.Join(privateTempDir(t), "job.sock"), Token: "t"},
 	} {
 		if err := server.Start(context.Background()); err == nil {
 			t.Fatalf("invalid server accepted: %+v", server)
@@ -256,4 +392,17 @@ func TestUnixBridgeConfigurationAndWireErrors(t *testing.T) {
 	if _, err := scanJSONLine(strings.NewReader("\n"), 1024); err == nil {
 		t.Fatal("empty JSON line accepted")
 	}
+}
+
+func privateTempDir(t *testing.T) string {
+	t.Helper()
+	directory, err := os.MkdirTemp("/tmp", "mcp-private-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return directory
 }

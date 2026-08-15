@@ -204,6 +204,9 @@ esac
 
 func TestHookEventCommandRoundTrip(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	socket := filepath.Join(dir, "job.sock")
 	tokenFile := filepath.Join(dir, "token")
 	if err := os.WriteFile(tokenFile, []byte("token-1\n"), 0o600); err != nil {
@@ -262,6 +265,9 @@ func TestHookEventCommandRoundTrip(t *testing.T) {
 
 func TestMCPServeCommandRoundTrip(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	socket := filepath.Join(dir, "job.sock")
 	tokenFile := filepath.Join(dir, "token")
 	if err := os.WriteFile(tokenFile, []byte("token-1\n"), 0o600); err != nil {
@@ -273,6 +279,9 @@ func TestMCPServeCommandRoundTrip(t *testing.T) {
 		SocketPath: socket,
 		Token:      "token-1",
 		Handler: func(_ context.Context, tool string, _ json.RawMessage) (any, error) {
+			if tool == mcpbridge.InternalListToolsTool {
+				return []string{"platform_get_job_context"}, nil
+			}
 			return map[string]any{"tool": tool}, nil
 		},
 	}

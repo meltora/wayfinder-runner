@@ -170,6 +170,63 @@ func TestToolCallLeaseValidation(t *testing.T) {
 	}
 }
 
+func TestJobContextRejectsIdentityArgumentsAndStopsAfterCancellation(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	if _, err := call(t, jr, "platform_get_job_context", `{"project_id":"foreign-project"}`); err == nil {
+		t.Fatal("job context accepted model-supplied identity")
+	}
+	if _, err := call(t, jr, "platform_get_job_context", `{"nested":{"job_id":"foreign-job","job_id":"other-job"}}`); err == nil {
+		t.Fatal("job context accepted duplicate or nested identity arguments")
+	}
+	jr.cancel()
+	if _, err := call(t, jr, "platform_get_job_context", `{}`); err == nil {
+		t.Fatal("cancelled attempt retained MCP authority")
+	}
+}
+
+func TestAttemptScopedToolDefinitionsExcludeUnauthorizedTools(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	jr.job.Kind = v1.JobKindPlan
+	result, err := call(t, jr, mcpbridge.InternalListToolsTool, `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, ok := result.([]string)
+	if !ok {
+		t.Fatalf("tool definitions type=%T", result)
+	}
+	for _, name := range names {
+		if name == "platform_publish_preview" || name == "platform_run_check" {
+			t.Fatalf("planning attempt discovered build-only tool %q", name)
+		}
+	}
+	if len(names) == 0 || names[0] != "platform_get_job_context" {
+		t.Fatalf("unexpected scoped tools: %+v", names)
+	}
+}
+
+func TestJobContextContainsOnlyRunnerDerivedAuthorityAndSafeBoundaries(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	jr.job.Repositories = []v1.JobRepository{{RepositoryID: "repository-1", BaseBranch: "main", Primary: true}}
+	result, err := call(t, jr, "platform_get_job_context", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobContext := result.(map[string]any)
+	if jobContext["project_id"] != jr.job.ProjectID || jobContext["job_id"] != jr.job.JobID || jobContext["attempt_id"] != jr.job.AttemptID {
+		t.Fatalf("context identity=%+v", jobContext)
+	}
+	boundaries, ok := jobContext["execution_boundaries"].(map[string]any)
+	if !ok || boundaries["merge_allowed"] != false || boundaries["feature_done_allowed"] != false {
+		t.Fatalf("execution boundaries=%+v", jobContext["execution_boundaries"])
+	}
+	for _, forbidden := range []string{"lease_id", "fencing_token", "manifest_digest", "agent_pack", "agent_pack_authority", "resume_session_id"} {
+		if _, exists := jobContext[forbidden]; exists {
+			t.Fatalf("sensitive runner authority %q leaked in context", forbidden)
+		}
+	}
+}
+
 func TestPlanAndRevisionFlow(t *testing.T) {
 	jr, cap := testJobRunner(t)
 	jr.job.Kind = v1.JobKindPlan

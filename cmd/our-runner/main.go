@@ -334,7 +334,22 @@ func cmdMCPServe(args []string) error {
 		return err
 	}
 	client := &mcpbridge.UnixClient{SocketPath: socketPath, Token: token}
-	srv := &mcpbridge.Server{Caller: client.Call}
+	srv := &mcpbridge.Server{
+		Caller: client.Call,
+		ListTools: func(ctx context.Context) ([]mcpbridge.ToolDef, error) {
+			discoveryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			result, err := client.Call(discoveryCtx, mcpbridge.InternalListToolsTool, json.RawMessage(`{}`))
+			if err != nil {
+				return nil, err
+			}
+			names, err := mcpbridge.ToolNamesFromResult(result)
+			if err != nil {
+				return nil, err
+			}
+			return mcpbridge.ToolDefinitionsForNames(names)
+		},
+	}
 	return srv.Serve(context.Background(), os.Stdin, os.Stdout)
 }
 

@@ -21,8 +21,11 @@ import (
 )
 
 func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.RawMessage) (any, error) {
+	if err := jr.localToolAuthority(); err != nil {
+		return nil, err
+	}
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
-		return nil, fmt.Errorf("lease validation failed: %w", err)
+		return nil, fmt.Errorf("local tool authority is unavailable")
 	}
 	if err := mcpbridge.ValidateSocketTool(tool); err != nil {
 		return nil, err
@@ -30,20 +33,19 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 	if !toolAllowedForJob(jr.job.Kind, tool) {
 		return nil, fmt.Errorf("tool %q is not allowed for %s jobs", tool, jr.job.Kind)
 	}
-	var raw map[string]any
-	if len(args) > 0 {
-		if err := json.Unmarshal(args, &raw); err != nil {
-			return nil, fmt.Errorf("invalid arguments: %w", err)
-		}
-	} else {
-		raw = map[string]any{}
+	raw, err := mcpbridge.DecodeToolObject(args)
+	if err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
 	}
 	if err := validateToolArguments(raw, 0); err != nil {
 		return nil, err
 	}
+	if (tool == "platform_get_job_context" || tool == mcpbridge.InternalListToolsTool) && len(raw) != 0 {
+		return nil, fmt.Errorf("tool arguments must be empty")
+	}
 	key := str(raw, "idempotency_key")
 	if key == "" {
-		if tool != "platform_get_job_context" {
+		if tool != "platform_get_job_context" && tool != mcpbridge.InternalListToolsTool {
 			return nil, fmt.Errorf("idempotency_key is required")
 		}
 		return jr.executeToolCall(ctx, tool, raw)
@@ -124,6 +126,24 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 	return result, callErr
 }
 
+func (jr *jobRunner) localToolAuthority() error {
+	if jr.ctx == nil {
+		return fmt.Errorf("local tool authority is unavailable")
+	}
+	select {
+	case <-jr.ctx.Done():
+		return fmt.Errorf("local tool authority is unavailable")
+	default:
+	}
+	jr.procMu.Lock()
+	cancelled, leaseLost := jr.cancelled, jr.leaseLost
+	jr.procMu.Unlock()
+	if cancelled || leaseLost {
+		return fmt.Errorf("local tool authority is unavailable")
+	}
+	return nil
+}
+
 func (jr *jobRunner) finishToolMemo(scope string, memo *toolCallMemo, result []byte, err error) {
 	jr.idempotencyMu.Lock()
 	memo.result = append([]byte(nil), result...)
@@ -147,7 +167,7 @@ func decodeToolResult(encoded []byte) (any, error) {
 }
 
 func toolAllowedForJob(kind v1.JobKind, tool string) bool {
-	if tool == mcpbridge.InternalHookEventTool {
+	if tool == mcpbridge.InternalHookEventTool || tool == mcpbridge.InternalListToolsTool {
 		return true
 	}
 	if isPlanPublicationTool(tool) {
@@ -170,8 +190,9 @@ func toolAllowedForJob(kind v1.JobKind, tool string) bool {
 }
 
 func capabilitiesForJob(kind v1.JobKind) []string {
-	capabilities := make([]string, 0, len(mcpbridge.Tools))
-	for _, tool := range mcpbridge.Tools {
+	definitions := mcpbridge.ToolDefinitions()
+	capabilities := make([]string, 0, len(definitions))
+	for _, tool := range definitions {
 		if toolAllowedForJob(kind, tool.Name) {
 			capabilities = append(capabilities, tool.Name)
 		}
@@ -181,6 +202,9 @@ func capabilitiesForJob(kind v1.JobKind) []string {
 
 func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[string]any) (any, error) {
 	switch tool {
+	case mcpbridge.InternalListToolsTool:
+		return capabilitiesForJob(jr.job.Kind), nil
+
 	case mcpbridge.InternalHookEventTool:
 		eventType := str(raw, "event_type")
 		if err := mcpbridge.ValidateHookEventType(eventType); err != nil {
@@ -204,22 +228,7 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		return map[string]any{"recorded": true}, nil
 
 	case "platform_get_job_context":
-		result := map[string]any{
-			"job_id":            jr.job.JobID,
-			"attempt_id":        jr.job.AttemptID,
-			"kind":              jr.job.Kind,
-			"workflow_revision": jr.job.WorkflowRevision,
-			"ticket":            jr.job.Ticket,
-			"repositories":      jr.job.Repositories,
-			"capabilities":      capabilitiesForJob(jr.job.Kind),
-		}
-		if jr.job.PlanRevisionContext != nil {
-			result["plan_revision_context"] = jr.job.PlanRevisionContext
-		}
-		if checks := jr.runnableChecks(); checks != nil {
-			result["runnable_checks"] = checks
-		}
-		return result, nil
+		return jr.jobContext(), nil
 
 	case "platform_report_progress":
 		if err := requireToolText(raw, "milestone", 1024); err != nil {

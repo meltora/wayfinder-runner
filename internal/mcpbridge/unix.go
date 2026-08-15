@@ -51,6 +51,16 @@ func (c *UnixClient) dial(ctx context.Context) (net.Conn, error) {
 	if !filepath.IsAbs(c.SocketPath) {
 		return nil, fmt.Errorf("MCP socket path must be absolute")
 	}
+	if err := validatePrivateSocketParent(c.SocketPath); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(c.SocketPath)
+	if err != nil {
+		return nil, fmt.Errorf("inspect MCP socket: %w", err)
+	}
+	if info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("MCP endpoint must be a Unix socket")
+	}
 	return (&net.Dialer{}).DialContext(ctx, "unix", c.SocketPath)
 }
 
@@ -116,16 +126,14 @@ func (s *UnixServer) Start(ctx context.Context) error {
 	if !filepath.IsAbs(s.SocketPath) {
 		return fmt.Errorf("MCP socket path must be absolute")
 	}
+	if err := validatePrivateSocketParent(s.SocketPath); err != nil {
+		return err
+	}
 	if s.Token == "" || s.Handler == nil {
 		return fmt.Errorf("MCP token and handler are required")
 	}
-	if info, err := os.Lstat(s.SocketPath); err == nil {
-		if info.Mode()&os.ModeSocket == 0 || info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to replace non-socket MCP path")
-		}
-		if err := os.Remove(s.SocketPath); err != nil {
-			return err
-		}
+	if _, err := os.Lstat(s.SocketPath); err == nil {
+		return fmt.Errorf("refusing to replace an existing MCP path")
 	} else if !os.IsNotExist(err) {
 		return err
 	}

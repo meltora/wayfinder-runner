@@ -14,9 +14,10 @@ func TestPlanPublicationToolSchemasRequireTheFullStrictPlan(t *testing.T) {
 	for _, name := range []string{"platform_publish_plan", "platform_publish_plan_revision"} {
 		t.Run(name, func(t *testing.T) {
 			var definition *ToolDef
-			for index := range Tools {
-				if Tools[index].Name == name {
-					definition = &Tools[index]
+			definitions := ToolDefinitions()
+			for index := range definitions {
+				if definitions[index].Name == name {
+					definition = &definitions[index]
 				}
 			}
 			if definition == nil {

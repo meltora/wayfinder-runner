@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 )
 
 func decodeStrict(data []byte, out any) error {
+	if err := validateNoDuplicateJSONKeys(data); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(out); err != nil {
@@ -19,11 +23,87 @@ func decodeStrict(data []byte, out any) error {
 	return nil
 }
 
-const InternalHookEventTool = "platform_record_hook_event"
+func validateNoDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var consumeValue func() error
+	consumeValue = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := map[string]struct{}{}
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return fmt.Errorf("JSON object key is invalid")
+				}
+				if _, duplicate := seen[key]; duplicate {
+					return fmt.Errorf("duplicate JSON object key is not allowed")
+				}
+				seen[key] = struct{}{}
+				if err := consumeValue(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		case '[':
+			for decoder.More() {
+				if err := consumeValue(); err != nil {
+					return err
+				}
+			}
+			_, err = decoder.Token()
+			return err
+		default:
+			return fmt.Errorf("unexpected JSON delimiter")
+		}
+	}
+	if err := consumeValue(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing JSON is not allowed")
+		}
+		return err
+	}
+	return nil
+}
+
+func DecodeToolObject(data json.RawMessage) (map[string]any, error) {
+	if len(data) == 0 {
+		return map[string]any{}, nil
+	}
+	var object map[string]any
+	if err := decodeStrict(data, &object); err != nil {
+		return nil, err
+	}
+	if object == nil {
+		return nil, fmt.Errorf("tool arguments must be an object")
+	}
+	return object, nil
+}
+
+const (
+	InternalHookEventTool = "platform_record_hook_event"
+	InternalListToolsTool = "platform_list_attempt_tools"
+)
 
 type Request struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id,omitempty"`
+	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
@@ -55,7 +135,7 @@ type ToolDef struct {
 	InputSchema any    `json:"inputSchema"`
 }
 
-var Tools = []ToolDef{
+var toolDefinitions = []ToolDef{
 	{Name: "platform_get_job_context", Description: "Returns approved ticket context, plan status, repository roles, and execution boundaries for the current job.", InputSchema: objectSchema(map[string]any{})},
 	{Name: "platform_publish_plan", Description: "Publishes one complete immutable plan for human review. Available only to an initial planning manifest.", InputSchema: planPublicationInputSchema(false)},
 	{Name: "platform_report_progress", Description: "Publishes a structured progress milestone.", InputSchema: objectSchema(map[string]any{
@@ -114,6 +194,92 @@ var Tools = []ToolDef{
 	})},
 }
 
+func ToolDefinitions() []ToolDef {
+	definitions := make([]ToolDef, 0, len(toolDefinitions))
+	for _, definition := range toolDefinitions {
+		definitions = append(definitions, ToolDef{
+			Name: definition.Name, Description: definition.Description,
+			InputSchema: cloneToolSchema(definition.InputSchema),
+		})
+	}
+	return definitions
+}
+
+func ToolDefinitionsForNames(names []string) ([]ToolDef, error) {
+	byName := make(map[string]ToolDef, len(toolDefinitions))
+	for _, definition := range toolDefinitions {
+		byName[definition.Name] = definition
+	}
+	definitions := make([]ToolDef, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		definition, ok := byName[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown tool definition")
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return nil, fmt.Errorf("duplicate tool definition")
+		}
+		seen[name] = struct{}{}
+		definitions = append(definitions, ToolDef{
+			Name: definition.Name, Description: definition.Description,
+			InputSchema: cloneToolSchema(definition.InputSchema),
+		})
+	}
+	return definitions, nil
+}
+
+func cloneToolSchema(value any) any {
+	switch current := value.(type) {
+	case map[string]any:
+		clone := make(map[string]any, len(current))
+		for key, nested := range current {
+			clone[key] = cloneToolSchema(nested)
+		}
+		return clone
+	case []any:
+		clone := make([]any, len(current))
+		for index, nested := range current {
+			clone[index] = cloneToolSchema(nested)
+		}
+		return clone
+	case []string:
+		return append([]string(nil), current...)
+	default:
+		return current
+	}
+}
+
+func ToolNamesFromResult(value any) ([]string, error) {
+	var values []any
+	switch current := value.(type) {
+	case []any:
+		values = current
+	case []string:
+		values = make([]any, 0, len(current))
+		for _, name := range current {
+			values = append(values, name)
+		}
+	default:
+		return nil, fmt.Errorf("attempt tool list is invalid")
+	}
+	if len(values) > len(toolDefinitions) {
+		return nil, fmt.Errorf("attempt tool list is invalid")
+	}
+	names := make([]string, 0, len(values))
+	for _, value := range values {
+		name, ok := value.(string)
+		if !ok || len(name) == 0 || len(name) > 128 {
+			return nil, fmt.Errorf("attempt tool list is invalid")
+		}
+		names = append(names, name)
+	}
+	if _, err := ToolDefinitionsForNames(names); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
 func objectSchema(props map[string]any) map[string]any {
 	schema := map[string]any{"type": "object", "properties": props, "additionalProperties": false}
 	if _, ok := props["idempotency_key"]; ok {
@@ -136,7 +302,7 @@ func boolProp(desc string) map[string]any {
 }
 
 func ValidateTool(name string) error {
-	for _, t := range Tools {
+	for _, t := range toolDefinitions {
 		if t.Name == name {
 			return nil
 		}
@@ -145,10 +311,36 @@ func ValidateTool(name string) error {
 }
 
 func ValidateSocketTool(name string) error {
-	if name == InternalHookEventTool {
+	if name == InternalHookEventTool || name == InternalListToolsTool {
 		return nil
 	}
 	return ValidateTool(name)
+}
+
+func ValidateRequestID(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return fmt.Errorf("request id is required")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return fmt.Errorf("request id is invalid")
+	}
+	switch id := value.(type) {
+	case string:
+		if len(id) == 0 || len(id) > 128 {
+			return fmt.Errorf("request id is invalid")
+		}
+	case json.Number:
+		number, err := id.Int64()
+		if err != nil || math.Abs(float64(number)) > 9_007_199_254_740_991 {
+			return fmt.Errorf("request id is invalid")
+		}
+	default:
+		return fmt.Errorf("request id is invalid")
+	}
+	return nil
 }
 
 // ValidateHookEventType limits non-authoritative hook telemetry to fixed event
