@@ -17,7 +17,12 @@ import (
 )
 
 func fakeDetector() *Detector {
-	d := New("r-1", "0.1.0", map[string]string{"pool": "test"})
+	d := New(
+		"r-1",
+		"0.1.0",
+		map[string]string{"pool": "test"},
+		map[string]string{"trust-z": "unused", "trust-a": "unused"},
+	)
 	d.LookPath = func(name string) (string, error) {
 		if name == "git" || name == "codex" || name == "opencode" || name == "tmux" {
 			return "/usr/bin/" + name, nil
@@ -64,6 +69,12 @@ func TestCollect(t *testing.T) {
 	}
 	if m.Labels["pool"] != "test" {
 		t.Fatalf("labels not propagated")
+	}
+	if m.AgentPackDeliveryAuthorityVersion != v1.AgentPackDeliveryAuthorityVersion {
+		t.Fatalf("agent pack authority version = %d", m.AgentPackDeliveryAuthorityVersion)
+	}
+	if len(m.TrustedAgentPackKeyIDs) != 2 || m.TrustedAgentPackKeyIDs[0] != "trust-a" || m.TrustedAgentPackKeyIDs[1] != "trust-z" {
+		t.Fatalf("trusted Agent Pack key IDs = %v", m.TrustedAgentPackKeyIDs)
 	}
 }
 

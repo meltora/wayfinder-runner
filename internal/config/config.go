@@ -17,6 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const MaxAgentPackPublicKeys = 128
+
 type Config struct {
 	ControlPlaneURL        string                      `yaml:"control_plane_url"`
 	ControlPlaneHTTPURL    string                      `yaml:"control_plane_http_url,omitempty"`
@@ -270,6 +272,9 @@ func (c Config) Validate() error {
 	if !filepath.IsAbs(c.UpdateSocketPath) || filepath.Clean(c.UpdateSocketPath) != c.UpdateSocketPath ||
 		len(c.UpdateSocketPath) > 100 || strings.ContainsRune(c.UpdateSocketPath, '\x00') {
 		return fmt.Errorf("update_socket_path must be a clean absolute Unix socket path of at most 100 bytes")
+	}
+	if len(c.AgentPackPublicKeys) > MaxAgentPackPublicKeys {
+		return fmt.Errorf("agent_pack_public_keys must contain at most %d keys", MaxAgentPackPublicKeys)
 	}
 	for keyID, encoded := range c.AgentPackPublicKeys {
 		if !idPattern.MatchString(keyID) || len(keyID) > 128 {

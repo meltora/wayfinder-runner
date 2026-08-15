@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -279,6 +280,18 @@ func TestValidateRejectsLegacyECDSAAgentPackTrustKey(t *testing.T) {
 	cfg.AgentPackPublicKeys = map[string]string{"legacy-key": testECDSAPublicKey(t)}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("legacy ECDSA key accepted for signed delivery authority")
+	}
+}
+
+func TestValidateRejectsTooManyAgentPackTrustKeys(t *testing.T) {
+	key := testPublicKey(t)
+	cfg := productionConfig()
+	cfg.AgentPackPublicKeys = make(map[string]string, MaxAgentPackPublicKeys+1)
+	for index := 0; index <= MaxAgentPackPublicKeys; index++ {
+		cfg.AgentPackPublicKeys[fmt.Sprintf("key-%03d", index)] = key
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("excessive Agent Pack trust set accepted")
 	}
 }
 

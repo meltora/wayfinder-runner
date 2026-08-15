@@ -37,6 +37,8 @@ import (
 
 var Version = "0.1.0"
 
+const capabilityRefreshInterval = 5 * time.Minute
+
 type Daemon struct {
 	cfg      config.Config
 	store    *identity.Store
@@ -281,6 +283,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.pauseStateLoop(spoolCtx)
 	go d.rotationLoop(spoolCtx)
 	go d.updateLoop(spoolCtx)
+	go d.capabilityRefreshLoop(spoolCtx, capabilityRefreshInterval)
 
 	d.logger.Info("starting daemon", "runner_id", d.runnerID, "control_plane", d.cfg.ControlPlaneURL)
 	return d.client.Run(ctx)
@@ -343,18 +346,8 @@ func (d *Daemon) drainHookSpool(ctx context.Context) {
 func (d *Daemon) OnConnected(ctx context.Context) {
 	d.controlReady.Store(true)
 	d.logger.Info("connected to control plane")
-	det := capability.New(d.runnerID, Version, d.cfg.Labels)
-	m := det.Collect(ctx)
-	if key, err := d.store.LoadKey(); err == nil {
-		if err := det.Sign(&m, key); err != nil {
-			d.logger.Error("sign capability manifest", "err", err)
-		}
-	}
-	if err := d.sendEvent(ctx, map[string]any{
-		"kind":     "capability_manifest",
-		"manifest": m,
-	}); err != nil {
-		d.logger.Error("send capability manifest", "err", err)
+	if err := d.publishCapability(ctx); err != nil {
+		d.logger.Error("publish capability manifest", "err", err)
 	}
 	if d.recoveredLease.Load() {
 		if current := d.leases.Current(); current != nil {
@@ -388,6 +381,43 @@ func (d *Daemon) OnConnected(ctx context.Context) {
 	}
 	d.notifyStartupUpdateHealth(ctx)
 	d.signalUpdate()
+}
+
+func (d *Daemon) publishCapability(ctx context.Context) error {
+	det := capability.New(d.runnerID, Version, d.cfg.Labels, d.cfg.AgentPackPublicKeys)
+	m := det.Collect(ctx)
+	key, err := d.store.LoadKey()
+	if err != nil {
+		return fmt.Errorf("load runner signing key: %w", err)
+	}
+	if err := det.Sign(&m, key); err != nil {
+		return fmt.Errorf("sign capability manifest: %w", err)
+	}
+	return d.sendEvent(ctx, map[string]any{
+		"kind":     "capability_manifest",
+		"manifest": m,
+	})
+}
+
+func (d *Daemon) capabilityRefreshLoop(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !d.controlReady.Load() {
+				continue
+			}
+			if err := d.publishCapability(ctx); err != nil && ctx.Err() == nil {
+				d.logger.Warn("refresh capability manifest", "err", err)
+			}
+		}
+	}
 }
 
 func (d *Daemon) OnEventAck(ctx context.Context, eventID string) {

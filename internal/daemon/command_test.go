@@ -187,6 +187,9 @@ func TestHeartbeatAndConnectionLifecycleStates(t *testing.T) {
 		logger:     slog.Default(),
 		eventSink:  events.sink,
 	}
+	if _, err := d.store.EnsureKey(); err != nil {
+		t.Fatal(err)
+	}
 	if got := d.heartbeatPayload(context.Background()); got.State != "idle" || got.ActiveJobs != 0 {
 		t.Fatalf("idle heartbeat=%+v", got)
 	}
@@ -214,6 +217,29 @@ func TestHeartbeatAndConnectionLifecycleStates(t *testing.T) {
 	if len(events.byKind("capability_manifest")) != 1 || len(events.byKind("lease_reconciliation_required")) != 1 {
 		t.Fatalf("connection events=%v", events.events)
 	}
+	capabilityEvent := events.byKind("capability_manifest")[0]
+	manifest, ok := capabilityEvent["manifest"].(v1.CapabilityManifest)
+	if !ok || manifest.Signature == "" || manifest.AgentPackDeliveryAuthorityVersion != 1 {
+		t.Fatalf("capability manifest=%#v", capabilityEvent["manifest"])
+	}
+
+	refreshCtx, stopRefresh := context.WithCancel(context.Background())
+	defer stopRefresh()
+	refreshDone := make(chan struct{})
+	go func() {
+		d.capabilityRefreshLoop(refreshCtx, time.Millisecond)
+		close(refreshDone)
+	}()
+	deadline := time.After(5 * time.Second)
+	for len(events.byKind("capability_manifest")) < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("connected runner did not refresh its capability manifest")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	stopRefresh()
+	<-refreshDone
 
 	d.setControlTLS(&tls.Config{MinVersion: tls.VersionTLS13})
 	if d.httpClientForURL("https://control.example.test/artifact", time.Second) != d.controlHTTP {

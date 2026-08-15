@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -20,22 +21,29 @@ import (
 )
 
 type Detector struct {
-	RunnerID      string
-	RunnerVersion string
-	Labels        map[string]string
-	LookPath      func(string) (string, error)
-	RunVersion    func(ctx context.Context, name string, args ...string) (string, error)
-	ProbeDocker   func(ctx context.Context) isolation.DockerInfo
+	RunnerID               string
+	RunnerVersion          string
+	Labels                 map[string]string
+	LookPath               func(string) (string, error)
+	RunVersion             func(ctx context.Context, name string, args ...string) (string, error)
+	ProbeDocker            func(ctx context.Context) isolation.DockerInfo
+	trustedAgentPackKeyIDs []string
 }
 
-func New(runnerID, version string, labels map[string]string) *Detector {
+func New(runnerID, version string, labels, agentPackPublicKeys map[string]string) *Detector {
+	trustedAgentPackKeyIDs := make([]string, 0, len(agentPackPublicKeys))
+	for keyID := range agentPackPublicKeys {
+		trustedAgentPackKeyIDs = append(trustedAgentPackKeyIDs, keyID)
+	}
+	sort.Strings(trustedAgentPackKeyIDs)
 	return &Detector{
-		RunnerID:      runnerID,
-		RunnerVersion: version,
-		Labels:        labels,
-		LookPath:      exec.LookPath,
-		RunVersion:    defaultRunVersion,
-		ProbeDocker:   isolation.ProbeDocker,
+		RunnerID:               runnerID,
+		RunnerVersion:          version,
+		Labels:                 labels,
+		LookPath:               exec.LookPath,
+		RunVersion:             defaultRunVersion,
+		ProbeDocker:            isolation.ProbeDocker,
+		trustedAgentPackKeyIDs: trustedAgentPackKeyIDs,
 	}
 }
 
@@ -49,15 +57,17 @@ func defaultRunVersion(ctx context.Context, name string, args ...string) (string
 
 func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	m := v1.CapabilityManifest{
-		RunnerID:        d.RunnerID,
-		CollectedAt:     time.Now().UTC(),
-		OS:              runtime.GOOS,
-		Arch:            runtime.GOARCH,
-		CPUs:            runtime.NumCPU(),
-		MemoryBytes:     totalMemory(),
-		Labels:          d.Labels,
-		RunnerVersion:   d.RunnerVersion,
-		ProtocolVersion: v1.ProtocolVersion,
+		RunnerID:                          d.RunnerID,
+		CollectedAt:                       time.Now().UTC(),
+		OS:                                runtime.GOOS,
+		Arch:                              runtime.GOARCH,
+		CPUs:                              runtime.NumCPU(),
+		MemoryBytes:                       totalMemory(),
+		Labels:                            d.Labels,
+		RunnerVersion:                     d.RunnerVersion,
+		ProtocolVersion:                   v1.ProtocolVersion,
+		AgentPackDeliveryAuthorityVersion: v1.AgentPackDeliveryAuthorityVersion,
+		TrustedAgentPackKeyIDs:            append([]string(nil), d.trustedAgentPackKeyIDs...),
 	}
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(".", &fs); err == nil {
