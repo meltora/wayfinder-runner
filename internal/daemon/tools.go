@@ -362,9 +362,13 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		})
 
 	case "platform_publish_manual_test_plan":
+		plan, err := parseManualTestPlan(raw)
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{"ok": true}, jr.sendJobEvent(ctx, "manual_test_plan", map[string]any{
-			"steps": strSlice(raw, "steps"), "prerequisites": strSlice(raw, "prerequisites"),
-			"expected_results": strSlice(raw, "expected_results"), "cleanup": str(raw, "cleanup"),
+			"steps": plan.steps, "prerequisites": plan.prerequisites,
+			"expected_results": plan.expectedResults, "cleanup": plan.cleanup,
 		})
 
 	case "platform_publish_preview":

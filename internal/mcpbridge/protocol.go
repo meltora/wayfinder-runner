@@ -175,11 +175,7 @@ var toolDefinitions = []ToolDef{
 		"failures": arrayProp("Failure summaries"), "commit_sha": stringProp("Commit set tested"),
 		"idempotency_key": stringProp("Idempotency key"),
 	})},
-	{Name: "platform_publish_manual_test_plan", Description: "Publishes manual validation steps for a human reviewer.", InputSchema: objectSchema(map[string]any{
-		"steps": arrayProp("Ordered steps"), "prerequisites": arrayProp("Prerequisites"),
-		"expected_results": arrayProp("Expected results"), "cleanup": stringProp("Cleanup instructions"),
-		"idempotency_key": stringProp("Idempotency key"),
-	})},
+	{Name: "platform_publish_manual_test_plan", Description: "Publishes manual validation steps for a human reviewer.", InputSchema: manualTestPlanInputSchema()},
 	{Name: "platform_publish_preview", Description: "Publishes preview environment information bound to the commit set.", InputSchema: objectSchema(map[string]any{
 		"url": stringProp("Preview URL"), "commit_sha": stringProp("Commit set"),
 		"health": stringProp("healthy|degraded|down"), "expires_at": stringProp("Expiry ISO time"),

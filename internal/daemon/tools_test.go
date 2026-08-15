@@ -668,3 +668,93 @@ func TestToolSpecificValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestManualTestPlanRequiresStrictBoundedReviewerInstructions(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	tooMany := make([]string, 129)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("step-%d", i)
+	}
+	tooManyJSON, err := json.Marshal(map[string]any{
+		"steps": tooMany, "expected_results": []string{"done"}, "idempotency_key": "manual-many",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []string{
+		`{"expected_results":["done"],"idempotency_key":"manual-missing"}`,
+		`{"steps":[],"expected_results":["done"],"idempotency_key":"manual-empty"}`,
+		`{"steps":["open"],"expected_results":[],"idempotency_key":"manual-no-result"}`,
+		`{"steps":["open",7],"expected_results":["done"],"idempotency_key":"manual-type"}`,
+		`{"steps":["   "],"expected_results":["done"],"idempotency_key":"manual-blank"}`,
+		`{"steps":["open\u0001preview"],"expected_results":["done"],"idempotency_key":"manual-control"}`,
+		`{"steps":["open"],"expected_results":["done"],"cleanup":7,"idempotency_key":"manual-cleanup-type"}`,
+		`{"steps":["open"],"expected_results":["done"],"unexpected":"ignored?","idempotency_key":"manual-field"}`,
+		string(tooManyJSON),
+	}
+	for _, args := range cases {
+		if _, err := call(t, jr, "platform_publish_manual_test_plan", args); err == nil {
+			t.Fatalf("invalid manual test plan accepted: %s", args)
+		}
+	}
+
+	tooLong := strings.Repeat("x", 4097)
+	tooLongJSON, err := json.Marshal(map[string]any{
+		"steps": []string{tooLong}, "expected_results": []string{"done"}, "idempotency_key": "manual-long",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jr.handleToolCall(context.Background(), "platform_publish_manual_test_plan", tooLongJSON); err == nil {
+		t.Fatal("oversized manual test instruction accepted")
+	}
+	cleanupTooLongJSON, err := json.Marshal(map[string]any{
+		"steps": []string{"open"}, "expected_results": []string{"done"},
+		"cleanup": strings.Repeat("x", 8193), "idempotency_key": "manual-cleanup-long",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jr.handleToolCall(context.Background(), "platform_publish_manual_test_plan", cleanupTooLongJSON); err == nil {
+		t.Fatal("oversized manual test cleanup accepted")
+	}
+}
+
+func TestManualTestPlanEmitsCompleteExactWireShape(t *testing.T) {
+	jr, cap := testJobRunner(t)
+	if _, err := call(t, jr, "platform_publish_manual_test_plan", `{
+		"steps":["open preview","submit form"],
+		"prerequisites":["reviewer account"],
+		"expected_results":["dashboard opens"],
+		"cleanup":"delete reviewer account",
+		"idempotency_key":"manual-exact"
+	}`); err != nil {
+		t.Fatal(err)
+	}
+	events := cap.byKind("manual_test_plan")
+	if len(events) != 1 {
+		t.Fatalf("manual test plan events = %v", cap.events)
+	}
+	event := events[0]
+	for _, key := range []string{"steps", "prerequisites", "expected_results", "cleanup"} {
+		if _, ok := event[key]; !ok {
+			t.Fatalf("manual test plan is missing %s: %v", key, event)
+		}
+	}
+	if _, ok := event["idempotency_key"]; ok {
+		t.Fatalf("model idempotency key leaked into event payload: %v", event)
+	}
+
+	if _, err := call(t, jr, "platform_publish_manual_test_plan", `{
+		"steps":["open preview"],
+		"expected_results":["dashboard opens"],
+		"idempotency_key":"manual-no-prerequisites"
+	}`); err != nil {
+		t.Fatal(err)
+	}
+	omitted := cap.byKind("manual_test_plan")[1]
+	prerequisites, ok := omitted["prerequisites"].([]string)
+	if !ok || prerequisites == nil || len(prerequisites) != 0 {
+		t.Fatalf("omitted prerequisites must emit a non-nil empty array: %#v", omitted["prerequisites"])
+	}
+}
