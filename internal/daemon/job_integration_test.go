@@ -195,6 +195,82 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 	}
 }
 
+func TestPlanningJobFailsClosedBeforeProviderWhenRepositoryConfigurationNeedsApproval(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	cp, err := mockcp.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer cp.Close()
+
+	stateDir := t.TempDir()
+	enrollRunner(t, cp, stateDir)
+	origin := seedGitRepo(t)
+	if err := os.WriteFile(filepath.Join(origin, ".mcp.json"), []byte(`{"mcpServers":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit := exec.Command("git", "add", ".mcp.json")
+	commit.Dir = origin
+	if output, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("stage review-required configuration: %v\n%s", err, output)
+	}
+	commit = exec.Command("git", "commit", "-m", "add mcp configuration")
+	commit.Dir = origin
+	if output, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("commit review-required configuration: %v\n%s", err, output)
+	}
+
+	providerMarker := filepath.Join(t.TempDir(), "provider-started")
+	fakeAgent := writeFakeAgent(t, "#!/bin/sh\ntouch \""+providerMarker+"\"\n")
+	cfg := directRunnerConfig(cp.WSURL(), stateDir)
+	cfg.Provider = "claude"
+	cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
+	cfg.Repositories = map[string]config.RepositoryConfig{"repo-1": {URL: origin}}
+	d, err := daemon.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
+
+	job := withIntegrationAuthority(v1.JobSpec{
+		JobID: "job-config-review", AttemptID: "att-1", Kind: v1.JobKindPlan, FencingToken: 1,
+		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
+		Ticket:       v1.TicketContext{Key: "PROJ-12", Summary: "Review repository configuration"},
+	})
+	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "job rejected before provider startup", 30*time.Second, func() bool {
+		return len(cp.EventsByKind("job_finished")) >= 1
+	})
+
+	terminal := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
+	if terminal["state"] != "failed" || terminal["failure_code"] != "workspace_preparation_failed" ||
+		terminal["failure_message"] != "workspace preparation failed" {
+		t.Fatalf("terminal event = %v", terminal)
+	}
+	if _, err := os.Stat(providerMarker); !os.IsNotExist(err) {
+		t.Fatalf("provider was started before configuration approval: %v", err)
+	}
+	discoveryEvents := cp.EventsByKind(v1.EventKindAgentConfigDiscovery)
+	if len(discoveryEvents) != 1 {
+		t.Fatalf("discovery events = %d, want one durable event", len(discoveryEvents))
+	}
+	discovery := discoveryEvents[0].Payload.(map[string]any)
+	items := discovery["items"].([]any)
+	if len(items) != 2 || items[0].(map[string]any)["path"] != ".mcp.json" || items[0].(map[string]any)["decision"] != "pending" {
+		t.Fatalf("discovery items = %v", items)
+	}
+}
+
 func TestEmergencyStopCancelsJob(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")

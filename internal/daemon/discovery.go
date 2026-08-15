@@ -43,5 +43,8 @@ func (jr *jobRunner) publishRepositoryDiscovery(
 	if _, err := jr.d.sendEventWithStableID(ctx, scanner.DiscoveryEventID(event.ScanID), event); err != nil {
 		return fmt.Errorf("queue repository configuration discovery: %w", err)
 	}
+	if scanner.RequiresApprovedRuntimeSnapshot(inventory) {
+		return fmt.Errorf("repository configuration requires an approved runtime snapshot")
+	}
 	return nil
 }
