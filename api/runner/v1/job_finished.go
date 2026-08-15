@@ -14,15 +14,16 @@ const (
 type JobFinishedFailureCode string
 
 const (
-	JobFailureAgentStart           JobFinishedFailureCode = "agent_start_failed"
-	JobFailureAgentExit            JobFinishedFailureCode = "agent_exit_failed"
-	JobFailureWorkspacePreparation JobFinishedFailureCode = "workspace_preparation_failed"
-	JobFailureBuildFinalization    JobFinishedFailureCode = "build_finalization_failed"
-	JobFailureRequiredChecks       JobFinishedFailureCode = "required_checks_failed"
-	JobFailureRunnerInternal       JobFinishedFailureCode = "runner_internal_error"
-	JobFailureCancelled            JobFinishedFailureCode = "cancelled"
-	JobFailureLeaseLost            JobFinishedFailureCode = "lease_lost"
-	JobFailureCleanup              JobFinishedFailureCode = "cleanup_failed"
+	JobFailureAgentStart               JobFinishedFailureCode = "agent_start_failed"
+	JobFailureAgentExit                JobFinishedFailureCode = "agent_exit_failed"
+	JobFailureWorkspacePreparation     JobFinishedFailureCode = "workspace_preparation_failed"
+	JobFailureAgentPackMaterialization JobFinishedFailureCode = "agent_pack_materialization_failed"
+	JobFailureBuildFinalization        JobFinishedFailureCode = "build_finalization_failed"
+	JobFailureRequiredChecks           JobFinishedFailureCode = "required_checks_failed"
+	JobFailureRunnerInternal           JobFinishedFailureCode = "runner_internal_error"
+	JobFailureCancelled                JobFinishedFailureCode = "cancelled"
+	JobFailureLeaseLost                JobFinishedFailureCode = "lease_lost"
+	JobFailureCleanup                  JobFinishedFailureCode = "cleanup_failed"
 )
 
 type JobFinishedEvent struct {

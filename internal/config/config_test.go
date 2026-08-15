@@ -2,6 +2,7 @@ package config
 
 import (
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -19,6 +20,19 @@ func productionConfig() Config {
 }
 
 func testPublicKey(t *testing.T) string {
+	t.Helper()
+	key, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(der)
+}
+
+func testECDSAPublicKey(t *testing.T) string {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -257,6 +271,32 @@ func TestValidateCompleteProductionConfiguration(t *testing.T) {
 	cfg.Checks = map[string]CheckConfig{"unit": {Command: "go", Args: []string{"test", "./..."}, TimeoutSeconds: 300, RepositoryID: "web"}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("complete config rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsLegacyECDSAAgentPackTrustKey(t *testing.T) {
+	cfg := productionConfig()
+	cfg.AgentPackPublicKeys = map[string]string{"legacy-key": testECDSAPublicKey(t)}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("legacy ECDSA key accepted for signed delivery authority")
+	}
+}
+
+func TestAllowedArtifactOriginsRemainCanonicalHTTPSInUnsafeDirectMode(t *testing.T) {
+	for _, origin := range []string{
+		"http://artifacts.example.test",
+		"https://artifacts.example.test/path",
+		"https://ARTIFACTS.example.test",
+		"https://artifacts.example.test.:443",
+		"https://café.example.test",
+	} {
+		cfg := productionConfig()
+		cfg.Isolation = "direct"
+		cfg.AllowUnsafeDirect = true
+		cfg.AllowedArtifactOrigins = []string{origin}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("non-canonical artifact origin %q accepted", origin)
+		}
 	}
 }
 

@@ -7,12 +7,13 @@ import (
 )
 
 var failedJobCodes = map[v1.JobFinishedFailureCode]struct{}{
-	v1.JobFailureAgentStart:           {},
-	v1.JobFailureAgentExit:            {},
-	v1.JobFailureWorkspacePreparation: {},
-	v1.JobFailureBuildFinalization:    {},
-	v1.JobFailureRequiredChecks:       {},
-	v1.JobFailureRunnerInternal:       {},
+	v1.JobFailureAgentStart:               {},
+	v1.JobFailureAgentExit:                {},
+	v1.JobFailureWorkspacePreparation:     {},
+	v1.JobFailureAgentPackMaterialization: {},
+	v1.JobFailureBuildFinalization:        {},
+	v1.JobFailureRequiredChecks:           {},
+	v1.JobFailureRunnerInternal:           {},
 }
 
 // JobFinishedEvent validates terminal evidence before it is durably queued.

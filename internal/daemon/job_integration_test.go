@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -61,9 +66,9 @@ func seedGitRepo(t *testing.T) string {
 	return dir
 }
 
-func makeTestPack(t *testing.T) (archive []byte, digest string, pubKeyB64 string) {
+func makeTestPack(t *testing.T) (archive []byte, pubKeyB64 string, signingKey ed25519.PrivateKey) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	legacyKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,15 +77,36 @@ func makeTestPack(t *testing.T) (archive []byte, digest string, pubKeyB64 string
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	d, err := agentpack.PackDir(src, "1.0.0", "", &buf, key)
+	if _, err := agentpack.PackDir(src, "1.0.0", "", &buf, legacyKey); err != nil {
+		t.Fatal(err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub, err := agentpack.PublicKeyToBase64(&key.PublicKey)
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return buf.Bytes(), d, pub
+	return buf.Bytes(), base64.StdEncoding.EncodeToString(der), privateKey
+}
+
+func signedIntegrationPackAuthority(t *testing.T, reference v1.AgentPackRef, signingKey ed25519.PrivateKey) *v1.SignedAgentPackAuthority {
+	t.Helper()
+	authority := v1.SignedAgentPackAuthority{
+		SchemaVersion: 1, RegistryVersionID: "pack-version-1",
+		Scope:   v1.AgentPackAuthorityScope{Kind: v1.AgentPackScopePlatform},
+		PackKey: "default-pack", PackName: "Default Pack", Provider: "claude-code",
+		ProtocolVersion: 1, MinimumRunnerVersion: "0.1.0", AgentPack: reference,
+	}
+	digest, err := agentpack.PublicationAttestationDigest(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority.AttestationDigest = digest
+	digestBytes, _ := hex.DecodeString(digest)
+	authority.SignatureBase64 = base64.StdEncoding.EncodeToString(ed25519.Sign(signingKey, digestBytes))
+	return &authority
 }
 
 const fakeAgentScript = `#!/bin/sh
@@ -110,7 +136,9 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 	enrollRunner(t, cp, stateDir)
 
 	origin := seedGitRepo(t)
-	packBytes, digest, pub := makeTestPack(t)
+	packBytes, pub, packSigningKey := makeTestPack(t)
+	archiveSum := sha256.Sum256(packBytes)
+	digest := hex.EncodeToString(archiveSum[:])
 	packPath := cp.ServePack("base-1.0.0.tar.gz", packBytes)
 
 	runnerBin := buildRunnerBinary(t)
@@ -120,7 +148,7 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 	cfg.Provider = "claude"
 	cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
 	cfg.AgentPackPublicKeys = map[string]string{"test-pack": pub}
-	cfg.AllowedArtifactOrigins = []string{cp.EnrollURL()}
+	cfg.AllowedArtifactOrigins = []string{cp.SecureHTTPURL()}
 	cfg.Repositories = map[string]config.RepositoryConfig{"repo-1": {URL: origin}}
 	d, err := daemon.New(cfg, nil)
 	if err != nil {
@@ -132,14 +160,16 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
+	packReference := &v1.AgentPackRef{
+		Version: "1.0.0", Digest: digest,
+		URL: cp.SecureHTTPURL() + packPath, KeyID: "test-pack",
+	}
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-1", AttemptID: "att-1", Kind: v1.JobKindPlan, FencingToken: 1,
-		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
-		Ticket:       v1.TicketContext{Key: "PROJ-1", Summary: "Add feature X", Description: "Details"},
-		AgentPack: &v1.AgentPackRef{
-			Version: "1.0.0", Digest: digest,
-			URL: cp.EnrollURL() + packPath, KeyID: "test-pack",
-		},
+		Repositories:       []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
+		Ticket:             v1.TicketContext{Key: "PROJ-1", Summary: "Add feature X", Description: "Details"},
+		AgentPack:          packReference,
+		AgentPackAuthority: signedIntegrationPackAuthority(t, *packReference, packSigningKey),
 	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatalf("SendCommand: %v", err)

@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +15,6 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
-	"github.com/example/app-runner/internal/agentpack"
 	"github.com/example/app-runner/internal/hookspool"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/lease"
@@ -107,6 +104,9 @@ func (jr *jobRunner) startupFailureOutcome(
 
 func (d *Daemon) startJob(ctx context.Context, job v1.JobSpec) error {
 	if err := validation.JobSpec(job); err != nil {
+		return fmt.Errorf("invalid job: %w", err)
+	}
+	if err := d.verifyJobAgentPackAuthority(job); err != nil {
 		return fmt.Errorf("invalid job: %w", err)
 	}
 	job, err := v1.CloneJobSpec(job)
@@ -298,10 +298,11 @@ func (jr *jobRunner) run() {
 	workDir, cleanup, err := jr.prepareWorkspace(ctx)
 	if err != nil {
 		jr.logger.Error("workspace preparation failed", "err", err)
+		failureCode, failureMessage := classifyWorkspacePreparationFailure(err)
 		finish(
 			jr.startupFailureOutcome(
-				v1.JobFailureWorkspacePreparation,
-				"workspace preparation failed",
+				failureCode,
+				failureMessage,
 			),
 			nil,
 		)
@@ -726,84 +727,23 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 	}
 
 	if job.AgentPack != nil {
+		jr.publishProgress(ctx, "agent_pack_materializing", "verifying signed Agent Pack", "")
 		packDir := filepath.Join(jr.workDir, "pack")
-		if err := jr.fetchAndMountPack(job.AgentPack, packDir); err != nil {
+		if err := jr.materializeAgentPack(job.AgentPack, packDir); err != nil {
 			cleanup()
-			return "", func() {}, fmt.Errorf("agent pack: %w", err)
+			return "", func() {}, &agentPackMaterializationError{cause: err}
 		}
 		jr.packDir = packDir
 	}
 	return primaryDir, cleanup, nil
 }
 
-func (jr *jobRunner) fetchAndMountPack(ref *v1.AgentPackRef, destDir string) error {
-	if ref.KeyID == "" {
-		return fmt.Errorf("agent pack is missing signing key ID")
+func classifyWorkspacePreparationFailure(err error) (v1.JobFinishedFailureCode, string) {
+	var materializationFailure *agentPackMaterializationError
+	if errors.As(err, &materializationFailure) {
+		return v1.JobFailureAgentPackMaterialization, "Agent Pack materialization failed"
 	}
-	keyB64, ok := jr.d.cfg.AgentPackPublicKeys[ref.KeyID]
-	if !ok || keyB64 == "" {
-		return fmt.Errorf("agent pack signing key %q is not trusted by this runner", ref.KeyID)
-	}
-	if err := jr.d.validateArtifactURL(ref.URL); err != nil {
-		return err
-	}
-	requestCtx, cancel := context.WithTimeout(jr.ctx, 2*time.Minute)
-	defer cancel()
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, ref.URL, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := jr.d.httpClientForURL(ref.URL, 2*time.Minute).Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("pack fetch: status %d", resp.StatusCode)
-	}
-	if resp.ContentLength > 64<<20 {
-		return fmt.Errorf("agent pack archive exceeds size limit")
-	}
-	pub, err := agentpack.PublicKeyFromBase64(keyB64)
-	if err != nil {
-		return err
-	}
-	pack, err := agentpack.VerifyAndMount(io.LimitReader(resp.Body, 64<<20), ref.Digest, pub, destDir)
-	if err != nil {
-		return err
-	}
-	if pack.Manifest.Version != ref.Version {
-		return fmt.Errorf("agent pack version mismatch: got %q want %q", pack.Manifest.Version, ref.Version)
-	}
-	if pack.Manifest.Provider != "" && pack.Manifest.Provider != jr.d.cfg.Provider {
-		return fmt.Errorf("agent pack targets provider %q, runner uses %q", pack.Manifest.Provider, jr.d.cfg.Provider)
-	}
-	return nil
-}
-
-func (d *Daemon) validateArtifactURL(raw string) error {
-	candidate, err := url.Parse(raw)
-	if err != nil || candidate.Host == "" {
-		return fmt.Errorf("invalid artifact URL")
-	}
-	if candidate.Scheme != "https" && (!d.cfg.AllowUnsafeDirect || candidate.Scheme != "http") {
-		return fmt.Errorf("artifact URL must use HTTPS")
-	}
-	origins := append([]string(nil), d.cfg.AllowedArtifactOrigins...)
-	if len(origins) == 0 {
-		httpURL := d.cfg.ControlPlaneHTTPURL
-		if httpURL == "" {
-			httpURL = deriveHTTPURL(d.cfg.ControlPlaneURL)
-		}
-		origins = append(origins, httpURL)
-	}
-	for _, rawOrigin := range origins {
-		origin, parseErr := url.Parse(rawOrigin)
-		if parseErr == nil && origin.Scheme == candidate.Scheme && origin.Host == candidate.Host {
-			return nil
-		}
-	}
-	return fmt.Errorf("artifact URL origin is not approved")
+	return v1.JobFailureWorkspacePreparation, "workspace preparation failed"
 }
 
 func (jr *jobRunner) buildPrompt() string {

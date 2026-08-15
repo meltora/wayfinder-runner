@@ -25,6 +25,16 @@ job_network: none
 labels:
   pool: default
 
+# Exact administrator-trusted Ed25519 public keys. Values are canonical base64
+# of SubjectPublicKeyInfo DER, not raw 32-byte keys or certificates.
+# agent_pack_public_keys:
+#   platform-2026-01: <base64-ed25519-spki-der>
+
+# When omitted, Agent Pack downloads are restricted to the control-plane HTTPS
+# origin. Add only canonical HTTPS origins when artifacts use a separate host.
+# allowed_artifact_origins:
+#   - https://packs.example.com
+
 # Repository URLs are installed by an administrator and referenced by opaque ID
 # in control-plane job specifications. Never place credentials in these URLs;
 # use the runner user's Git credential helper or SSH agent instead.

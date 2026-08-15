@@ -2,7 +2,7 @@ package config
 
 import (
 	"bytes"
-	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
@@ -275,12 +275,12 @@ func (c Config) Validate() error {
 		if !idPattern.MatchString(keyID) || len(keyID) > 128 {
 			return fmt.Errorf("agent pack key ID %q is invalid", keyID)
 		}
-		if err := validateECDSAPublicKey(encoded); err != nil {
+		if err := validateEd25519PublicKey(encoded); err != nil {
 			return fmt.Errorf("agent pack key %s: %w", keyID, err)
 		}
 	}
 	for _, origin := range c.AllowedArtifactOrigins {
-		if err := validateServiceURL(origin, "https", "http", c.AllowUnsafeDirect); err != nil {
+		if err := validateArtifactOrigin(origin); err != nil {
 			return fmt.Errorf("allowed_artifact_origin: %w", err)
 		}
 	}
@@ -311,6 +311,23 @@ func (c Config) Validate() error {
 	return nil
 }
 
+func validateArtifactOrigin(raw string) error {
+	if err := validateServiceURL(raw, "https", "", false); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(raw)
+	if (parsed.Path != "" && parsed.Path != "/") || parsed.Host != strings.ToLower(parsed.Host) ||
+		strings.HasSuffix(parsed.Hostname(), ".") || parsed.Port() == "443" {
+		return fmt.Errorf("must be a canonical HTTPS origin without a path")
+	}
+	for _, value := range []byte(parsed.Host) {
+		if value >= 0x80 {
+			return fmt.Errorf("hostname must use canonical ASCII encoding")
+		}
+	}
+	return nil
+}
+
 func supportedProvider(provider string) bool {
 	return provider == "codex" || provider == "claude" || provider == "opencode"
 }
@@ -323,17 +340,18 @@ func validAgentModel(model string) bool {
 	return ok && provider != "" && len(provider) <= 128 && modelID != "" && !strings.HasPrefix(modelID, "/")
 }
 
-func validateECDSAPublicKey(encoded string) error {
-	der, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return fmt.Errorf("invalid base64")
+func validateEd25519PublicKey(encoded string) error {
+	der, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || base64.StdEncoding.EncodeToString(der) != encoded {
+		return fmt.Errorf("invalid canonical base64")
 	}
 	parsed, err := x509.ParsePKIXPublicKey(der)
 	if err != nil {
 		return fmt.Errorf("invalid PKIX public key")
 	}
-	if _, ok := parsed.(*ecdsa.PublicKey); !ok {
-		return fmt.Errorf("public key must use ECDSA")
+	key, ok := parsed.(ed25519.PublicKey)
+	if !ok || len(key) != ed25519.PublicKeySize {
+		return fmt.Errorf("public key must use Ed25519")
 	}
 	return nil
 }

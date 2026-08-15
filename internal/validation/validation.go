@@ -162,18 +162,18 @@ func JobSpec(job v1.JobSpec) error {
 		}
 		seenChecks[check] = true
 	}
+	if (job.AgentPack == nil) != (job.AgentPackAuthority == nil) {
+		return fmt.Errorf("agent_pack and agent_pack_authority must be provided together")
+	}
 	if job.AgentPack != nil {
-		if err := ID("agent_pack.key_id", job.AgentPack.KeyID); err != nil {
+		if err := AgentPackReference(*job.AgentPack); err != nil {
 			return err
 		}
-		if err := boundedText("agent_pack.version", job.AgentPack.Version, 128, true); err != nil {
+		if err := SignedAgentPackAuthority(*job.AgentPackAuthority); err != nil {
 			return err
 		}
-		if err := SHA256Digest("agent_pack.digest", job.AgentPack.Digest); err != nil {
-			return err
-		}
-		if len(job.AgentPack.URL) == 0 || len(job.AgentPack.URL) > 4096 {
-			return fmt.Errorf("agent_pack.url has an invalid length")
+		if !AgentPackAuthorityBindsReference(*job.AgentPackAuthority, *job.AgentPack) {
+			return fmt.Errorf("signed Agent Pack authority must bind the exact Agent Pack ref")
 		}
 	}
 	raw, err := json.Marshal(job)

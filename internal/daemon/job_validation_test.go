@@ -2,6 +2,11 @@ package daemon
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,12 +15,92 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/agentpack"
 	"github.com/example/app-runner/internal/collector"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/supervisor"
 )
+
+func signedTestPackJob(t *testing.T) (v1.JobSpec, string) {
+	t.Helper()
+	ref := v1.AgentPackRef{
+		Version: "1.0.0", Digest: strings.Repeat("a", 64),
+		URL: "https://packs.example.test/pack-1.0.0.tgz", KeyID: "pack-key-1",
+	}
+	authority := v1.SignedAgentPackAuthority{
+		SchemaVersion: 1, RegistryVersionID: "pack-version-1",
+		Scope:   v1.AgentPackAuthorityScope{Kind: v1.AgentPackScopePlatform},
+		PackKey: "default-pack", PackName: "Default Pack", Provider: "codex",
+		ProtocolVersion: 1, MinimumRunnerVersion: "0.1.0", AgentPack: ref,
+	}
+	digest, err := agentpack.PublicationAttestationDigest(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority.AttestationDigest = digest
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digestBytes, _ := hex.DecodeString(digest)
+	authority.SignatureBase64 = base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, digestBytes))
+	der, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := withTestAuthority(v1.JobSpec{
+		JobID: "job-pack", AttemptID: "attempt-pack", ProjectID: "project-1", Kind: v1.JobKindPlan,
+		FencingToken: 1, Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
+		Ticket:    v1.TicketContext{Key: "PROJ-1", Summary: "Use signed pack"},
+		AgentPack: &ref, AgentPackAuthority: &authority,
+	})
+	return job, base64.StdEncoding.EncodeToString(der)
+}
+
+func TestRunnerVerifiesSignedAgentPackAuthorityBeforeStartingJob(t *testing.T) {
+	job, trustedKey := signedTestPackJob(t)
+	d := &Daemon{cfg: config.Config{
+		Provider: "codex", AgentPackPublicKeys: map[string]string{"pack-key-1": trustedKey},
+	}}
+	if err := d.verifyJobAgentPackAuthority(job); err != nil {
+		t.Fatalf("valid authority rejected: %v", err)
+	}
+
+	tests := map[string]func(*Daemon, *v1.JobSpec){
+		"untrusted key":  func(d *Daemon, _ *v1.JobSpec) { d.cfg.AgentPackPublicKeys = nil },
+		"wrong provider": func(d *Daemon, _ *v1.JobSpec) { d.cfg.Provider = "opencode" },
+		"tampered signature": func(_ *Daemon, job *v1.JobSpec) {
+			raw, _ := base64.StdEncoding.DecodeString(job.AgentPackAuthority.SignatureBase64)
+			raw[0] ^= 0xff
+			job.AgentPackAuthority.SignatureBase64 = base64.StdEncoding.EncodeToString(raw)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			candidate := job
+			authority := *job.AgentPackAuthority
+			candidate.AgentPackAuthority = &authority
+			candidateDaemon := &Daemon{cfg: config.Normalize(d.cfg)}
+			mutate(candidateDaemon, &candidate)
+			if err := candidateDaemon.verifyJobAgentPackAuthority(candidate); err == nil {
+				t.Fatal("invalid authority accepted")
+			}
+		})
+	}
+}
+
+func TestAgentPackMaterializationFailureHasControlledTerminalClassification(t *testing.T) {
+	code, message := classifyWorkspacePreparationFailure(&agentPackMaterializationError{cause: context.Canceled})
+	if code != v1.JobFailureAgentPackMaterialization || message != "Agent Pack materialization failed" {
+		t.Fatalf("classification = %q %q", code, message)
+	}
+	code, message = classifyWorkspacePreparationFailure(context.Canceled)
+	if code != v1.JobFailureWorkspacePreparation || message != "workspace preparation failed" {
+		t.Fatalf("ordinary classification = %q %q", code, message)
+	}
+}
 
 func TestStartJobRejectsUnsafeIdentifiersBeforeCreatingWorkspace(t *testing.T) {
 	t.Parallel()
@@ -185,30 +270,23 @@ func TestPrepareWorkspaceRejectsInvalidRepositoryTopologyBeforeGit(t *testing.T)
 func TestAgentPackReferenceAndArtifactOriginValidation(t *testing.T) {
 	jr := workspaceValidationRunner(t, []v1.JobRepository{{RepositoryID: "repo-1"}})
 	jr.ctx = context.Background()
-	if err := jr.fetchAndMountPack(&v1.AgentPackRef{}, filepath.Join(t.TempDir(), "pack")); err == nil {
-		t.Fatal("pack without key ID accepted")
-	}
-	if err := jr.fetchAndMountPack(&v1.AgentPackRef{KeyID: "unknown"}, filepath.Join(t.TempDir(), "pack")); err == nil {
-		t.Fatal("untrusted pack key accepted")
-	}
-	jr.d.cfg.AgentPackPublicKeys = map[string]string{"key-1": "invalid"}
-	if err := jr.fetchAndMountPack(&v1.AgentPackRef{KeyID: "key-1", URL: "file:///etc/passwd"}, filepath.Join(t.TempDir(), "pack")); err == nil {
-		t.Fatal("unsafe pack URL accepted")
-	}
-
 	jr.d.cfg.ControlPlaneURL = "wss://control.example.test/runner"
 	if err := jr.d.validateArtifactURL("https://control.example.test/artifacts/a"); err != nil {
 		t.Fatal(err)
 	}
-	for _, raw := range []string{"not a URL", "http://control.example.test/a", "https://other.example.test/a"} {
+	for _, raw := range []string{
+		"not a URL", "http://control.example.test/a", "https://other.example.test/a",
+		"https://user@control.example.test/a", "https://control.example.test/a#fragment",
+		"https://CONTROL.example.test/a", "https://control.example.test.:443/a", "https://café.example.test/a",
+	} {
 		if err := jr.d.validateArtifactURL(raw); err == nil {
 			t.Fatalf("artifact URL %q accepted", raw)
 		}
 	}
 	jr.d.cfg.AllowUnsafeDirect = true
-	jr.d.cfg.AllowedArtifactOrigins = []string{"http://local.example.test"}
-	if err := jr.d.validateArtifactURL("http://local.example.test/a"); err != nil {
-		t.Fatal(err)
+	jr.d.cfg.AllowedArtifactOrigins = []string{"https://local.example.test"}
+	if err := jr.d.validateArtifactURL("http://local.example.test/a"); err == nil {
+		t.Fatal("unsafe direct mode weakened signed artifact transport")
 	}
 }
 

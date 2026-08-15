@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,72 @@ func validJob() v1.JobSpec {
 		WorkflowRevision: 2, FencingToken: 1,
 		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
 		Ticket:       v1.TicketContext{Key: "PROJ-1", Summary: "Implement feature"},
+	}
+}
+
+func validAgentPackAuthority() (*v1.AgentPackRef, *v1.SignedAgentPackAuthority) {
+	ref := &v1.AgentPackRef{
+		Version: "2.1.0", Digest: strings.Repeat("a", 64),
+		URL: "https://packs.example.test/platform-default-2.1.0.tgz", KeyID: "pack-signing-1",
+	}
+	authority := &v1.SignedAgentPackAuthority{
+		SchemaVersion: 1, RegistryVersionID: "pack-version-1",
+		Scope:   v1.AgentPackAuthorityScope{Kind: "organization", OrganizationID: "org-1"},
+		PackKey: "platform-default", PackName: "Platform Default", Provider: "claude-code",
+		ProtocolVersion: 1, MinimumRunnerVersion: "1.4.0", AgentPack: *ref,
+		AttestationDigest: strings.Repeat("b", 64),
+		SignatureBase64:   base64.StdEncoding.EncodeToString(make([]byte, 64)),
+	}
+	return ref, authority
+}
+
+func TestJobSpecRequiresExactSignedAgentPackAuthority(t *testing.T) {
+	ref, authority := validAgentPackAuthority()
+	job := validJob()
+	job.AgentPack, job.AgentPackAuthority = ref, authority
+	if err := JobSpec(job); err != nil {
+		t.Fatalf("valid signed authority rejected: %v", err)
+	}
+
+	mutations := map[string]func(*v1.JobSpec){
+		"missing authority":      func(job *v1.JobSpec) { job.AgentPackAuthority = nil },
+		"authority without pack": func(job *v1.JobSpec) { job.AgentPack = nil },
+		"schema":                 func(job *v1.JobSpec) { job.AgentPackAuthority.SchemaVersion = 2 },
+		"registry id":            func(job *v1.JobSpec) { job.AgentPackAuthority.RegistryVersionID = "bad/id" },
+		"scope kind":             func(job *v1.JobSpec) { job.AgentPackAuthority.Scope.Kind = "tenant" },
+		"platform scope organization": func(job *v1.JobSpec) {
+			job.AgentPackAuthority.Scope.Kind = v1.AgentPackScopePlatform
+		},
+		"organization scope id": func(job *v1.JobSpec) { job.AgentPackAuthority.Scope.OrganizationID = "" },
+		"pack key":              func(job *v1.JobSpec) { job.AgentPackAuthority.PackKey = "Not_Kebab" },
+		"pack name":             func(job *v1.JobSpec) { job.AgentPackAuthority.PackName = "   " },
+		"provider":              func(job *v1.JobSpec) { job.AgentPackAuthority.Provider = "bad/provider" },
+		"protocol":              func(job *v1.JobSpec) { job.AgentPackAuthority.ProtocolVersion = 2 },
+		"minimum runner":        func(job *v1.JobSpec) { job.AgentPackAuthority.MinimumRunnerVersion = "v1.4" },
+		"digest":                func(job *v1.JobSpec) { job.AgentPackAuthority.AttestationDigest = strings.Repeat("A", 64) },
+		"signature length": func(job *v1.JobSpec) {
+			job.AgentPackAuthority.SignatureBase64 = base64.StdEncoding.EncodeToString(make([]byte, 63))
+		},
+		"signature encoding": func(job *v1.JobSpec) { job.AgentPackAuthority.SignatureBase64 = strings.Repeat("!", 88) },
+		"ref mismatch":       func(job *v1.JobSpec) { job.AgentPackAuthority.AgentPack.Digest = strings.Repeat("c", 64) },
+		"credential URL":     func(job *v1.JobSpec) { job.AgentPack.URL = "https://secret@packs.example.test/pack.tgz" },
+		"fragment URL":       func(job *v1.JobSpec) { job.AgentPack.URL = "https://packs.example.test/pack.tgz#secret" },
+		"insecure URL":       func(job *v1.JobSpec) { job.AgentPack.URL = "http://packs.example.test/pack.tgz" },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			candidate := job
+			refCopy := *job.AgentPack
+			authorityCopy := *job.AgentPackAuthority
+			authorityPackCopy := job.AgentPackAuthority.AgentPack
+			candidate.AgentPack = &refCopy
+			candidate.AgentPackAuthority = &authorityCopy
+			candidate.AgentPackAuthority.AgentPack = authorityPackCopy
+			mutate(&candidate)
+			if err := JobSpec(candidate); err == nil {
+				t.Fatal("invalid signed authority accepted")
+			}
+		})
 	}
 }
 

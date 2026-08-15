@@ -83,7 +83,9 @@ untrusted with respect to the runner identity and control plane.
 1. The control plane sends a validated `start_job` command containing the exact
    project ID, lease ID, manifest ID/kind/digest, workflow revision, fencing
    token, ticket context, one to sixteen registered repository IDs, and
-   optionally a signed Agent Pack reference. The runner preserves this
+   an Agent Pack reference paired with its signed delivery authority. The
+   runner rejects an unsigned, mismatched, untrusted, incompatible, or malformed
+   pack before acquiring a lease or preparing a workspace, and preserves this
    immutable authority on every accepted progress, checkpoint, plan-publication,
    provider-capacity, terminal, and artifact event.
 2. The daemon durably records immutable command content and a receipt state
@@ -102,9 +104,12 @@ untrusted with respect to the runner identity and control plane.
 4. For each repository, the runner scans only the versioned catalog beneath the
    exact checkout and durably publishes one metadata-only
    `agent_config_discovery` event. It never executes discovered material,
-   follows catalog symlinks, or publishes raw content. It then verifies and
-   mounts the Agent Pack, prepares an isolated provider home, and starts a
-   token-scoped Unix MCP bridge.
+   follows catalog symlinks, or publishes raw content. It then verifies the
+   Agent Pack Ed25519 publication attestation, downloads the exact archive from
+   an approved HTTPS origin, verifies its whole-archive SHA-256 digest, safely
+   validates and extracts it, and exposes a read-only job view. Only after that
+   succeeds does it prepare an isolated provider home and start a token-scoped
+   Unix MCP bridge.
 5. Codex, Claude, or OpenCode receives the ticket/approved plan and invokes platform MCP
    tools to publish plan revisions, progress, decisions, checkpoints, preview
    metadata, and artifact declarations. A plan-revision job retrieves the full
@@ -183,6 +188,31 @@ Repository credentials must come from the `our-runner` user's SSH agent or Git
 credential helper. Passwords, tokens, queries, and fragments in repository URLs
 are rejected.
 
+## Signed Agent Packs
+
+Agent Pack trust is administrator-owned runner configuration, never repository
+configuration. `agent_pack_public_keys` maps an exact key ID to a canonical
+base64-encoded Ed25519 SubjectPublicKeyInfo DER value. Configure
+`allowed_artifact_origins` when packs are hosted somewhere other than the
+control-plane HTTPS origin. Origins must be canonical HTTPS origins without a
+path, query, credentials, fragment, uppercase host, trailing dot, explicit
+default port, or raw Unicode hostname.
+
+Before any provider process starts, the runner verifies the authority's exact
+pack reference, provider, protocol, minimum runner version, publication digest,
+and Ed25519 signature. It downloads without redirects or content transformation
+under strict time/header/body limits, hashes while streaming, and publishes only
+a complete 0400 archive into the private content-addressed cache. Concurrent
+jobs converge through an OS-backed per-digest lock; corrupt and partial entries
+are rejected or recovered, and bounded LRU pruning protects the active digest.
+
+Extraction accepts one bounded gzip/tar stream containing only declared regular
+ASCII-named files. Traversal, links, devices, FIFOs, sparse entries, set-ID bits,
+duplicates, case collisions, file/directory collisions, unknown manifest fields,
+digest mismatches, oversized input, and trailing payloads fail closed before the
+job view is published. Docker jobs receive the resulting directory as an
+explicit read-only bind mount. Direct isolation remains development-only.
+
 ## Install on Linux
 
 The recommended installation path is the curl installer. The release workflow
@@ -256,6 +286,9 @@ com.ourplatform.egress-policy=<configured egress_policy_id>
 Start from [`config.example.yaml`](config.example.yaml). Configuration parsing
 rejects unknown fields, insecure service URLs, mutable image tags, invalid
 resource limits, unregistered checks/repositories, and unsafe file permissions.
+Production configuration must include every Agent Pack signing key that the
+control plane may select for this runner. A missing key intentionally prevents
+the job from starting.
 
 ## Commands
 

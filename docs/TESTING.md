@@ -29,6 +29,19 @@ checks, trusted Git finalization, artifacts, leases, emergency stop, Agent Pack
 verification, and self-update. Production release CI must additionally exercise
 Linux rootless Docker, the real immutable job image, restricted egress,
 certificate rotation, upgrade/rollback, and recovery after forced termination.
+
+Agent Pack tests cover the cross-language canonical publication digest,
+Ed25519-SPKI trust validation, exact authority/reference/provider/version
+binding, pre-network rejection, HTTPS origin policy, redirects, response
+encoding, size limits, cancellation, streaming archive digests, corrupt-cache
+recovery, concurrent cache convergence, LRU pruning, and provider-start
+blocking. Malicious archive cases include traversal, absolute paths, links,
+devices, FIFOs, sparse metadata, set-ID modes, duplicate and case-colliding
+paths, file/directory collisions, unsafe characters, excessive depth/count/
+size, unknown or multi-document manifests, internal digest mismatches, multiple
+gzip members, and trailing payloads. Materialized job views are checked for
+0444 files and 0555 directories; production Docker execution adds a read-only
+bind mount.
 The production update-promotion test must use the protected
 `update-production` environment, publish only after a draft release becomes a
 published release, reject a non-increasing sequence, and confirm that the OIDC

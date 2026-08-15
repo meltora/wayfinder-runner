@@ -25,6 +25,7 @@ func TestJobFinishedEventAcceptsStateConsistentEvidence(t *testing.T) {
 		code  v1.JobFinishedFailureCode
 	}{
 		{v1.JobFinishedFailed, v1.JobFailureAgentExit},
+		{v1.JobFinishedFailed, v1.JobFailureAgentPackMaterialization},
 		{v1.JobFinishedCancelled, v1.JobFailureCancelled},
 		{v1.JobFinishedQuarantined, v1.JobFailureLeaseLost},
 		{v1.JobFinishedQuarantined, v1.JobFailureCleanup},

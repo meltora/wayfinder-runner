@@ -285,6 +285,7 @@ func (s *Server) startWS() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/runners/stream", s.handleStream)
 	mux.HandleFunc("/v1/runners/rotate", s.handleRotate)
+	mux.HandleFunc("/packs/", s.handlePack)
 	s.wsSrv = &httptestServer{listener: ln, server: &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}, URL: "wss://" + ln.Addr().String() + "/v1/runners/stream"}
 	go func() { _ = s.wsSrv.server.Serve(ln) }()
 	return nil
@@ -355,6 +356,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) EnrollURL() string { return s.enrollSrv.URL }
 func (s *Server) WSURL() string     { return s.wsSrv.URL }
+func (s *Server) SecureHTTPURL() string {
+	return strings.TrimSuffix(strings.Replace(s.wsSrv.URL, "wss://", "https://", 1), "/v1/runners/stream")
+}
 
 func (s *Server) SendCommand(ctx context.Context, cmd v1.CommandPayload) error {
 	return s.SendCommandEnvelope(ctx, v1.Envelope{
