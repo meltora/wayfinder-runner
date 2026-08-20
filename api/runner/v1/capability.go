@@ -23,6 +23,8 @@ type CapabilityManifest struct {
 	ProtocolVersion                   int               `json:"protocol_version"`
 	AgentPackDeliveryAuthorityVersion int               `json:"agent_pack_delivery_authority_version"`
 	TrustedAgentPackKeyIDs            []string          `json:"trusted_agent_pack_key_ids"`
+	SourcePublicationTransportVersion int               `json:"source_publication_transport_version,omitempty"`
+	SourcePublicationProviders        []string          `json:"source_publication_providers,omitempty"`
 	Signature                         string            `json:"signature"`
 }
 

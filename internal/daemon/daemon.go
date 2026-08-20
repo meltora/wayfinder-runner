@@ -645,6 +645,10 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 }
 
 func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.CommandPayload) error {
+	if err := validateSourcePublicationCommandBoundary(cmd); err != nil {
+		return err
+	}
+
 	switch cmd.Command {
 	case v1.CmdStartJob:
 		if d.Paused() {
@@ -714,6 +718,8 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 		return d.sendEvent(ctx, map[string]any{"kind": "cert_rotated"})
 	case v1.CmdUpdate:
 		return d.beginUpdateDrain(env.ID, cmd, time.Now())
+	case v1.CmdSourcePublication:
+		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}
 	return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 }

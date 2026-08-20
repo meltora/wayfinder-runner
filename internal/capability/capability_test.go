@@ -82,6 +82,9 @@ func TestCollect(t *testing.T) {
 	if len(m.TrustedAgentPackKeyIDs) != 2 || m.TrustedAgentPackKeyIDs[0] != "trust-a" || m.TrustedAgentPackKeyIDs[1] != "trust-z" {
 		t.Fatalf("trusted Agent Pack key IDs = %v", m.TrustedAgentPackKeyIDs)
 	}
+	if m.SourcePublicationTransportVersion != 0 || len(m.SourcePublicationProviders) != 0 {
+		t.Fatalf("source publication must remain unadvertised until the runtime adapter exists: %+v", m)
+	}
 }
 
 func TestCollectReportsRootless(t *testing.T) {
