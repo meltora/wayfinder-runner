@@ -112,6 +112,24 @@ func TestCollectReportsRootless(t *testing.T) {
 	}
 }
 
+func TestCollectAdvertisesOnlyConfiguredSourcePublicationProviders(t *testing.T) {
+	detector := fakeDetector()
+	detector.SourcePublicationProviders = []string{"gitlab", "github", "github"}
+	manifest := detector.Collect(context.Background())
+	if manifest.SourcePublicationTransportVersion != v1.SourcePublicationTransportVersion {
+		t.Fatalf("transport version = %d", manifest.SourcePublicationTransportVersion)
+	}
+	if len(manifest.SourcePublicationProviders) != 2 || manifest.SourcePublicationProviders[0] != "github" ||
+		manifest.SourcePublicationProviders[1] != "gitlab" {
+		t.Fatalf("providers = %v", manifest.SourcePublicationProviders)
+	}
+
+	detector.SourcePublicationProviders[0] = "changed"
+	if manifest.SourcePublicationProviders[0] != "github" {
+		t.Fatal("manifest providers alias detector configuration")
+	}
+}
+
 func TestSignVerify(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	d := fakeDetector()

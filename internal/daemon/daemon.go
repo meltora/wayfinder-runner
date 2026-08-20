@@ -29,6 +29,7 @@ import (
 	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/runlock"
 	"github.com/example/app-runner/internal/safeio"
+	"github.com/example/app-runner/internal/sourcepublication"
 	"github.com/example/app-runner/internal/supervisor"
 	"github.com/example/app-runner/internal/transport"
 	"github.com/example/app-runner/internal/updateipc"
@@ -55,18 +56,22 @@ type Daemon struct {
 	uploader       *artifactUploader
 	supervisor     supervisor.Supervisor
 
-	jobMu                  sync.Mutex
-	activeJob              *jobRunner
-	updateDrain            *pendingUpdate
-	updateWake             chan struct{}
-	updateRunMu            sync.Mutex
-	updateIPC              updateIPC
-	updateRestored         bool
-	updateExpiredAtStartup *pendingUpdate
-	controlReady           atomic.Bool
-	rotationMu             sync.Mutex
-	commandMu              sync.Mutex
-	commandOwner           string
+	jobMu                          sync.Mutex
+	activeJob                      *jobRunner
+	updateDrain                    *pendingUpdate
+	updateWake                     chan struct{}
+	updateRunMu                    sync.Mutex
+	updateIPC                      updateIPC
+	updateRestored                 bool
+	updateExpiredAtStartup         *pendingUpdate
+	controlReady                   atomic.Bool
+	rotationMu                     sync.Mutex
+	commandMu                      sync.Mutex
+	commandOwner                   string
+	sourcePublicationPublisher     sourcePublicationPublisher
+	sourcePublicationCommandMu     sync.Mutex
+	sourcePublicationCommandActive map[string]struct{}
+	sourcePublicationCommands      sync.WaitGroup
 
 	eventSink   func(ctx context.Context, payload any) error
 	httpMu      sync.RWMutex
@@ -77,6 +82,14 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	cfg = config.Normalize(cfg)
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid runner configuration: %w", err)
+	}
+	var publicationPublisher sourcePublicationPublisher
+	if len(cfg.SourcePublicationInstallations) != 0 {
+		registry, err := sourcepublication.NewRegistry(cfg.SourcePublicationInstallations, nil)
+		if err != nil {
+			return nil, fmt.Errorf("initialize source publication credentials: %w", err)
+		}
+		publicationPublisher = registry
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -164,13 +177,14 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	updateClient.ExpectedServerUID = 0
 	d := &Daemon{
 		cfg: cfg, store: store, runnerID: runnerID, journal: j, runLock: lock, logger: logger,
-		commandOwner: "process-" + newEventID(),
-		leases:       leaseManager,
-		collectors:   collector.NewStore(cfg.StateDir),
-		uploader:     newArtifactUploader(httpURL),
-		supervisor:   nil,
-		updateWake:   make(chan struct{}, 1),
-		updateIPC:    updateClient,
+		commandOwner:               "process-" + newEventID(),
+		leases:                     leaseManager,
+		collectors:                 collector.NewStore(cfg.StateDir),
+		uploader:                   newArtifactUploader(httpURL),
+		supervisor:                 nil,
+		updateWake:                 make(chan struct{}, 1),
+		updateIPC:                  updateClient,
+		sourcePublicationPublisher: publicationPublisher,
 	}
 	d.collectors.SetMaxSpoolBytes(int64(cfg.ArtifactSpoolMB) << 20)
 	d.recoveredLease.Store(recoveredLease)
@@ -241,6 +255,7 @@ func selectSupervisor(cfg config.Config, logger *slog.Logger) (supervisor.Superv
 
 func (d *Daemon) Run(ctx context.Context) error {
 	defer func() {
+		d.sourcePublicationCommands.Wait()
 		_ = d.journal.Close()
 		_ = d.runLock.Close()
 	}()
@@ -385,6 +400,9 @@ func (d *Daemon) OnConnected(ctx context.Context) {
 
 func (d *Daemon) publishCapability(ctx context.Context) error {
 	det := capability.New(d.runnerID, Version, d.cfg.Labels, d.cfg.AgentPackPublicKeys)
+	if d.sourcePublicationPublisher != nil {
+		det.SourcePublicationProviders = d.sourcePublicationPublisher.ReadyProviders()
+	}
 	m := det.Collect(ctx)
 	key, err := d.store.LoadKey()
 	if err != nil {
@@ -605,6 +623,12 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		return nil
 	}
 	effectMayHaveRun := receipt.State == journal.CommandProcessing
+	cmd, decodeErr := decodeCommandPayload(env.Payload)
+	asyncSourcePublication :=
+		decodeErr == nil && cmd.Command == v1.CmdSourcePublication
+	if asyncSourcePublication && d.sourcePublicationCommandIsActive(env.ID) {
+		return nil
+	}
 	claimOwner := d.commandOwner + "-" + newEventID()
 	receipt, claimed, err := d.journal.ClaimCommand(ctx, env.ID, claimOwner)
 	if err != nil {
@@ -617,24 +641,49 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		}
 		return nil
 	}
+	if asyncSourcePublication {
+		if !d.sourcePublicationCommandStart(env.ID) {
+			return nil
+		}
+		d.sourcePublicationCommands.Add(1)
+		go d.completeSourcePublicationCommand(
+			ctx,
+			env,
+			cmd,
+			claimOwner,
+			effectMayHaveRun,
+		)
+		return nil
+	}
+	return d.completeClaimedCommand(
+		ctx,
+		env,
+		cmd,
+		decodeErr,
+		claimOwner,
+		effectMayHaveRun,
+	)
+}
 
-	cmd, decodeErr := decodeCommandPayload(env.Payload)
+func (d *Daemon) completeClaimedCommand(
+	ctx context.Context,
+	env v1.Envelope,
+	cmd v1.CommandPayload,
+	decodeErr error,
+	claimOwner string,
+	effectMayHaveRun bool,
+) error {
 	execErr := decodeErr
-	if execErr == nil {
-		alreadyApplied := false
-		if effectMayHaveRun {
-			alreadyApplied = d.commandEffectAlreadyApplied(cmd)
-		}
-		if !alreadyApplied {
-			execErr = d.executeCommand(ctx, env, cmd)
-		}
+	if execErr == nil &&
+		(!effectMayHaveRun || !d.commandEffectAlreadyApplied(cmd)) {
+		execErr = d.executeCommand(ctx, env, cmd)
 	}
 	status := v1.CommandAckAccepted
 	if execErr != nil {
 		status = v1.CommandAckRejected
 	}
 	reasonCode := commandRejectionReason(execErr)
-	receipt, err = d.journal.CompleteCommand(ctx, env.ID, claimOwner, string(status), reasonCode)
+	receipt, err := d.journal.CompleteCommand(ctx, env.ID, claimOwner, string(status), reasonCode)
 	if err != nil {
 		d.logger.Error("persist command outcome", "id", env.ID, "err", err)
 		return fmt.Errorf("persist command outcome %s: %w", env.ID, err)
@@ -642,6 +691,59 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 	d.sendDurableCommandAck(ctx, receipt)
 	d.recordCommandAckAttempt(env.Payload, receipt)
 	return nil
+}
+
+func (d *Daemon) completeSourcePublicationCommand(
+	ctx context.Context,
+	env v1.Envelope,
+	cmd v1.CommandPayload,
+	claimOwner string,
+	effectMayHaveRun bool,
+) {
+	defer d.sourcePublicationCommands.Done()
+	defer d.sourcePublicationCommandFinish(env.ID)
+	if err := d.completeClaimedCommand(
+		ctx,
+		env,
+		cmd,
+		nil,
+		claimOwner,
+		effectMayHaveRun,
+	); err != nil {
+		d.logger.Error(
+			"complete source publication command",
+			"id",
+			env.ID,
+			"err",
+			err,
+		)
+	}
+}
+
+func (d *Daemon) sourcePublicationCommandIsActive(commandID string) bool {
+	d.sourcePublicationCommandMu.Lock()
+	defer d.sourcePublicationCommandMu.Unlock()
+	_, active := d.sourcePublicationCommandActive[commandID]
+	return active
+}
+
+func (d *Daemon) sourcePublicationCommandStart(commandID string) bool {
+	d.sourcePublicationCommandMu.Lock()
+	defer d.sourcePublicationCommandMu.Unlock()
+	if d.sourcePublicationCommandActive == nil {
+		d.sourcePublicationCommandActive = make(map[string]struct{})
+	}
+	if _, active := d.sourcePublicationCommandActive[commandID]; active {
+		return false
+	}
+	d.sourcePublicationCommandActive[commandID] = struct{}{}
+	return true
+}
+
+func (d *Daemon) sourcePublicationCommandFinish(commandID string) {
+	d.sourcePublicationCommandMu.Lock()
+	delete(d.sourcePublicationCommandActive, commandID)
+	d.sourcePublicationCommandMu.Unlock()
 }
 
 func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.CommandPayload) error {
@@ -719,7 +821,10 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	case v1.CmdUpdate:
 		return d.beginUpdateDrain(env.ID, cmd, time.Now())
 	case v1.CmdSourcePublication:
-		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executeSourcePublication(ctx, env.ID, *cmd.SourcePublication)
 	}
 	return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,35 +18,39 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const MaxAgentPackPublicKeys = 128
+const (
+	MaxAgentPackPublicKeys            = 128
+	MaxSourcePublicationInstallations = 128
+)
 
 type Config struct {
-	ControlPlaneURL        string                      `yaml:"control_plane_url"`
-	ControlPlaneHTTPURL    string                      `yaml:"control_plane_http_url,omitempty"`
-	StateDir               string                      `yaml:"state_dir"`
-	Transport              string                      `yaml:"transport"`
-	Isolation              string                      `yaml:"isolation,omitempty"`
-	AllowUnsafeDirect      bool                        `yaml:"allow_unsafe_direct,omitempty"`
-	Supervisor             string                      `yaml:"supervisor,omitempty"`
-	Provider               string                      `yaml:"provider,omitempty"`
-	AgentModel             string                      `yaml:"agent_model,omitempty"`
-	ProviderBinaries       map[string]string           `yaml:"provider_binaries,omitempty"`
-	JobImage               string                      `yaml:"job_image,omitempty"`
-	JobMemoryMB            int                         `yaml:"job_memory_mb,omitempty"`
-	JobCPUs                float64                     `yaml:"job_cpus,omitempty"`
-	JobPIDs                int                         `yaml:"job_pids,omitempty"`
-	ArtifactSpoolMB        int                         `yaml:"artifact_spool_mb,omitempty"`
-	JournalRetentionDays   int                         `yaml:"journal_retention_days,omitempty"`
-	JournalMaxMB           int                         `yaml:"journal_max_mb,omitempty"`
-	JobNetwork             string                      `yaml:"job_network,omitempty"`
-	JobNetworkName         string                      `yaml:"job_network_name,omitempty"`
-	EgressPolicyID         string                      `yaml:"egress_policy_id,omitempty"`
-	UpdateSocketPath       string                      `yaml:"update_socket_path,omitempty"`
-	AgentPackPublicKeys    map[string]string           `yaml:"agent_pack_public_keys,omitempty"`
-	AllowedArtifactOrigins []string                    `yaml:"allowed_artifact_origins,omitempty"`
-	Repositories           map[string]RepositoryConfig `yaml:"repositories,omitempty"`
-	Checks                 map[string]CheckConfig      `yaml:"checks,omitempty"`
-	Labels                 map[string]string           `yaml:"labels,omitempty"`
+	ControlPlaneURL                string                                         `yaml:"control_plane_url"`
+	ControlPlaneHTTPURL            string                                         `yaml:"control_plane_http_url,omitempty"`
+	StateDir                       string                                         `yaml:"state_dir"`
+	Transport                      string                                         `yaml:"transport"`
+	Isolation                      string                                         `yaml:"isolation,omitempty"`
+	AllowUnsafeDirect              bool                                           `yaml:"allow_unsafe_direct,omitempty"`
+	Supervisor                     string                                         `yaml:"supervisor,omitempty"`
+	Provider                       string                                         `yaml:"provider,omitempty"`
+	AgentModel                     string                                         `yaml:"agent_model,omitempty"`
+	ProviderBinaries               map[string]string                              `yaml:"provider_binaries,omitempty"`
+	JobImage                       string                                         `yaml:"job_image,omitempty"`
+	JobMemoryMB                    int                                            `yaml:"job_memory_mb,omitempty"`
+	JobCPUs                        float64                                        `yaml:"job_cpus,omitempty"`
+	JobPIDs                        int                                            `yaml:"job_pids,omitempty"`
+	ArtifactSpoolMB                int                                            `yaml:"artifact_spool_mb,omitempty"`
+	JournalRetentionDays           int                                            `yaml:"journal_retention_days,omitempty"`
+	JournalMaxMB                   int                                            `yaml:"journal_max_mb,omitempty"`
+	JobNetwork                     string                                         `yaml:"job_network,omitempty"`
+	JobNetworkName                 string                                         `yaml:"job_network_name,omitempty"`
+	EgressPolicyID                 string                                         `yaml:"egress_policy_id,omitempty"`
+	UpdateSocketPath               string                                         `yaml:"update_socket_path,omitempty"`
+	AgentPackPublicKeys            map[string]string                              `yaml:"agent_pack_public_keys,omitempty"`
+	AllowedArtifactOrigins         []string                                       `yaml:"allowed_artifact_origins,omitempty"`
+	Repositories                   map[string]RepositoryConfig                    `yaml:"repositories,omitempty"`
+	Checks                         map[string]CheckConfig                         `yaml:"checks,omitempty"`
+	SourcePublicationInstallations map[string]SourcePublicationInstallationConfig `yaml:"source_publication_installations,omitempty"`
+	Labels                         map[string]string                              `yaml:"labels,omitempty"`
 }
 
 type RepositoryConfig struct {
@@ -57,6 +62,14 @@ type CheckConfig struct {
 	Args           []string `yaml:"args,omitempty"`
 	TimeoutSeconds int      `yaml:"timeout_seconds,omitempty"`
 	RepositoryID   string   `yaml:"repository_id,omitempty"`
+}
+
+// SourcePublicationInstallationConfig binds a control-plane installation ID
+// to credentials owned by this runner. Tokens never cross the runner protocol.
+type SourcePublicationInstallationConfig struct {
+	Provider   string `yaml:"provider"`
+	APIBaseURL string `yaml:"api_base_url,omitempty"`
+	TokenFile  string `yaml:"token_file"`
 }
 
 func Default() Config {
@@ -150,6 +163,16 @@ func Normalize(in Config) Config {
 			copyValue := value
 			copyValue.Args = append([]string(nil), value.Args...)
 			out.Checks[key] = copyValue
+		}
+	}
+	if in.SourcePublicationInstallations != nil {
+		out.SourcePublicationInstallations = make(map[string]SourcePublicationInstallationConfig, len(in.SourcePublicationInstallations))
+		for key, value := range in.SourcePublicationInstallations {
+			copyValue := value
+			if copyValue.Provider == "github" && copyValue.APIBaseURL == "" {
+				copyValue.APIBaseURL = "https://api.github.com"
+			}
+			out.SourcePublicationInstallations[key] = copyValue
 		}
 	}
 	out.AllowedArtifactOrigins = append([]string(nil), in.AllowedArtifactOrigins...)
@@ -312,6 +335,41 @@ func (c Config) Validate() error {
 				return fmt.Errorf("check %s references unregistered repository %s", id, check.RepositoryID)
 			}
 		}
+	}
+	if len(c.SourcePublicationInstallations) > MaxSourcePublicationInstallations {
+		return fmt.Errorf("source_publication_installations must contain at most %d entries", MaxSourcePublicationInstallations)
+	}
+	for id, installation := range c.SourcePublicationInstallations {
+		if len(id) > 128 || id == "." || id == ".." || !idPattern.MatchString(id) {
+			return fmt.Errorf("source publication installation ID %q is invalid", id)
+		}
+		if installation.Provider != "github" {
+			return fmt.Errorf("source publication installation %s uses unsupported provider %q", id, installation.Provider)
+		}
+		apiBaseURL := installation.APIBaseURL
+		if apiBaseURL == "" {
+			apiBaseURL = "https://api.github.com"
+		}
+		if err := validateSourcePublicationAPIBaseURL(apiBaseURL); err != nil {
+			return fmt.Errorf("source publication installation %s API base URL: %w", id, err)
+		}
+		if !filepath.IsAbs(installation.TokenFile) || filepath.Clean(installation.TokenFile) != installation.TokenFile ||
+			strings.ContainsRune(installation.TokenFile, '\x00') {
+			return fmt.Errorf("source publication installation %s token_file must be a clean absolute path", id)
+		}
+	}
+	return nil
+}
+
+func validateSourcePublicationAPIBaseURL(raw string) error {
+	if err := validateServiceURL(raw, "https", "", false); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(raw)
+	if parsed.Host != strings.ToLower(parsed.Host) || strings.HasSuffix(parsed.Hostname(), ".") ||
+		parsed.RawPath != "" || parsed.ForceQuery || (parsed.Path != "" && path.Clean(parsed.Path) != parsed.Path) ||
+		(parsed.Path != "" && parsed.Path != "/" && strings.HasSuffix(parsed.Path, "/")) {
+		return fmt.Errorf("must be a canonical HTTPS API base URL")
 	}
 	return nil
 }

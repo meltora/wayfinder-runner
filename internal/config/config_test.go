@@ -321,6 +321,9 @@ func TestNormalizeCopiesMutableFields(t *testing.T) {
 		Repositories:           map[string]RepositoryConfig{"repo": {URL: "https://git.example.com/repo"}},
 		Checks:                 map[string]CheckConfig{"unit": {Command: "go", Args: []string{"test"}}},
 		AllowedArtifactOrigins: []string{"https://artifacts.example.com"},
+		SourcePublicationInstallations: map[string]SourcePublicationInstallationConfig{
+			"github-main": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: "/run/secrets/github-main"},
+		},
 	}
 	out := Normalize(in)
 	out.ProviderBinaries["codex"] = "changed"
@@ -330,9 +333,69 @@ func TestNormalizeCopiesMutableFields(t *testing.T) {
 	check := out.Checks["unit"]
 	check.Args[0] = "changed"
 	out.AllowedArtifactOrigins[0] = "changed"
+	out.SourcePublicationInstallations["github-main"] = SourcePublicationInstallationConfig{Provider: "github", TokenFile: "/changed"}
 	if in.ProviderBinaries["codex"] != "/bin/codex" || in.Labels["pool"] != "one" ||
 		in.AgentPackPublicKeys["key"] != "value" || in.Repositories["repo"].URL != "https://git.example.com/repo" ||
-		in.Checks["unit"].Args[0] != "test" || in.AllowedArtifactOrigins[0] != "https://artifacts.example.com" {
+		in.Checks["unit"].Args[0] != "test" || in.AllowedArtifactOrigins[0] != "https://artifacts.example.com" ||
+		in.SourcePublicationInstallations["github-main"].TokenFile != "/run/secrets/github-main" {
 		t.Fatal("Normalize mutated the caller's configuration")
+	}
+}
+
+func TestSourcePublicationInstallationsValidateStrictLocalAuthority(t *testing.T) {
+	t.Parallel()
+	valid := SourcePublicationInstallationConfig{
+		Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: "/run/secrets/github-main",
+	}
+	for name, mutate := range map[string]func(*Config){
+		"installation id": func(cfg *Config) {
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"../escape": valid}
+		},
+		"unsupported provider": func(cfg *Config) {
+			candidate := valid
+			candidate.Provider = "unknown"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+		"insecure API": func(cfg *Config) {
+			candidate := valid
+			candidate.APIBaseURL = "http://api.github.com"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+		"API credentials": func(cfg *Config) {
+			candidate := valid
+			candidate.APIBaseURL = "https://token@api.github.com"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+		"API query": func(cfg *Config) {
+			candidate := valid
+			candidate.APIBaseURL = "https://api.github.com?token=secret"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+		"relative token file": func(cfg *Config) {
+			candidate := valid
+			candidate.TokenFile = "token"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+		"unclean token file": func(cfg *Config) {
+			candidate := valid
+			candidate.TokenFile = "/run/secrets/../token"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+	} {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			cfg := productionConfig()
+			mutate(&cfg)
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("invalid source publication installation accepted")
+			}
+		})
+	}
+
+	cfg := productionConfig()
+	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": valid}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid source publication installation rejected: %v", err)
 	}
 }

@@ -22,13 +22,14 @@ import (
 )
 
 type Detector struct {
-	RunnerID               string
-	RunnerVersion          string
-	Labels                 map[string]string
-	LookPath               func(string) (string, error)
-	RunVersion             func(ctx context.Context, name string, args ...string) (string, error)
-	ProbeDocker            func(ctx context.Context) isolation.DockerInfo
-	trustedAgentPackKeyIDs []string
+	RunnerID                   string
+	RunnerVersion              string
+	Labels                     map[string]string
+	LookPath                   func(string) (string, error)
+	RunVersion                 func(ctx context.Context, name string, args ...string) (string, error)
+	ProbeDocker                func(ctx context.Context) isolation.DockerInfo
+	SourcePublicationProviders []string
+	trustedAgentPackKeyIDs     []string
 }
 
 func New(runnerID, version string, labels, agentPackPublicKeys map[string]string) *Detector {
@@ -57,6 +58,7 @@ func defaultRunVersion(ctx context.Context, name string, args ...string) (string
 }
 
 func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
+	sourcePublicationProviders := uniqueSorted(d.SourcePublicationProviders)
 	m := v1.CapabilityManifest{
 		RunnerID:                          d.RunnerID,
 		CollectedAt:                       time.Now().UTC(),
@@ -69,6 +71,10 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		ProtocolVersion:                   v1.ProtocolVersion,
 		AgentPackDeliveryAuthorityVersion: v1.AgentPackDeliveryAuthorityVersion,
 		TrustedAgentPackKeyIDs:            append([]string(nil), d.trustedAgentPackKeyIDs...),
+		SourcePublicationProviders:        sourcePublicationProviders,
+	}
+	if len(sourcePublicationProviders) != 0 {
+		m.SourcePublicationTransportVersion = v1.SourcePublicationTransportVersion
 	}
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(".", &fs); err == nil {
@@ -121,6 +127,21 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		}
 	}
 	return m
+}
+
+func uniqueSorted(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value != "" {
+			seen[value] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for value := range seen {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func authReady(provider string) bool {

@@ -188,6 +188,36 @@ Repository credentials must come from the `our-runner` user's SSH agent or Git
 credential helper. Passwords, tokens, queries, and fragments in repository URLs
 are rejected.
 
+## Runner-local source publication
+
+Post-build pull-request publication is a separate fenced runner operation; it
+does not run inside the coding agent and the control plane never receives the
+provider token. Bind the control plane's exact installation ID to a private
+credential file on the runner:
+
+```yaml
+source_publication_installations:
+  installation-1:
+    provider: github
+    api_base_url: https://api.github.com
+    token_file: /run/secrets/our-runner/github-installation-1
+```
+
+`api_base_url` defaults to `https://api.github.com` and may point to a canonical
+HTTPS GitHub Enterprise API base. The token file must be an absolute, regular,
+non-symlink file with no group or world permissions; a typical mode is `0600`.
+The daemon fails startup for an explicitly configured unsafe credential and
+rechecks credential readiness before each capability refresh and publication.
+
+The runner advertises source-publication transport v1 and `github` only while a
+matching local installation is ready. Before creating or reusing a pull
+request, it verifies that the configured repository exists and that the remote
+head branch still resolves to the exact full commit SHA authorized by the
+control plane. Requests use bounded responses and timeouts, refuse redirects,
+and normalize provider failures before emitting a durable result event. A
+crash after GitHub accepts the request is recovered through create-or-find
+idempotency; duplicate command delivery cannot create a second logical result.
+
 ## Signed Agent Packs
 
 Agent Pack trust is administrator-owned runner configuration, never repository
@@ -457,6 +487,7 @@ tests, upgrade/rollback tests, and disaster-recovery exercises pass in CI.
 - `internal/transport`, `journal`, `lease`: durable command/event channel and execution authority
 - `internal/repo`, `isolation`, `supervisor`: repository and process boundary
 - `internal/scanner`, `agentpack`, `provider`: customer agent configuration
+- `internal/sourcepublication`: runner-local provider credentials and idempotent review-request publication
 - `internal/mcpbridge`, `hookspool`: authoritative MCP and telemetry hooks
 - `internal/collector`, `supportbundle`: bounded artifacts and diagnostics
 - `internal/updatecatalog`, `internal/updater`, `internal/updateipc`: signed update policy, privileged A/B activation, and capability-poor daemon IPC
