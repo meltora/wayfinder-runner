@@ -344,16 +344,19 @@ func TestNormalizeCopiesMutableFields(t *testing.T) {
 
 func TestNormalizeDefaultsSourcePublicationAPIBaseURLs(t *testing.T) {
 	in := Config{SourcePublicationInstallations: map[string]SourcePublicationInstallationConfig{
-		"github-main": {Provider: "github", TokenFile: "/run/secrets/github-main"},
-		"gitlab-main": {Provider: "gitlab", TokenFile: "/run/secrets/gitlab-main"},
+		"github-main":    {Provider: "github", TokenFile: "/run/secrets/github-main"},
+		"gitlab-main":    {Provider: "gitlab", TokenFile: "/run/secrets/gitlab-main"},
+		"bitbucket-main": {Provider: "bitbucket", TokenFile: "/run/secrets/bitbucket-main"},
 	}}
 	out := Normalize(in)
 	if out.SourcePublicationInstallations["github-main"].APIBaseURL != "https://api.github.com" ||
-		out.SourcePublicationInstallations["gitlab-main"].APIBaseURL != "https://gitlab.com/api/v4" {
+		out.SourcePublicationInstallations["gitlab-main"].APIBaseURL != "https://gitlab.com/api/v4" ||
+		out.SourcePublicationInstallations["bitbucket-main"].APIBaseURL != "https://api.bitbucket.org/2.0" {
 		t.Fatalf("source publication defaults = %#v", out.SourcePublicationInstallations)
 	}
 	if in.SourcePublicationInstallations["github-main"].APIBaseURL != "" ||
-		in.SourcePublicationInstallations["gitlab-main"].APIBaseURL != "" {
+		in.SourcePublicationInstallations["gitlab-main"].APIBaseURL != "" ||
+		in.SourcePublicationInstallations["bitbucket-main"].APIBaseURL != "" {
 		t.Fatal("Normalize mutated source publication input")
 	}
 }
@@ -387,6 +390,12 @@ func TestSourcePublicationInstallationsValidateStrictLocalAuthority(t *testing.T
 			candidate.APIBaseURL = "https://api.github.com?token=secret"
 			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
 		},
+		"Bitbucket non-Cloud API": func(cfg *Config) {
+			candidate := valid
+			candidate.Provider = "bitbucket"
+			candidate.APIBaseURL = "https://bitbucket.example/rest/api/1.0"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
 		"relative token file": func(cfg *Config) {
 			candidate := valid
 			candidate.TokenFile = "token"
@@ -418,5 +427,10 @@ func TestSourcePublicationInstallationsValidateStrictLocalAuthority(t *testing.T
 	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-2": gitLab}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid GitLab source publication installation rejected: %v", err)
+	}
+	bitbucket := SourcePublicationInstallationConfig{Provider: "bitbucket", TokenFile: "/run/secrets/bitbucket-main"}
+	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-3": bitbucket}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid Bitbucket source publication installation rejected: %v", err)
 	}
 }

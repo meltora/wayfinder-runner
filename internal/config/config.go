@@ -343,7 +343,7 @@ func (c Config) Validate() error {
 		if len(id) > 128 || id == "." || id == ".." || !idPattern.MatchString(id) {
 			return fmt.Errorf("source publication installation ID %q is invalid", id)
 		}
-		if installation.Provider != "github" && installation.Provider != "gitlab" {
+		if installation.Provider != "github" && installation.Provider != "gitlab" && installation.Provider != "bitbucket" {
 			return fmt.Errorf("source publication installation %s uses unsupported provider %q", id, installation.Provider)
 		}
 		apiBaseURL := installation.APIBaseURL
@@ -352,6 +352,9 @@ func (c Config) Validate() error {
 		}
 		if err := validateSourcePublicationAPIBaseURL(apiBaseURL); err != nil {
 			return fmt.Errorf("source publication installation %s API base URL: %w", id, err)
+		}
+		if installation.Provider == "bitbucket" && apiBaseURL != "https://api.bitbucket.org/2.0" {
+			return fmt.Errorf("source publication installation %s must use the Bitbucket Cloud API base", id)
 		}
 		if !filepath.IsAbs(installation.TokenFile) || filepath.Clean(installation.TokenFile) != installation.TokenFile ||
 			strings.ContainsRune(installation.TokenFile, '\x00') {
@@ -367,6 +370,8 @@ func defaultSourcePublicationAPIBaseURL(provider string) string {
 		return "https://api.github.com"
 	case "gitlab":
 		return "https://gitlab.com/api/v4"
+	case "bitbucket":
+		return "https://api.bitbucket.org/2.0"
 	default:
 		return ""
 	}

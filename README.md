@@ -205,16 +205,25 @@ source_publication_installations:
     provider: gitlab
     api_base_url: https://gitlab.com/api/v4
     token_file: /run/secrets/our-runner/gitlab-installation-2
+  installation-3:
+    provider: bitbucket
+    api_base_url: https://api.bitbucket.org/2.0
+    token_file: /run/secrets/our-runner/bitbucket-installation-3
 ```
 
 `api_base_url` defaults to `https://api.github.com` for GitHub and
 `https://gitlab.com/api/v4` for GitLab, and may point to the provider's canonical
-HTTPS self-managed API base. The token file must be an absolute, regular,
+HTTPS self-managed API base. Bitbucket means Bitbucket Cloud in this transport
+version and always uses `https://api.bitbucket.org/2.0`; Bitbucket Data Center
+is not treated as API-compatible. The token file must be an absolute, regular,
 non-symlink file with no group or world permissions; a typical mode is `0600`.
 Use a GitLab personal, project, or group access token with the minimum API and
-repository permissions required by the installation. The daemon fails startup
-for an explicitly configured unsafe credential and rechecks credential
-readiness before each capability refresh and publication.
+repository permissions required by the installation. For Bitbucket Cloud, use
+a repository, project, or workspace access token with `repository`,
+`pullrequest`, and `pullrequest:write` scopes; it is sent only as a Bearer token.
+Bitbucket repository external IDs use the canonical `workspace/repo_slug` form.
+The daemon fails startup for an explicitly configured unsafe credential and
+rechecks credential readiness before each capability refresh and publication.
 
 The runner advertises source-publication transport v1 and each ready provider
 only while a matching local installation is usable. Before creating or reusing

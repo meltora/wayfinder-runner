@@ -27,12 +27,13 @@ func TestRegistryAdvertisesOnlyReadyProviders(t *testing.T) {
 		"installation-b": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: tokenFile},
 		"installation-a": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: tokenFile},
 		"installation-c": {Provider: "gitlab", APIBaseURL: "https://gitlab.com/api/v4", TokenFile: tokenFile},
+		"installation-d": {Provider: "bitbucket", APIBaseURL: "https://api.bitbucket.org/2.0", TokenFile: tokenFile},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	providers := registry.ReadyProviders()
-	if len(providers) != 2 || providers[0] != "github" || providers[1] != "gitlab" {
+	if len(providers) != 3 || providers[0] != "bitbucket" || providers[1] != "github" || providers[2] != "gitlab" {
 		t.Fatalf("providers = %v", providers)
 	}
 

@@ -27,7 +27,7 @@ func NewRegistry(
 	for id, installation := range installations {
 		copyValue := installation
 		switch copyValue.Provider {
-		case "github", "gitlab":
+		case "github", "gitlab", "bitbucket":
 		default:
 			return nil, fmt.Errorf("source publication installation %s uses an unsupported provider", id)
 		}
@@ -37,6 +37,8 @@ func NewRegistry(
 				copyValue.APIBaseURL = "https://api.github.com"
 			case "gitlab":
 				copyValue.APIBaseURL = "https://gitlab.com/api/v4"
+			case "bitbucket":
+				copyValue.APIBaseURL = "https://api.bitbucket.org/2.0"
 			}
 		}
 		parsedBaseURL, err := url.Parse(copyValue.APIBaseURL)
@@ -97,6 +99,8 @@ func (registry *Registry) Publish(
 		return newGitHubPublisher(installation.APIBaseURL, token, registry.httpClient).publish(ctx, operation.Publication)
 	case "gitlab":
 		return newGitLabPublisher(installation.APIBaseURL, token, registry.httpClient).publish(ctx, operation.Publication)
+	case "bitbucket":
+		return newBitbucketPublisher(installation.APIBaseURL, token, registry.httpClient).publish(ctx, operation.Publication)
 	default:
 		return permanent(v1.SourceControlInstallationRevoked)
 	}
