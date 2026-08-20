@@ -516,6 +516,7 @@ func TestArtifactPublishRegisters(t *testing.T) {
 
 func TestReviewReadyAndTestResults(t *testing.T) {
 	jr, cap := testJobRunner(t)
+	jr.job.PushBranch = true
 	if _, err := call(t, jr, "platform_publish_test_results", `{"suite":"unit","command":"go test","result":"bogus","idempotency_key":"tests-bogus"}`); err == nil {
 		t.Fatal("invalid result must be rejected")
 	}
@@ -525,8 +526,11 @@ func TestReviewReadyAndTestResults(t *testing.T) {
 	if _, err := call(t, jr, "platform_mark_review_ready", `{"summary":"done","idempotency_key":"review-ready"}`); err != nil {
 		t.Fatal(err)
 	}
-	if len(cap.byKind("test_results")) != 1 || len(cap.byKind("review_ready")) != 1 {
+	if len(cap.byKind("test_results")) != 1 || len(cap.byKind("review_ready")) != 0 {
 		t.Fatalf("events = %v", cap.events)
+	}
+	if _, ok := jr.reviewReadyIntentSnapshot(); !ok {
+		t.Fatal("review readiness intent was not retained for finalization")
 	}
 }
 

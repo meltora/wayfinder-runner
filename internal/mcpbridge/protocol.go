@@ -182,10 +182,7 @@ var toolDefinitions = []ToolDef{
 		"content_type": stringProp("MIME type"), "idempotency_key": stringProp("Idempotency key"),
 	})},
 	runCheckToolDef,
-	{Name: "platform_mark_review_ready", Description: "Requests transition to review readiness. The control plane independently verifies evidence.", InputSchema: objectSchema(map[string]any{
-		"summary": stringProp("Review summary"), "known_limitations": arrayProp("Known limitations"),
-		"idempotency_key": stringProp("Idempotency key"),
-	})},
+	{Name: "platform_mark_review_ready", Description: "Records review intent. The runner publishes a final request only after committing, checking, and pushing the exact change set; the control plane independently verifies evidence.", InputSchema: reviewReadyInputSchema()},
 }
 
 func ToolDefinitions() []ToolDef {

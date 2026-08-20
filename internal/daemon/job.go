@@ -48,6 +48,9 @@ type jobRunner struct {
 
 	checkMu sync.Mutex
 
+	reviewReadyMu     sync.Mutex
+	reviewReadyIntent *reviewReadyIntent
+
 	idempotencyMu   sync.Mutex
 	seenIdempotency map[string]*toolCallMemo
 	repositoryURL   string

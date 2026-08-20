@@ -381,12 +381,7 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		return jr.executeRunCheck(ctx, raw)
 
 	case "platform_mark_review_ready":
-		if err := requireToolText(raw, "summary", 64<<10); err != nil {
-			return nil, err
-		}
-		return map[string]any{"ok": true, "status": "review_requested"}, jr.sendJobEvent(ctx, "review_ready", map[string]any{
-			"summary": str(raw, "summary"), "known_limitations": strSlice(raw, "known_limitations"),
-		})
+		return jr.recordReviewReadyIntent(raw)
 	}
 	return nil, fmt.Errorf("unknown tool %q", tool)
 }

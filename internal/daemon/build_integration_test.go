@@ -137,16 +137,29 @@ func TestBuildJobEndToEnd(t *testing.T) {
 	if len(cp.EventsByKind("test_results")) != 3 {
 		t.Fatalf("test_results events = %d", len(cp.EventsByKind("test_results")))
 	}
-	if len(cp.EventsByKind("review_ready")) != 1 {
+	reviewEvents := cp.EventsByKind("review_ready")
+	if len(reviewEvents) != 1 {
 		t.Fatal("missing review_ready")
 	}
-	if len(cp.EventsByKind("pr_ready")) != 1 {
-		t.Fatal("missing pr_ready")
+	review := reviewEvents[0].Payload.(map[string]any)
+	if review["summary"] != "feature implemented" {
+		t.Fatalf("review summary = %v", review["summary"])
+	}
+	if _, leaked := review["idempotency_key"]; leaked {
+		t.Fatalf("review event leaked local idempotency key: %v", review)
+	}
+	if len(cp.EventsByKind("pr_ready")) != 0 {
+		t.Fatal("runner emitted obsolete pr_ready event")
 	}
 
 	cmd := exec.Command("git", "--git-dir", origin, "rev-parse", "job/build-1/att-1")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("branch not pushed: %v\n%s", err, out)
+	}
+	commitSet := review["commit_set"].(map[string]any)
+	if commitSet["repo-1"] != strings.TrimSpace(string(out)) {
+		t.Fatalf("review commit set = %v, pushed head = %s", commitSet, out)
 	}
 }
 
@@ -383,8 +396,8 @@ echo '{"type":"result","status":"success"}'
 	if payload["manifest_kind"] != "build" || payload["manifest_id"] != job.ManifestID {
 		t.Fatalf("terminal authority = %v", payload)
 	}
-	if len(cp.EventsByKind("pr_ready")) != 2 {
-		t.Fatalf("pr_ready events = %d", len(cp.EventsByKind("pr_ready")))
+	if len(cp.EventsByKind("pr_ready")) != 0 || len(cp.EventsByKind("review_ready")) != 0 {
+		t.Fatal("build without an explicit review intent published review events")
 	}
 	discoveryEvents := cp.EventsByKind(v1.EventKindAgentConfigDiscovery)
 	if len(discoveryEvents) != 2 {

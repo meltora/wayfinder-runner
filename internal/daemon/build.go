@@ -50,18 +50,17 @@ func (jr *jobRunner) finalizeBuild(
 			if err := jr.pushBranch(ctx, repository, rm, commitSet[repository.ID]); err != nil {
 				return "failed", nil, fmt.Errorf("push %s: %w", repository.ID, err)
 			}
-			if checksPassed && publishReviewReady {
-				_ = jr.sendJobEvent(ctx, "pr_ready", map[string]any{
-					"repository_id": repository.ID, "branch": repository.Branch,
-					"head_sha": commitSet[repository.ID], "title": job.PRTitle,
-				})
-			}
 		}
 		extra["pushed"] = true
 	}
 	if !checksPassed {
 		extra["error"] = "required checks failed"
 		return "failed", extra, nil
+	}
+	if publishReviewReady {
+		if err := jr.publishFinalReviewReady(ctx, commitSet); err != nil {
+			return "failed", nil, fmt.Errorf("publish review readiness: %w", err)
+		}
 	}
 	return "succeeded", extra, nil
 }
