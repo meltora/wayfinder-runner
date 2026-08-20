@@ -235,6 +235,57 @@ result event. A crash after the provider accepts a request is recovered through
 create-or-find idempotency; duplicate command delivery cannot create a second
 logical result.
 
+## Runner-local preview observation
+
+Preview health is observed by the runner daemon after the exact build completes;
+it is not accepted from the coding agent or fetched by the cloud control plane.
+Each locally configured profile binds one environment-blueprint ID, version,
+and digest to a complete health-check inventory and to customer-owned network
+policy:
+
+```yaml
+preview_observation_profiles:
+  node-web-preview:
+    blueprint_id: node-web-app
+    version: "2026.08.20"
+    digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    allowed_hostname_suffixes: [preview.example.com]
+    allowed_private_cidrs: [10.40.0.0/16]
+    trusted_ca_file: /etc/our-runner/preview-root-ca.pem
+    authorization_file: /run/secrets/our-runner/preview-authorization
+    max_response_bytes: 65536
+    health_checks:
+      http-smoke:
+        path: /healthz
+        expected_status: [200]
+        timeout_seconds: 10
+```
+
+The authorization file contains the complete fixed `Authorization` header value
+and must be a regular, non-symlink file with no group or world permissions. A
+custom CA bundle may be group-readable but cannot be group- or world-writable.
+Neither value, allowed network ranges, host rules, nor check paths are advertised
+to the control plane.
+
+The observer accepts only canonical HTTPS hostnames under an allowed suffix. It
+rejects credentials, queries, fragments, explicit ports, IP literals, localhost,
+unqualified names, redirects, and suffix-boundary confusion. DNS is resolved
+once for the operation; every answer must be allowed, the selected address is
+pinned for dialing, and the original hostname remains the HTTP authority and TLS
+server name. RFC1918 or ULA targets require an exact configured CIDR, while
+loopback and link-local addresses remain prohibited. Connections, TLS, headers,
+bodies, and total check time are bounded, and bodies and headers are never
+stored.
+
+Only a fully usable profile is advertised as preview-observation transport v1.
+The command carries the exact profile identity, reviewer URL, commit set, and
+sorted check IDs but no method, path, header, credential, DNS result, or script.
+The result is durably journaled before command acknowledgement and contains only
+normalized status, HTTP status, and duration measurements or a controlled error
+code. An observed failed check is evidence of unhealthy reality; it never
+satisfies readiness. Preview observation cannot approve, merge, transition QA,
+or mark Done.
+
 ## Signed Agent Packs
 
 Agent Pack trust is administrator-owned runner configuration, never repository

@@ -27,7 +27,7 @@ func validateSourcePublicationCommandBoundary(command v1.CommandPayload) error {
 		return nil
 	}
 
-	if command.SourcePublication == nil || command.Job != nil || command.JobID != "" ||
+	if command.SourcePublication == nil || command.PreviewObservation != nil || command.Job != nil || command.JobID != "" ||
 		command.AttemptID != "" || command.FencingToken != 0 || !command.LeaseExpiresAt.IsZero() ||
 		command.Reason != "" || command.QuestionID != "" || command.Decision != "" ||
 		command.DecidedBy != "" || command.UpdateID != "" || command.DrainDeadline != nil {

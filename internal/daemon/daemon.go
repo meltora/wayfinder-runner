@@ -27,6 +27,7 @@ import (
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/lease"
+	"github.com/example/app-runner/internal/previewobserver"
 	"github.com/example/app-runner/internal/runlock"
 	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/sourcepublication"
@@ -56,22 +57,26 @@ type Daemon struct {
 	uploader       *artifactUploader
 	supervisor     supervisor.Supervisor
 
-	jobMu                          sync.Mutex
-	activeJob                      *jobRunner
-	updateDrain                    *pendingUpdate
-	updateWake                     chan struct{}
-	updateRunMu                    sync.Mutex
-	updateIPC                      updateIPC
-	updateRestored                 bool
-	updateExpiredAtStartup         *pendingUpdate
-	controlReady                   atomic.Bool
-	rotationMu                     sync.Mutex
-	commandMu                      sync.Mutex
-	commandOwner                   string
-	sourcePublicationPublisher     sourcePublicationPublisher
-	sourcePublicationCommandMu     sync.Mutex
-	sourcePublicationCommandActive map[string]struct{}
-	sourcePublicationCommands      sync.WaitGroup
+	jobMu                           sync.Mutex
+	activeJob                       *jobRunner
+	updateDrain                     *pendingUpdate
+	updateWake                      chan struct{}
+	updateRunMu                     sync.Mutex
+	updateIPC                       updateIPC
+	updateRestored                  bool
+	updateExpiredAtStartup          *pendingUpdate
+	controlReady                    atomic.Bool
+	rotationMu                      sync.Mutex
+	commandMu                       sync.Mutex
+	commandOwner                    string
+	sourcePublicationPublisher      sourcePublicationPublisher
+	sourcePublicationCommandMu      sync.Mutex
+	sourcePublicationCommandActive  map[string]struct{}
+	sourcePublicationCommands       sync.WaitGroup
+	previewObserver                 previewObserver
+	previewObservationCommandMu     sync.Mutex
+	previewObservationCommandActive map[string]struct{}
+	previewObservationCommands      sync.WaitGroup
 
 	eventSink   func(ctx context.Context, payload any) error
 	httpMu      sync.RWMutex
@@ -90,6 +95,14 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 			return nil, fmt.Errorf("initialize source publication credentials: %w", err)
 		}
 		publicationPublisher = registry
+	}
+	var localPreviewObserver previewObserver
+	if len(cfg.PreviewObservationProfiles) != 0 {
+		registry, err := previewobserver.NewRegistry(cfg.PreviewObservationProfiles, previewobserver.Dependencies{})
+		if err != nil {
+			return nil, fmt.Errorf("initialize preview observer: %w", err)
+		}
+		localPreviewObserver = registry
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -185,6 +198,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		updateWake:                 make(chan struct{}, 1),
 		updateIPC:                  updateClient,
 		sourcePublicationPublisher: publicationPublisher,
+		previewObserver:            localPreviewObserver,
 	}
 	d.collectors.SetMaxSpoolBytes(int64(cfg.ArtifactSpoolMB) << 20)
 	d.recoveredLease.Store(recoveredLease)
@@ -256,6 +270,7 @@ func selectSupervisor(cfg config.Config, logger *slog.Logger) (supervisor.Superv
 func (d *Daemon) Run(ctx context.Context) error {
 	defer func() {
 		d.sourcePublicationCommands.Wait()
+		d.previewObservationCommands.Wait()
 		_ = d.journal.Close()
 		_ = d.runLock.Close()
 	}()
@@ -402,6 +417,9 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	det := capability.New(d.runnerID, Version, d.cfg.Labels, d.cfg.AgentPackPublicKeys)
 	if d.sourcePublicationPublisher != nil {
 		det.SourcePublicationProviders = d.sourcePublicationPublisher.ReadyProviders()
+	}
+	if d.previewObserver != nil {
+		det.PreviewObservationProfiles = d.previewObserver.ReadyProfiles()
 	}
 	m := det.Collect(ctx)
 	key, err := d.store.LoadKey()
@@ -626,7 +644,12 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 	cmd, decodeErr := decodeCommandPayload(env.Payload)
 	asyncSourcePublication :=
 		decodeErr == nil && cmd.Command == v1.CmdSourcePublication
+	asyncPreviewObservation :=
+		decodeErr == nil && cmd.Command == v1.CmdPreviewObservation
 	if asyncSourcePublication && d.sourcePublicationCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncPreviewObservation && d.previewObservationCommandIsActive(env.ID) {
 		return nil
 	}
 	claimOwner := d.commandOwner + "-" + newEventID()
@@ -647,6 +670,20 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		}
 		d.sourcePublicationCommands.Add(1)
 		go d.completeSourcePublicationCommand(
+			ctx,
+			env,
+			cmd,
+			claimOwner,
+			effectMayHaveRun,
+		)
+		return nil
+	}
+	if asyncPreviewObservation {
+		if !d.previewObservationCommandStart(env.ID) {
+			return nil
+		}
+		d.previewObservationCommands.Add(1)
+		go d.completePreviewObservationCommand(
 			ctx,
 			env,
 			cmd,
@@ -750,6 +787,9 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	if err := validateSourcePublicationCommandBoundary(cmd); err != nil {
 		return err
 	}
+	if err := validatePreviewObservationCommandBoundary(cmd); err != nil {
+		return err
+	}
 
 	switch cmd.Command {
 	case v1.CmdStartJob:
@@ -825,6 +865,11 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executeSourcePublication(ctx, env.ID, *cmd.SourcePublication)
+	case v1.CmdPreviewObservation:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executePreviewObservation(ctx, env.ID, *cmd.PreviewObservation)
 	}
 	return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 }

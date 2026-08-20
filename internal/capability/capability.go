@@ -29,6 +29,7 @@ type Detector struct {
 	RunVersion                 func(ctx context.Context, name string, args ...string) (string, error)
 	ProbeDocker                func(ctx context.Context) isolation.DockerInfo
 	SourcePublicationProviders []string
+	PreviewObservationProfiles []v1.PreviewObservationProfileCapability
 	trustedAgentPackKeyIDs     []string
 }
 
@@ -59,6 +60,7 @@ func defaultRunVersion(ctx context.Context, name string, args ...string) (string
 
 func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	sourcePublicationProviders := uniqueSorted(d.SourcePublicationProviders)
+	previewObservationProfiles := clonePreviewObservationProfiles(d.PreviewObservationProfiles)
 	m := v1.CapabilityManifest{
 		RunnerID:                          d.RunnerID,
 		CollectedAt:                       time.Now().UTC(),
@@ -72,9 +74,13 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		AgentPackDeliveryAuthorityVersion: v1.AgentPackDeliveryAuthorityVersion,
 		TrustedAgentPackKeyIDs:            append([]string(nil), d.trustedAgentPackKeyIDs...),
 		SourcePublicationProviders:        sourcePublicationProviders,
+		PreviewObservationProfiles:        previewObservationProfiles,
 	}
 	if len(sourcePublicationProviders) != 0 {
 		m.SourcePublicationTransportVersion = v1.SourcePublicationTransportVersion
+	}
+	if len(previewObservationProfiles) != 0 {
+		m.PreviewObservationTransportVersion = v1.PreviewObservationTransportVersion
 	}
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(".", &fs); err == nil {
@@ -127,6 +133,26 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		}
 	}
 	return m
+}
+
+func clonePreviewObservationProfiles(
+	values []v1.PreviewObservationProfileCapability,
+) []v1.PreviewObservationProfileCapability {
+	result := make([]v1.PreviewObservationProfileCapability, len(values))
+	for index, value := range values {
+		value.HealthCheckIDs = append([]string(nil), value.HealthCheckIDs...)
+		result[index] = value
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].BlueprintID != result[right].BlueprintID {
+			return result[left].BlueprintID < result[right].BlueprintID
+		}
+		if result[left].Version != result[right].Version {
+			return result[left].Version < result[right].Version
+		}
+		return result[left].Digest < result[right].Digest
+	})
+	return result
 }
 
 func uniqueSorted(values []string) []string {

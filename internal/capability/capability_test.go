@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"strings"
 	"testing"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
@@ -127,6 +128,26 @@ func TestCollectAdvertisesOnlyConfiguredSourcePublicationProviders(t *testing.T)
 	detector.SourcePublicationProviders[0] = "changed"
 	if manifest.SourcePublicationProviders[0] != "github" {
 		t.Fatal("manifest providers alias detector configuration")
+	}
+}
+
+func TestCollectAdvertisesOnlyUsablePreviewObservationProfiles(t *testing.T) {
+	detector := fakeDetector()
+	detector.PreviewObservationProfiles = []v1.PreviewObservationProfileCapability{
+		{
+			BlueprintID: "node-web-app", Version: "2026.08.20", Digest: strings.Repeat("a", 64),
+			HealthCheckIDs: []string{"api", "root"},
+		},
+	}
+	manifest := detector.Collect(context.Background())
+	if manifest.PreviewObservationTransportVersion != v1.PreviewObservationTransportVersion ||
+		len(manifest.PreviewObservationProfiles) != 1 ||
+		strings.Join(manifest.PreviewObservationProfiles[0].HealthCheckIDs, ",") != "api,root" {
+		t.Fatalf("preview observation capability = %#v", manifest.PreviewObservationProfiles)
+	}
+	detector.PreviewObservationProfiles[0].HealthCheckIDs[0] = "changed"
+	if manifest.PreviewObservationProfiles[0].HealthCheckIDs[0] != "api" {
+		t.Fatal("capability manifest shares mutable preview profile state")
 	}
 }
 

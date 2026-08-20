@@ -50,6 +50,7 @@ type Config struct {
 	Repositories                   map[string]RepositoryConfig                    `yaml:"repositories,omitempty"`
 	Checks                         map[string]CheckConfig                         `yaml:"checks,omitempty"`
 	SourcePublicationInstallations map[string]SourcePublicationInstallationConfig `yaml:"source_publication_installations,omitempty"`
+	PreviewObservationProfiles     map[string]PreviewObservationProfileConfig     `yaml:"preview_observation_profiles,omitempty"`
 	Labels                         map[string]string                              `yaml:"labels,omitempty"`
 }
 
@@ -175,6 +176,7 @@ func Normalize(in Config) Config {
 			out.SourcePublicationInstallations[key] = copyValue
 		}
 	}
+	out.PreviewObservationProfiles = normalizePreviewObservationProfiles(in.PreviewObservationProfiles)
 	out.AllowedArtifactOrigins = append([]string(nil), in.AllowedArtifactOrigins...)
 	return out
 }
@@ -201,6 +203,7 @@ func Load(path string) (Config, error) {
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return cfg, fmt.Errorf("parse config: multiple YAML documents are not allowed")
 	}
+	cfg = Normalize(cfg)
 	if err := cfg.Validate(); err != nil {
 		return cfg, err
 	}
@@ -360,6 +363,9 @@ func (c Config) Validate() error {
 			strings.ContainsRune(installation.TokenFile, '\x00') {
 			return fmt.Errorf("source publication installation %s token_file must be a clean absolute path", id)
 		}
+	}
+	if err := validatePreviewObservationProfiles(c.PreviewObservationProfiles); err != nil {
+		return err
 	}
 	return nil
 }
