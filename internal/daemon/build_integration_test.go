@@ -67,7 +67,7 @@ if [ -n "$RUNNER_BIN" ]; then
    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"platform_checkpoint","arguments":{"plan_step":"partial implementation","branch_state":"agent-controlled-not-authoritative","next_action":"resume","idempotency_key":"capacity-cp-1"}}}' \
    | "$RUNNER_BIN" mcp-serve --socket "$PLATFORM_MCP_SOCKET" --token-file "$PLATFORM_MCP_TOKEN_FILE" >/dev/null 2>&1
 fi
-echo '{"type":"error","status":"failed","session_id":"capacity-session-1","error":{"data":{"message":"provider quota exhausted"}}}'
+echo '{"type":"error","status":"failed","session_id":"capacity-session-1","error":{"name":"APIError","data":{"message":"Payment Required: an active membership could not be verified","statusCode":402,"isRetryable":false}}}'
 exit 17
 `
 
@@ -261,8 +261,8 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 
 	cfg := directRunnerConfig(cp.WSURL(), stateDir)
 	cfg.ControlPlaneHTTPURL = cp.EnrollURL()
-	cfg.Provider = "claude"
-	cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
+	cfg.Provider = "opencode"
+	cfg.ProviderBinaries = map[string]string{"opencode": fakeAgent}
 	cfg.Repositories = map[string]config.RepositoryConfig{"repo-agent-failure": {URL: origin}}
 	cfg.Checks = map[string]config.CheckConfig{
 		"partial-file": {Command: "test", Args: []string{"-f", "partial.go"}},
@@ -306,7 +306,7 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 		t.Fatalf("provider capacity events = %d", len(capacityEvents))
 	}
 	capacity := capacityEvents[0].Payload.(map[string]any)
-	if capacity["adapter"] != "claude" || capacity["provider"] != "claude" ||
+	if capacity["adapter"] != "opencode" || capacity["provider"] != "opencode" ||
 		capacity["reason"] != "quota_exhausted" || capacity["resume_policy"] != "automatic" {
 		t.Fatalf("provider capacity payload = %v", capacity)
 	}

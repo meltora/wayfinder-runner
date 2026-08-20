@@ -24,7 +24,7 @@ const maxProviderResetHorizon = 31 * 24 * time.Hour
 func ClassifyCapacityFailure(adapter string, event map[string]any, now time.Time) (CapacityFailure, bool) {
 	_ = adapter // Reserved for adapter-specific structured fields as CLIs evolve.
 	message := strings.ToLower(ErrorMessage(event))
-	if message == "" || !quotaMessage(message) {
+	if message == "" || (!quotaMessage(message) && !paymentRequired(event)) {
 		return CapacityFailure{}, false
 	}
 	failure := CapacityFailure{Reason: CapacityReasonQuotaExhausted}
@@ -32,6 +32,70 @@ func ClassifyCapacityFailure(adapter string, event map[string]any, now time.Time
 		failure.RetryAt = retryAt
 	}
 	return failure, true
+}
+
+func paymentRequired(event map[string]any) bool {
+	if !isErrorEvent(event) {
+		return false
+	}
+	status, ok := findHTTPStatus(event, 0)
+	return ok && status == 402
+}
+
+func findHTTPStatus(value any, depth int) (int, bool) {
+	if depth > 5 {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			normalized := strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(key))
+			if normalized == "statuscode" || normalized == "httpstatus" {
+				if status, ok := parseHTTPStatus(nested); ok {
+					return status, true
+				}
+			}
+		}
+		for _, nested := range typed {
+			if status, ok := findHTTPStatus(nested, depth+1); ok {
+				return status, true
+			}
+		}
+	case []any:
+		for _, nested := range typed {
+			if status, ok := findHTTPStatus(nested, depth+1); ok {
+				return status, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func parseHTTPStatus(value any) (int, bool) {
+	var status int
+	switch typed := value.(type) {
+	case float64:
+		status = int(typed)
+		if typed != float64(status) {
+			return 0, false
+		}
+	case int:
+		status = typed
+	case int64:
+		status = int(typed)
+		if int64(status) != typed {
+			return 0, false
+		}
+	case string:
+		parsed, err := strconv.Atoi(typed)
+		if err != nil {
+			return 0, false
+		}
+		status = parsed
+	default:
+		return 0, false
+	}
+	return status, status >= 100 && status <= 599
 }
 
 func ProviderIdentity(adapter, model string) string {

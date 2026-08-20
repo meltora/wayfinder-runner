@@ -45,6 +45,20 @@ func TestClassifyCapacityFailureAcrossSupportedAdapters(t *testing.T) {
 			},
 			wantAt: time.Unix(1786377600, 0).UTC(),
 		},
+		"opencode payment required": {
+			adapter: "opencode",
+			event: map[string]any{
+				"type": "error",
+				"error": map[string]any{
+					"name": "APIError",
+					"data": map[string]any{
+						"message":     "Payment Required: an active membership could not be verified",
+						"statusCode":  float64(402),
+						"isRetryable": false,
+					},
+				},
+			},
+		},
 	}
 
 	for name, tt := range tests {
@@ -67,6 +81,7 @@ func TestClassifyCapacityFailureDoesNotConfuseTransientOrUntrustedOutput(t *test
 	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	for name, event := range map[string]map[string]any{
 		"ordinary text":   {"type": "text", "message": "quota exhausted"},
+		"untrusted 402":   {"type": "text", "message": "payment required", "status_code": 402},
 		"transient 429":   {"type": "error", "message": "rate limit exceeded; retry shortly", "status_code": 429},
 		"generic failure": {"type": "error", "message": "upstream server error"},
 		"past retry hint": {"type": "error", "message": "monthly quota exhausted", "reset_at": "2020-01-01T00:00:00Z"},
