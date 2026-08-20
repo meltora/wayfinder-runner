@@ -26,12 +26,13 @@ func TestRegistryAdvertisesOnlyReadyProviders(t *testing.T) {
 	registry, err := NewRegistry(map[string]config.SourcePublicationInstallationConfig{
 		"installation-b": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: tokenFile},
 		"installation-a": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: tokenFile},
+		"installation-c": {Provider: "gitlab", APIBaseURL: "https://gitlab.com/api/v4", TokenFile: tokenFile},
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	providers := registry.ReadyProviders()
-	if len(providers) != 1 || providers[0] != "github" {
+	if len(providers) != 2 || providers[0] != "github" || providers[1] != "gitlab" {
 		t.Fatalf("providers = %v", providers)
 	}
 
@@ -40,6 +41,14 @@ func TestRegistryAdvertisesOnlyReadyProviders(t *testing.T) {
 	}
 	if providers := registry.ReadyProviders(); len(providers) != 0 {
 		t.Fatalf("unreadable credential remained advertised: %v", providers)
+	}
+}
+
+func TestRegistryRejectsUnsupportedProvider(t *testing.T) {
+	if _, err := NewRegistry(map[string]config.SourcePublicationInstallationConfig{
+		"installation-1": {Provider: "unknown", APIBaseURL: "https://source.example/api", TokenFile: writeToken(t, 0o600)},
+	}, nil); err == nil {
+		t.Fatal("unsupported source publication provider accepted")
 	}
 }
 
@@ -81,6 +90,18 @@ func TestRegistryRejectsUnconfiguredOrMismatchedInstallation(t *testing.T) {
 	outcome := registry.Publish(context.Background(), operation)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlInstallationRevoked {
 		t.Fatalf("outcome = %+v", outcome)
+	}
+
+	registry, err = NewRegistry(map[string]config.SourcePublicationInstallationConfig{
+		"installation-1": {Provider: "github", TokenFile: writeToken(t, 0o600)},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.Publication.Provider = "gitlab"
+	outcome = registry.Publish(context.Background(), operation)
+	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlPermissionDenied {
+		t.Fatalf("mismatched provider outcome = %+v", outcome)
 	}
 }
 

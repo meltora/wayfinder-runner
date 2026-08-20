@@ -169,8 +169,8 @@ func Normalize(in Config) Config {
 		out.SourcePublicationInstallations = make(map[string]SourcePublicationInstallationConfig, len(in.SourcePublicationInstallations))
 		for key, value := range in.SourcePublicationInstallations {
 			copyValue := value
-			if copyValue.Provider == "github" && copyValue.APIBaseURL == "" {
-				copyValue.APIBaseURL = "https://api.github.com"
+			if copyValue.APIBaseURL == "" {
+				copyValue.APIBaseURL = defaultSourcePublicationAPIBaseURL(copyValue.Provider)
 			}
 			out.SourcePublicationInstallations[key] = copyValue
 		}
@@ -343,12 +343,12 @@ func (c Config) Validate() error {
 		if len(id) > 128 || id == "." || id == ".." || !idPattern.MatchString(id) {
 			return fmt.Errorf("source publication installation ID %q is invalid", id)
 		}
-		if installation.Provider != "github" {
+		if installation.Provider != "github" && installation.Provider != "gitlab" {
 			return fmt.Errorf("source publication installation %s uses unsupported provider %q", id, installation.Provider)
 		}
 		apiBaseURL := installation.APIBaseURL
 		if apiBaseURL == "" {
-			apiBaseURL = "https://api.github.com"
+			apiBaseURL = defaultSourcePublicationAPIBaseURL(installation.Provider)
 		}
 		if err := validateSourcePublicationAPIBaseURL(apiBaseURL); err != nil {
 			return fmt.Errorf("source publication installation %s API base URL: %w", id, err)
@@ -359,6 +359,17 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func defaultSourcePublicationAPIBaseURL(provider string) string {
+	switch provider {
+	case "github":
+		return "https://api.github.com"
+	case "gitlab":
+		return "https://gitlab.com/api/v4"
+	default:
+		return ""
+	}
 }
 
 func validateSourcePublicationAPIBaseURL(raw string) error {

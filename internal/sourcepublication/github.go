@@ -60,7 +60,7 @@ func (publisher *githubPublisher) publish(
 	repositoryPath := "/repos/" + owner + "/" + repository
 	response, err := publisher.request(ctx, http.MethodGet, repositoryPath, nil, nil)
 	if err != nil {
-		return retryable(v1.SourceControlProviderUnavailable, nil)
+		return publicationRequestFailure(err)
 	}
 	if response.status < 200 || response.status >= 300 {
 		return classifyGitHubFailure(response, v1.SourceControlRepositoryNotFound)
@@ -68,7 +68,7 @@ func (publisher *githubPublisher) publish(
 
 	response, err = publisher.request(ctx, http.MethodGet, repositoryPath+"/git/ref/heads/"+command.HeadBranch, nil, nil)
 	if err != nil {
-		return retryable(v1.SourceControlProviderUnavailable, nil)
+		return publicationRequestFailure(err)
 	}
 	if response.status < 200 || response.status >= 300 {
 		return classifyGitHubFailure(response, v1.SourceControlBranchNotFound)
@@ -98,7 +98,7 @@ func (publisher *githubPublisher) publish(
 	})
 	response, err = publisher.request(ctx, http.MethodPost, repositoryPath+"/pulls", nil, body)
 	if err != nil {
-		return retryable(v1.SourceControlProviderUnavailable, nil)
+		return publicationRequestFailure(err)
 	}
 	if response.status < 200 || response.status >= 300 {
 		if response.status == http.StatusConflict || response.status == http.StatusUnprocessableEntity {
@@ -127,7 +127,7 @@ func (publisher *githubPublisher) findExisting(
 	}
 	response, err := publisher.request(ctx, http.MethodGet, repositoryPath+"/pulls", query, nil)
 	if err != nil {
-		outcome := retryable(v1.SourceControlProviderUnavailable, nil)
+		outcome := publicationRequestFailure(err)
 		return githubPullRequest{}, false, &outcome
 	}
 	if response.status < 200 || response.status >= 300 {
@@ -177,8 +177,11 @@ func (publisher *githubPublisher) request(
 	}
 	defer func() { _ = response.Body.Close() }()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxProviderResponseBytes+1))
-	if err != nil || len(responseBody) > maxProviderResponseBytes {
-		return githubResponse{}, fmt.Errorf("invalid provider response")
+	if err != nil {
+		return githubResponse{}, err
+	}
+	if len(responseBody) > maxProviderResponseBytes {
+		return githubResponse{}, fmt.Errorf("%w: response exceeds limit", errInvalidProviderResponse)
 	}
 	return githubResponse{status: response.StatusCode, header: response.Header.Clone(), body: responseBody}, nil
 }
@@ -220,26 +223,26 @@ func classifyGitHubFailure(
 	notFoundCode v1.SourceControlErrorCode,
 ) v1.SourcePublicationResultOutcome {
 	if response.status == http.StatusRequestTimeout || response.status >= 500 && response.status <= 599 {
-		return retryable(v1.SourceControlProviderUnavailable, githubRetryAfter(response.header, time.Now()))
+		return retryable(v1.SourceControlProviderUnavailable, providerRetryAfter(response.header, time.Now()))
 	}
 	switch response.status {
 	case http.StatusUnauthorized:
 		return permanent(v1.SourceControlAuthenticationFailed)
 	case http.StatusForbidden:
 		if response.header.Get("X-RateLimit-Remaining") == "0" || response.header.Get("Retry-After") != "" {
-			return retryable(v1.SourceControlRateLimited, githubRetryAfter(response.header, time.Now()))
+			return retryable(v1.SourceControlRateLimited, providerRetryAfter(response.header, time.Now()))
 		}
 		return permanent(v1.SourceControlPermissionDenied)
 	case http.StatusNotFound:
 		return permanent(notFoundCode)
 	case http.StatusTooManyRequests:
-		return retryable(v1.SourceControlRateLimited, githubRetryAfter(response.header, time.Now()))
+		return retryable(v1.SourceControlRateLimited, providerRetryAfter(response.header, time.Now()))
 	default:
 		return permanent(v1.SourceControlInvalidProviderResponse)
 	}
 }
 
-func githubRetryAfter(header http.Header, now time.Time) *uint64 {
+func providerRetryAfter(header http.Header, now time.Time) *uint64 {
 	value := header.Get("Retry-After")
 	if seconds, err := strconv.ParseUint(value, 10, 32); err == nil {
 		milliseconds := seconds * 1000

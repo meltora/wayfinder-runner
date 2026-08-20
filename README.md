@@ -201,22 +201,30 @@ source_publication_installations:
     provider: github
     api_base_url: https://api.github.com
     token_file: /run/secrets/our-runner/github-installation-1
+  installation-2:
+    provider: gitlab
+    api_base_url: https://gitlab.com/api/v4
+    token_file: /run/secrets/our-runner/gitlab-installation-2
 ```
 
-`api_base_url` defaults to `https://api.github.com` and may point to a canonical
-HTTPS GitHub Enterprise API base. The token file must be an absolute, regular,
+`api_base_url` defaults to `https://api.github.com` for GitHub and
+`https://gitlab.com/api/v4` for GitLab, and may point to the provider's canonical
+HTTPS self-managed API base. The token file must be an absolute, regular,
 non-symlink file with no group or world permissions; a typical mode is `0600`.
-The daemon fails startup for an explicitly configured unsafe credential and
-rechecks credential readiness before each capability refresh and publication.
+Use a GitLab personal, project, or group access token with the minimum API and
+repository permissions required by the installation. The daemon fails startup
+for an explicitly configured unsafe credential and rechecks credential
+readiness before each capability refresh and publication.
 
-The runner advertises source-publication transport v1 and `github` only while a
-matching local installation is ready. Before creating or reusing a pull
-request, it verifies that the configured repository exists and that the remote
-head branch still resolves to the exact full commit SHA authorized by the
-control plane. Requests use bounded responses and timeouts, refuse redirects,
-and normalize provider failures before emitting a durable result event. A
-crash after GitHub accepts the request is recovered through create-or-find
-idempotency; duplicate command delivery cannot create a second logical result.
+The runner advertises source-publication transport v1 and each ready provider
+only while a matching local installation is usable. Before creating or reusing
+a pull or merge request, it verifies that the configured repository exists and
+that the remote head branch still resolves to the exact full commit SHA
+authorized by the control plane. Requests use bounded responses and timeouts,
+refuse redirects, and normalize provider failures before emitting a durable
+result event. A crash after the provider accepts a request is recovered through
+create-or-find idempotency; duplicate command delivery cannot create a second
+logical result.
 
 ## Signed Agent Packs
 

@@ -342,6 +342,22 @@ func TestNormalizeCopiesMutableFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeDefaultsSourcePublicationAPIBaseURLs(t *testing.T) {
+	in := Config{SourcePublicationInstallations: map[string]SourcePublicationInstallationConfig{
+		"github-main": {Provider: "github", TokenFile: "/run/secrets/github-main"},
+		"gitlab-main": {Provider: "gitlab", TokenFile: "/run/secrets/gitlab-main"},
+	}}
+	out := Normalize(in)
+	if out.SourcePublicationInstallations["github-main"].APIBaseURL != "https://api.github.com" ||
+		out.SourcePublicationInstallations["gitlab-main"].APIBaseURL != "https://gitlab.com/api/v4" {
+		t.Fatalf("source publication defaults = %#v", out.SourcePublicationInstallations)
+	}
+	if in.SourcePublicationInstallations["github-main"].APIBaseURL != "" ||
+		in.SourcePublicationInstallations["gitlab-main"].APIBaseURL != "" {
+		t.Fatal("Normalize mutated source publication input")
+	}
+}
+
 func TestSourcePublicationInstallationsValidateStrictLocalAuthority(t *testing.T) {
 	t.Parallel()
 	valid := SourcePublicationInstallationConfig{
@@ -397,5 +413,10 @@ func TestSourcePublicationInstallationsValidateStrictLocalAuthority(t *testing.T
 	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": valid}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid source publication installation rejected: %v", err)
+	}
+	gitLab := SourcePublicationInstallationConfig{Provider: "gitlab", TokenFile: "/run/secrets/gitlab-main"}
+	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-2": gitLab}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid GitLab source publication installation rejected: %v", err)
 	}
 }

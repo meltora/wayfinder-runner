@@ -2,6 +2,7 @@ package sourcepublication
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -25,10 +26,25 @@ func NewRegistry(
 	copyInstallations := make(map[string]config.SourcePublicationInstallationConfig, len(installations))
 	for id, installation := range installations {
 		copyValue := installation
-		if copyValue.Provider == "github" && copyValue.APIBaseURL == "" {
-			copyValue.APIBaseURL = "https://api.github.com"
+		switch copyValue.Provider {
+		case "github", "gitlab":
+		default:
+			return nil, fmt.Errorf("source publication installation %s uses an unsupported provider", id)
 		}
-		if _, err := url.Parse(copyValue.APIBaseURL); err != nil {
+		if copyValue.APIBaseURL == "" {
+			switch copyValue.Provider {
+			case "github":
+				copyValue.APIBaseURL = "https://api.github.com"
+			case "gitlab":
+				copyValue.APIBaseURL = "https://gitlab.com/api/v4"
+			}
+		}
+		parsedBaseURL, err := url.Parse(copyValue.APIBaseURL)
+		if err != nil || parsedBaseURL.Scheme != "https" || parsedBaseURL.Host == "" || parsedBaseURL.User != nil ||
+			parsedBaseURL.RawQuery != "" || parsedBaseURL.Fragment != "" {
+			if err == nil {
+				err = fmt.Errorf("must be an HTTPS URL without credentials, query, or fragment")
+			}
 			return nil, err
 		}
 		if _, err := readToken(copyValue.TokenFile); err != nil {
@@ -79,6 +95,8 @@ func (registry *Registry) Publish(
 	switch installation.Provider {
 	case "github":
 		return newGitHubPublisher(installation.APIBaseURL, token, registry.httpClient).publish(ctx, operation.Publication)
+	case "gitlab":
+		return newGitLabPublisher(installation.APIBaseURL, token, registry.httpClient).publish(ctx, operation.Publication)
 	default:
 		return permanent(v1.SourceControlInstallationRevoked)
 	}
