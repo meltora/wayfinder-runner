@@ -57,32 +57,34 @@ type AgentPackRef struct {
 }
 
 type CommandPayload struct {
-	Command           string                      `json:"command"`
-	Job               *JobSpec                    `json:"job,omitempty"`
-	JobID             string                      `json:"job_id,omitempty"`
-	AttemptID         string                      `json:"attempt_id,omitempty"`
-	FencingToken      uint64                      `json:"fencing_token,omitempty"`
-	LeaseExpiresAt    time.Time                   `json:"lease_expires_at,omitempty"`
-	Reason            string                      `json:"reason,omitempty"`
-	QuestionID        string                      `json:"question_id,omitempty"`
-	Decision          string                      `json:"decision,omitempty"`
-	DecidedBy         string                      `json:"decided_by,omitempty"`
-	UpdateID          string                      `json:"update_id,omitempty"`
-	DrainDeadline     *time.Time                  `json:"drain_deadline,omitempty"`
-	SourcePublication *SourcePublicationOperation `json:"source_publication,omitempty"`
+	Command            string                       `json:"command"`
+	Job                *JobSpec                     `json:"job,omitempty"`
+	JobID              string                       `json:"job_id,omitempty"`
+	AttemptID          string                       `json:"attempt_id,omitempty"`
+	FencingToken       uint64                       `json:"fencing_token,omitempty"`
+	LeaseExpiresAt     time.Time                    `json:"lease_expires_at,omitempty"`
+	Reason             string                       `json:"reason,omitempty"`
+	QuestionID         string                       `json:"question_id,omitempty"`
+	Decision           string                       `json:"decision,omitempty"`
+	DecidedBy          string                       `json:"decided_by,omitempty"`
+	UpdateID           string                       `json:"update_id,omitempty"`
+	DrainDeadline      *time.Time                   `json:"drain_deadline,omitempty"`
+	SourcePublication  *SourcePublicationOperation  `json:"source_publication,omitempty"`
+	PreviewObservation *PreviewObservationOperation `json:"preview_observation,omitempty"`
 }
 
 const (
-	CmdStartJob          = "start_job"
-	CmdCancelJob         = "cancel_job"
-	CmdEmergencyStop     = "emergency_stop"
-	CmdResumeRunner      = "resume_runner"
-	CmdReviewComment     = "review_comment"
-	CmdUpdate            = "update"
-	CmdDecisionResponse  = "decision_response"
-	CmdRotateCert        = "rotate_cert"
-	CmdRenewLease        = "renew_lease"
-	CmdSourcePublication = "source_publication"
+	CmdStartJob           = "start_job"
+	CmdCancelJob          = "cancel_job"
+	CmdEmergencyStop      = "emergency_stop"
+	CmdResumeRunner       = "resume_runner"
+	CmdReviewComment      = "review_comment"
+	CmdUpdate             = "update"
+	CmdDecisionResponse   = "decision_response"
+	CmdRotateCert         = "rotate_cert"
+	CmdRenewLease         = "renew_lease"
+	CmdSourcePublication  = "source_publication"
+	CmdPreviewObservation = "preview_observation"
 )
 
 type ProgressReport struct {
