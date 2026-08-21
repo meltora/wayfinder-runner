@@ -68,6 +68,29 @@ func TestRegistryAdvertisesExactReviewerIdentityInstallations(t *testing.T) {
 	}
 }
 
+func TestRegistryAdvertisesExactProviderReviewerAssignmentInstallations(t *testing.T) {
+	tokenFile := writeToken(t, 0o600)
+	registry, err := NewRegistry(map[string]config.SourcePublicationInstallationConfig{
+		"installation-b": {Provider: "gitlab", APIBaseURL: "https://gitlab.example/api/v4", TokenFile: tokenFile},
+		"installation-a": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: tokenFile},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installations := registry.ReadyProviderReviewerAssignmentInstallations()
+	if len(installations) != 2 || installations[0].InstallationID != "installation-a" ||
+		installations[0].ProviderInstanceKey != "github.com" ||
+		installations[1].ProviderInstanceKey != "gitlab.example" {
+		t.Fatalf("installations = %+v", installations)
+	}
+	if err := os.Chmod(tokenFile, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if installations := registry.ReadyProviderReviewerAssignmentInstallations(); len(installations) != 0 {
+		t.Fatalf("unready installations advertised: %+v", installations)
+	}
+}
+
 func TestRegistryRejectsUnsupportedProvider(t *testing.T) {
 	if _, err := NewRegistry(map[string]config.SourcePublicationInstallationConfig{
 		"installation-1": {Provider: "unknown", APIBaseURL: "https://source.example/api", TokenFile: writeToken(t, 0o600)},

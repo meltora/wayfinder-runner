@@ -30,10 +30,19 @@ type CapabilityManifest struct {
 	ReviewerIdentityVerificationTransportVersion int                                                  `json:"reviewer_identity_verification_transport_version,omitempty"`
 	ReviewerIdentityVerificationProviders        []string                                             `json:"reviewer_identity_verification_providers,omitempty"`
 	ReviewerIdentityVerificationInstallations    []ReviewerIdentityVerificationInstallationCapability `json:"reviewer_identity_verification_installations,omitempty"`
+	ProviderReviewerAssignmentTransportVersion   int                                                  `json:"provider_reviewer_assignment_transport_version,omitempty"`
+	ProviderReviewerAssignmentProviders          []string                                             `json:"provider_reviewer_assignment_providers,omitempty"`
+	ProviderReviewerAssignmentInstallations      []ProviderReviewerAssignmentInstallationCapability   `json:"provider_reviewer_assignment_installations,omitempty"`
 	Signature                                    string                                               `json:"signature"`
 }
 
 type ReviewerIdentityVerificationInstallationCapability struct {
+	InstallationID      string `json:"installation_id"`
+	Provider            string `json:"provider"`
+	ProviderInstanceKey string `json:"provider_instance_key"`
+}
+
+type ProviderReviewerAssignmentInstallationCapability struct {
 	InstallationID      string `json:"installation_id"`
 	Provider            string `json:"provider"`
 	ProviderInstanceKey string `json:"provider_instance_key"`

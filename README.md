@@ -221,9 +221,11 @@ Use a GitLab personal, project, or group access token with the minimum API and
 repository permissions required by the installation. For Bitbucket Cloud, use
 a repository, project, or workspace access token with `repository`,
 `pullrequest`, and `pullrequest:write` scopes; it is sent only as a Bearer token.
-Bitbucket repository external IDs use the canonical `workspace/repo_slug` form.
+Bitbucket repository identity uses the canonical provider UUID together with a
+separate lowercase `workspace/repo_slug` locator.
 The daemon fails startup for an explicitly configured unsafe credential and
-rechecks credential readiness before each capability refresh and publication.
+rechecks credential readiness before each capability refresh and provider
+operation.
 
 The runner advertises source-publication transport v1 and each ready provider
 only while a matching local installation is usable. Before creating or reusing
@@ -234,6 +236,18 @@ refuse redirects, and normalize provider failures before emitting a durable
 result event. A crash after the provider accepts a request is recovered through
 create-or-find idempotency; duplicate command delivery cannot create a second
 logical result.
+
+The same authenticated installation boundary powers verified reviewer identity
+checks and provider reviewer-assignment delivery. Assignment commands carry
+stable provider repository and account IDs, immutable identity revisions and
+digests, an exact head SHA, and a short fenced lease. Immediately before a
+mutation, the runner re-reads the open pull or merge request, head, every stable
+account, and effective repository membership. GitLab and Bitbucket replacement
+calls union the live reviewer set so unrelated reviewers are preserved; GitHub
+uses its additive review-request endpoint. Every attempted mutation is followed
+by a live reconciliation read. Response loss, partial application, reviewer
+loss, or post-mutation head drift produces terminal `delivery_uncertain`
+evidence and is never blindly retried.
 
 ## Runner-local preview observation
 

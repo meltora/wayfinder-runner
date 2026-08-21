@@ -31,6 +31,7 @@ type Detector struct {
 	SourcePublicationProviders                []string
 	PreviewObservationProfiles                []v1.PreviewObservationProfileCapability
 	ReviewerIdentityVerificationInstallations []v1.ReviewerIdentityVerificationInstallationCapability
+	ProviderReviewerAssignmentInstallations   []v1.ProviderReviewerAssignmentInstallationCapability
 	trustedAgentPackKeyIDs                    []string
 }
 
@@ -68,6 +69,12 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		reviewerIdentityProviders = append(reviewerIdentityProviders, installation.Provider)
 	}
 	reviewerIdentityProviders = uniqueSorted(reviewerIdentityProviders)
+	providerReviewerAssignmentInstallations := cloneProviderReviewerAssignmentInstallations(d.ProviderReviewerAssignmentInstallations)
+	providerReviewerAssignmentProviders := make([]string, 0, len(providerReviewerAssignmentInstallations))
+	for _, installation := range providerReviewerAssignmentInstallations {
+		providerReviewerAssignmentProviders = append(providerReviewerAssignmentProviders, installation.Provider)
+	}
+	providerReviewerAssignmentProviders = uniqueSorted(providerReviewerAssignmentProviders)
 	m := v1.CapabilityManifest{
 		RunnerID:                              d.RunnerID,
 		CollectedAt:                           time.Now().UTC(),
@@ -84,6 +91,8 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		PreviewObservationProfiles:            previewObservationProfiles,
 		ReviewerIdentityVerificationProviders: reviewerIdentityProviders,
 		ReviewerIdentityVerificationInstallations: reviewerIdentityInstallations,
+		ProviderReviewerAssignmentProviders:       providerReviewerAssignmentProviders,
+		ProviderReviewerAssignmentInstallations:   providerReviewerAssignmentInstallations,
 	}
 	if len(sourcePublicationProviders) != 0 {
 		m.SourcePublicationTransportVersion = v1.SourcePublicationTransportVersion
@@ -93,6 +102,9 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	}
 	if len(reviewerIdentityInstallations) != 0 {
 		m.ReviewerIdentityVerificationTransportVersion = v1.ReviewerIdentityVerificationTransportVersion
+	}
+	if len(providerReviewerAssignmentInstallations) != 0 {
+		m.ProviderReviewerAssignmentTransportVersion = v1.ProviderReviewerAssignmentTransportVersion
 	}
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(".", &fs); err == nil {
@@ -171,6 +183,16 @@ func cloneReviewerIdentityInstallations(
 	values []v1.ReviewerIdentityVerificationInstallationCapability,
 ) []v1.ReviewerIdentityVerificationInstallationCapability {
 	result := append([]v1.ReviewerIdentityVerificationInstallationCapability(nil), values...)
+	sort.Slice(result, func(left, right int) bool {
+		return result[left].InstallationID < result[right].InstallationID
+	})
+	return result
+}
+
+func cloneProviderReviewerAssignmentInstallations(
+	values []v1.ProviderReviewerAssignmentInstallationCapability,
+) []v1.ProviderReviewerAssignmentInstallationCapability {
+	result := append([]v1.ProviderReviewerAssignmentInstallationCapability(nil), values...)
 	sort.Slice(result, func(left, right int) bool {
 		return result[left].InstallationID < result[right].InstallationID
 	})

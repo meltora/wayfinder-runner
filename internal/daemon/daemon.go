@@ -81,6 +81,10 @@ type Daemon struct {
 	reviewerIdentityVerificationCommandMu     sync.Mutex
 	reviewerIdentityVerificationCommandActive map[string]struct{}
 	reviewerIdentityVerificationCommands      sync.WaitGroup
+	providerReviewerAssigner                  providerReviewerAssigner
+	providerReviewerAssignmentCommandMu       sync.Mutex
+	providerReviewerAssignmentCommandActive   map[string]struct{}
+	providerReviewerAssignmentCommands        sync.WaitGroup
 
 	eventSink   func(ctx context.Context, payload any) error
 	httpMu      sync.RWMutex
@@ -94,6 +98,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	}
 	var publicationPublisher sourcePublicationPublisher
 	var identityVerifier reviewerIdentityVerifier
+	var reviewerAssigner providerReviewerAssigner
 	if len(cfg.SourcePublicationInstallations) != 0 {
 		registry, err := sourcepublication.NewRegistry(cfg.SourcePublicationInstallations, nil)
 		if err != nil {
@@ -101,6 +106,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		}
 		publicationPublisher = registry
 		identityVerifier = registry
+		reviewerAssigner = registry
 	}
 	var localPreviewObserver previewObserver
 	if len(cfg.PreviewObservationProfiles) != 0 {
@@ -206,6 +212,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		sourcePublicationPublisher: publicationPublisher,
 		previewObserver:            localPreviewObserver,
 		reviewerIdentityVerifier:   identityVerifier,
+		providerReviewerAssigner:   reviewerAssigner,
 	}
 	d.collectors.SetMaxSpoolBytes(int64(cfg.ArtifactSpoolMB) << 20)
 	d.recoveredLease.Store(recoveredLease)
@@ -279,6 +286,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.sourcePublicationCommands.Wait()
 		d.previewObservationCommands.Wait()
 		d.reviewerIdentityVerificationCommands.Wait()
+		d.providerReviewerAssignmentCommands.Wait()
 		_ = d.journal.Close()
 		_ = d.runLock.Close()
 	}()
@@ -431,6 +439,9 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	}
 	if d.reviewerIdentityVerifier != nil {
 		det.ReviewerIdentityVerificationInstallations = d.reviewerIdentityVerifier.ReadyReviewerIdentityInstallations()
+	}
+	if d.providerReviewerAssigner != nil {
+		det.ProviderReviewerAssignmentInstallations = d.providerReviewerAssigner.ReadyProviderReviewerAssignmentInstallations()
 	}
 	m := det.Collect(ctx)
 	key, err := d.store.LoadKey()
@@ -659,6 +670,8 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		decodeErr == nil && cmd.Command == v1.CmdPreviewObservation
 	asyncReviewerIdentityVerification :=
 		decodeErr == nil && cmd.Command == v1.CmdReviewerIdentityVerification
+	asyncProviderReviewerAssignment :=
+		decodeErr == nil && cmd.Command == v1.CmdProviderReviewerAssignment
 	if asyncSourcePublication && d.sourcePublicationCommandIsActive(env.ID) {
 		return nil
 	}
@@ -666,6 +679,9 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		return nil
 	}
 	if asyncReviewerIdentityVerification && d.reviewerIdentityVerificationCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncProviderReviewerAssignment && d.providerReviewerAssignmentCommandIsActive(env.ID) {
 		return nil
 	}
 	claimOwner := d.commandOwner + "-" + newEventID()
@@ -714,6 +730,14 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		}
 		d.reviewerIdentityVerificationCommands.Add(1)
 		go d.completeReviewerIdentityVerificationCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
+		return nil
+	}
+	if asyncProviderReviewerAssignment {
+		if !d.providerReviewerAssignmentCommandStart(env.ID) {
+			return nil
+		}
+		d.providerReviewerAssignmentCommands.Add(1)
+		go d.completeProviderReviewerAssignmentCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
 		return nil
 	}
 	return d.completeClaimedCommand(
@@ -811,6 +835,9 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	if err := validateSourcePublicationCommandBoundary(cmd); err != nil {
 		return err
 	}
+	if err := validateProviderReviewerAssignmentCommandBoundary(cmd); err != nil {
+		return err
+	}
 	if err := validatePreviewObservationCommandBoundary(cmd); err != nil {
 		return err
 	}
@@ -892,6 +919,11 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executeSourcePublication(ctx, env.ID, *cmd.SourcePublication)
+	case v1.CmdProviderReviewerAssignment:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executeProviderReviewerAssignment(ctx, env.ID, *cmd.ProviderReviewerAssignment)
 	case v1.CmdPreviewObservation:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)

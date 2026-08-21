@@ -170,6 +170,25 @@ func TestCollectAdvertisesExactReviewerIdentityInstallations(t *testing.T) {
 	}
 }
 
+func TestCollectAdvertisesExactProviderReviewerAssignmentInstallations(t *testing.T) {
+	detector := fakeDetector()
+	detector.ProviderReviewerAssignmentInstallations = []v1.ProviderReviewerAssignmentInstallationCapability{
+		{InstallationID: "installation-b", Provider: "gitlab", ProviderInstanceKey: "gitlab.example"},
+		{InstallationID: "installation-a", Provider: "github", ProviderInstanceKey: "github.com"},
+	}
+	manifest := detector.Collect(context.Background())
+	if manifest.ProviderReviewerAssignmentTransportVersion != v1.ProviderReviewerAssignmentTransportVersion ||
+		len(manifest.ProviderReviewerAssignmentInstallations) != 2 ||
+		manifest.ProviderReviewerAssignmentInstallations[0].InstallationID != "installation-a" ||
+		strings.Join(manifest.ProviderReviewerAssignmentProviders, ",") != "github,gitlab" {
+		t.Fatalf("provider reviewer assignment capability = %+v", manifest)
+	}
+	detector.ProviderReviewerAssignmentInstallations[0].InstallationID = "changed"
+	if manifest.ProviderReviewerAssignmentInstallations[1].InstallationID != "installation-b" {
+		t.Fatal("manifest shares provider reviewer assignment installation state")
+	}
+}
+
 func TestSignVerify(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	d := fakeDetector()

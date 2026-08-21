@@ -70,6 +70,7 @@ type CommandPayload struct {
 	UpdateID                     string                                 `json:"update_id,omitempty"`
 	DrainDeadline                *time.Time                             `json:"drain_deadline,omitempty"`
 	SourcePublication            *SourcePublicationOperation            `json:"source_publication,omitempty"`
+	ProviderReviewerAssignment   *ProviderReviewerAssignmentOperation   `json:"provider_reviewer_assignment,omitempty"`
 	PreviewObservation           *PreviewObservationOperation           `json:"preview_observation,omitempty"`
 	ReviewerIdentityVerification *ReviewerIdentityVerificationOperation `json:"reviewer_identity_verification,omitempty"`
 }
@@ -85,6 +86,7 @@ const (
 	CmdRotateCert                   = "rotate_cert"
 	CmdRenewLease                   = "renew_lease"
 	CmdSourcePublication            = "source_publication"
+	CmdProviderReviewerAssignment   = "provider_reviewer_assignment"
 	CmdPreviewObservation           = "preview_observation"
 	CmdReviewerIdentityVerification = "reviewer_identity_verification"
 )

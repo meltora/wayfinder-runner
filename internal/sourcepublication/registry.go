@@ -97,6 +97,21 @@ func (registry *Registry) ReadyReviewerIdentityInstallations() []v1.ReviewerIden
 	return result
 }
 
+func (registry *Registry) ReadyProviderReviewerAssignmentInstallations() []v1.ProviderReviewerAssignmentInstallationCapability {
+	result := make([]v1.ProviderReviewerAssignmentInstallationCapability, 0, len(registry.installations))
+	for installationID, installation := range registry.installations {
+		if _, err := readToken(installation.TokenFile); err != nil {
+			continue
+		}
+		result = append(result, v1.ProviderReviewerAssignmentInstallationCapability{
+			InstallationID: installationID, Provider: installation.Provider,
+			ProviderInstanceKey: configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL),
+		})
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].InstallationID < result[right].InstallationID })
+	return result
+}
+
 func (registry *Registry) Publish(
 	ctx context.Context,
 	operation v1.SourcePublicationOperation,
