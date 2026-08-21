@@ -79,6 +79,24 @@ func (registry *Registry) ReadyProviders() []string {
 	return result
 }
 
+func (registry *Registry) ReadyReviewerIdentityInstallations() []v1.ReviewerIdentityVerificationInstallationCapability {
+	result := make([]v1.ReviewerIdentityVerificationInstallationCapability, 0, len(registry.installations))
+	for installationID, installation := range registry.installations {
+		if _, err := readToken(installation.TokenFile); err != nil {
+			continue
+		}
+		result = append(result, v1.ReviewerIdentityVerificationInstallationCapability{
+			InstallationID:      installationID,
+			Provider:            installation.Provider,
+			ProviderInstanceKey: configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL),
+		})
+	}
+	sort.Slice(result, func(left, right int) bool {
+		return result[left].InstallationID < result[right].InstallationID
+	})
+	return result
+}
+
 func (registry *Registry) Publish(
 	ctx context.Context,
 	operation v1.SourcePublicationOperation,

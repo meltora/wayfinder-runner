@@ -22,15 +22,16 @@ import (
 )
 
 type Detector struct {
-	RunnerID                   string
-	RunnerVersion              string
-	Labels                     map[string]string
-	LookPath                   func(string) (string, error)
-	RunVersion                 func(ctx context.Context, name string, args ...string) (string, error)
-	ProbeDocker                func(ctx context.Context) isolation.DockerInfo
-	SourcePublicationProviders []string
-	PreviewObservationProfiles []v1.PreviewObservationProfileCapability
-	trustedAgentPackKeyIDs     []string
+	RunnerID                                  string
+	RunnerVersion                             string
+	Labels                                    map[string]string
+	LookPath                                  func(string) (string, error)
+	RunVersion                                func(ctx context.Context, name string, args ...string) (string, error)
+	ProbeDocker                               func(ctx context.Context) isolation.DockerInfo
+	SourcePublicationProviders                []string
+	PreviewObservationProfiles                []v1.PreviewObservationProfileCapability
+	ReviewerIdentityVerificationInstallations []v1.ReviewerIdentityVerificationInstallationCapability
+	trustedAgentPackKeyIDs                    []string
 }
 
 func New(runnerID, version string, labels, agentPackPublicKeys map[string]string) *Detector {
@@ -61,26 +62,37 @@ func defaultRunVersion(ctx context.Context, name string, args ...string) (string
 func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	sourcePublicationProviders := uniqueSorted(d.SourcePublicationProviders)
 	previewObservationProfiles := clonePreviewObservationProfiles(d.PreviewObservationProfiles)
+	reviewerIdentityInstallations := cloneReviewerIdentityInstallations(d.ReviewerIdentityVerificationInstallations)
+	reviewerIdentityProviders := make([]string, 0, len(reviewerIdentityInstallations))
+	for _, installation := range reviewerIdentityInstallations {
+		reviewerIdentityProviders = append(reviewerIdentityProviders, installation.Provider)
+	}
+	reviewerIdentityProviders = uniqueSorted(reviewerIdentityProviders)
 	m := v1.CapabilityManifest{
-		RunnerID:                          d.RunnerID,
-		CollectedAt:                       time.Now().UTC(),
-		OS:                                runtime.GOOS,
-		Arch:                              runtime.GOARCH,
-		CPUs:                              runtime.NumCPU(),
-		MemoryBytes:                       totalMemory(),
-		Labels:                            d.Labels,
-		RunnerVersion:                     d.RunnerVersion,
-		ProtocolVersion:                   v1.ProtocolVersion,
-		AgentPackDeliveryAuthorityVersion: v1.AgentPackDeliveryAuthorityVersion,
-		TrustedAgentPackKeyIDs:            append([]string(nil), d.trustedAgentPackKeyIDs...),
-		SourcePublicationProviders:        sourcePublicationProviders,
-		PreviewObservationProfiles:        previewObservationProfiles,
+		RunnerID:                              d.RunnerID,
+		CollectedAt:                           time.Now().UTC(),
+		OS:                                    runtime.GOOS,
+		Arch:                                  runtime.GOARCH,
+		CPUs:                                  runtime.NumCPU(),
+		MemoryBytes:                           totalMemory(),
+		Labels:                                d.Labels,
+		RunnerVersion:                         d.RunnerVersion,
+		ProtocolVersion:                       v1.ProtocolVersion,
+		AgentPackDeliveryAuthorityVersion:     v1.AgentPackDeliveryAuthorityVersion,
+		TrustedAgentPackKeyIDs:                append([]string(nil), d.trustedAgentPackKeyIDs...),
+		SourcePublicationProviders:            sourcePublicationProviders,
+		PreviewObservationProfiles:            previewObservationProfiles,
+		ReviewerIdentityVerificationProviders: reviewerIdentityProviders,
+		ReviewerIdentityVerificationInstallations: reviewerIdentityInstallations,
 	}
 	if len(sourcePublicationProviders) != 0 {
 		m.SourcePublicationTransportVersion = v1.SourcePublicationTransportVersion
 	}
 	if len(previewObservationProfiles) != 0 {
 		m.PreviewObservationTransportVersion = v1.PreviewObservationTransportVersion
+	}
+	if len(reviewerIdentityInstallations) != 0 {
+		m.ReviewerIdentityVerificationTransportVersion = v1.ReviewerIdentityVerificationTransportVersion
 	}
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(".", &fs); err == nil {
@@ -151,6 +163,16 @@ func clonePreviewObservationProfiles(
 			return result[left].Version < result[right].Version
 		}
 		return result[left].Digest < result[right].Digest
+	})
+	return result
+}
+
+func cloneReviewerIdentityInstallations(
+	values []v1.ReviewerIdentityVerificationInstallationCapability,
+) []v1.ReviewerIdentityVerificationInstallationCapability {
+	result := append([]v1.ReviewerIdentityVerificationInstallationCapability(nil), values...)
+	sort.Slice(result, func(left, right int) bool {
+		return result[left].InstallationID < result[right].InstallationID
 	})
 	return result
 }

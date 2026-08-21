@@ -57,26 +57,30 @@ type Daemon struct {
 	uploader       *artifactUploader
 	supervisor     supervisor.Supervisor
 
-	jobMu                           sync.Mutex
-	activeJob                       *jobRunner
-	updateDrain                     *pendingUpdate
-	updateWake                      chan struct{}
-	updateRunMu                     sync.Mutex
-	updateIPC                       updateIPC
-	updateRestored                  bool
-	updateExpiredAtStartup          *pendingUpdate
-	controlReady                    atomic.Bool
-	rotationMu                      sync.Mutex
-	commandMu                       sync.Mutex
-	commandOwner                    string
-	sourcePublicationPublisher      sourcePublicationPublisher
-	sourcePublicationCommandMu      sync.Mutex
-	sourcePublicationCommandActive  map[string]struct{}
-	sourcePublicationCommands       sync.WaitGroup
-	previewObserver                 previewObserver
-	previewObservationCommandMu     sync.Mutex
-	previewObservationCommandActive map[string]struct{}
-	previewObservationCommands      sync.WaitGroup
+	jobMu                                     sync.Mutex
+	activeJob                                 *jobRunner
+	updateDrain                               *pendingUpdate
+	updateWake                                chan struct{}
+	updateRunMu                               sync.Mutex
+	updateIPC                                 updateIPC
+	updateRestored                            bool
+	updateExpiredAtStartup                    *pendingUpdate
+	controlReady                              atomic.Bool
+	rotationMu                                sync.Mutex
+	commandMu                                 sync.Mutex
+	commandOwner                              string
+	sourcePublicationPublisher                sourcePublicationPublisher
+	sourcePublicationCommandMu                sync.Mutex
+	sourcePublicationCommandActive            map[string]struct{}
+	sourcePublicationCommands                 sync.WaitGroup
+	previewObserver                           previewObserver
+	previewObservationCommandMu               sync.Mutex
+	previewObservationCommandActive           map[string]struct{}
+	previewObservationCommands                sync.WaitGroup
+	reviewerIdentityVerifier                  reviewerIdentityVerifier
+	reviewerIdentityVerificationCommandMu     sync.Mutex
+	reviewerIdentityVerificationCommandActive map[string]struct{}
+	reviewerIdentityVerificationCommands      sync.WaitGroup
 
 	eventSink   func(ctx context.Context, payload any) error
 	httpMu      sync.RWMutex
@@ -89,12 +93,14 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		return nil, fmt.Errorf("invalid runner configuration: %w", err)
 	}
 	var publicationPublisher sourcePublicationPublisher
+	var identityVerifier reviewerIdentityVerifier
 	if len(cfg.SourcePublicationInstallations) != 0 {
 		registry, err := sourcepublication.NewRegistry(cfg.SourcePublicationInstallations, nil)
 		if err != nil {
 			return nil, fmt.Errorf("initialize source publication credentials: %w", err)
 		}
 		publicationPublisher = registry
+		identityVerifier = registry
 	}
 	var localPreviewObserver previewObserver
 	if len(cfg.PreviewObservationProfiles) != 0 {
@@ -199,6 +205,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		updateIPC:                  updateClient,
 		sourcePublicationPublisher: publicationPublisher,
 		previewObserver:            localPreviewObserver,
+		reviewerIdentityVerifier:   identityVerifier,
 	}
 	d.collectors.SetMaxSpoolBytes(int64(cfg.ArtifactSpoolMB) << 20)
 	d.recoveredLease.Store(recoveredLease)
@@ -271,6 +278,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer func() {
 		d.sourcePublicationCommands.Wait()
 		d.previewObservationCommands.Wait()
+		d.reviewerIdentityVerificationCommands.Wait()
 		_ = d.journal.Close()
 		_ = d.runLock.Close()
 	}()
@@ -420,6 +428,9 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	}
 	if d.previewObserver != nil {
 		det.PreviewObservationProfiles = d.previewObserver.ReadyProfiles()
+	}
+	if d.reviewerIdentityVerifier != nil {
+		det.ReviewerIdentityVerificationInstallations = d.reviewerIdentityVerifier.ReadyReviewerIdentityInstallations()
 	}
 	m := det.Collect(ctx)
 	key, err := d.store.LoadKey()
@@ -646,10 +657,15 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		decodeErr == nil && cmd.Command == v1.CmdSourcePublication
 	asyncPreviewObservation :=
 		decodeErr == nil && cmd.Command == v1.CmdPreviewObservation
+	asyncReviewerIdentityVerification :=
+		decodeErr == nil && cmd.Command == v1.CmdReviewerIdentityVerification
 	if asyncSourcePublication && d.sourcePublicationCommandIsActive(env.ID) {
 		return nil
 	}
 	if asyncPreviewObservation && d.previewObservationCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncReviewerIdentityVerification && d.reviewerIdentityVerificationCommandIsActive(env.ID) {
 		return nil
 	}
 	claimOwner := d.commandOwner + "-" + newEventID()
@@ -690,6 +706,14 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 			claimOwner,
 			effectMayHaveRun,
 		)
+		return nil
+	}
+	if asyncReviewerIdentityVerification {
+		if !d.reviewerIdentityVerificationCommandStart(env.ID) {
+			return nil
+		}
+		d.reviewerIdentityVerificationCommands.Add(1)
+		go d.completeReviewerIdentityVerificationCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
 		return nil
 	}
 	return d.completeClaimedCommand(
@@ -790,6 +814,9 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	if err := validatePreviewObservationCommandBoundary(cmd); err != nil {
 		return err
 	}
+	if err := validateReviewerIdentityVerificationCommandBoundary(cmd); err != nil {
+		return err
+	}
 
 	switch cmd.Command {
 	case v1.CmdStartJob:
@@ -870,6 +897,11 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executePreviewObservation(ctx, env.ID, *cmd.PreviewObservation)
+	case v1.CmdReviewerIdentityVerification:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executeReviewerIdentityVerification(ctx, env.ID, *cmd.ReviewerIdentityVerification)
 	}
 	return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 }

@@ -151,6 +151,25 @@ func TestCollectAdvertisesOnlyUsablePreviewObservationProfiles(t *testing.T) {
 	}
 }
 
+func TestCollectAdvertisesExactReviewerIdentityInstallations(t *testing.T) {
+	detector := fakeDetector()
+	detector.ReviewerIdentityVerificationInstallations = []v1.ReviewerIdentityVerificationInstallationCapability{
+		{InstallationID: "installation-b", Provider: "gitlab", ProviderInstanceKey: "gitlab.example"},
+		{InstallationID: "installation-a", Provider: "github", ProviderInstanceKey: "github.com"},
+	}
+	manifest := detector.Collect(context.Background())
+	if manifest.ReviewerIdentityVerificationTransportVersion != v1.ReviewerIdentityVerificationTransportVersion ||
+		len(manifest.ReviewerIdentityVerificationInstallations) != 2 ||
+		manifest.ReviewerIdentityVerificationInstallations[0].InstallationID != "installation-a" ||
+		strings.Join(manifest.ReviewerIdentityVerificationProviders, ",") != "github,gitlab" {
+		t.Fatalf("reviewer identity capability = %+v", manifest)
+	}
+	detector.ReviewerIdentityVerificationInstallations[0].InstallationID = "changed"
+	if manifest.ReviewerIdentityVerificationInstallations[1].InstallationID != "installation-b" {
+		t.Fatal("manifest shares reviewer identity installation state")
+	}
+}
+
 func TestSignVerify(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	d := fakeDetector()

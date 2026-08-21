@@ -22,7 +22,7 @@ func validatePreviewObservationCommandBoundary(command v1.CommandPayload) error 
 		}
 		return nil
 	}
-	if command.PreviewObservation == nil || command.SourcePublication != nil || command.Job != nil ||
+	if command.PreviewObservation == nil || command.SourcePublication != nil || command.ReviewerIdentityVerification != nil || command.Job != nil ||
 		command.JobID != "" || command.AttemptID != "" || command.FencingToken != 0 ||
 		!command.LeaseExpiresAt.IsZero() || command.Reason != "" || command.QuestionID != "" ||
 		command.Decision != "" || command.DecidedBy != "" || command.UpdateID != "" ||
