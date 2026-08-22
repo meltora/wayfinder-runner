@@ -1,6 +1,12 @@
 package v1
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"time"
+)
 
 type JobKind string
 
@@ -34,6 +40,32 @@ type JobSpec struct {
 	ContinuationCount            int                  `json:"continuation_count,omitempty"`
 	ResumeSessionID              string               `json:"resume_session_id,omitempty"`
 	ProviderCapacityResumePolicy CapacityResumePolicy `json:"provider_capacity_resume_policy,omitempty"`
+
+	reviewCommentPresent bool
+}
+
+func (job JobSpec) HasReviewCommentField() bool {
+	return job.reviewCommentPresent || job.ReviewComment != ""
+}
+
+func (job *JobSpec) UnmarshalJSON(data []byte) error {
+	type wireJobSpec JobSpec
+	var decoded wireJobSpec
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return fmt.Errorf("decode job spec: %w", err)
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return fmt.Errorf("decode job spec: trailing JSON")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode job fields: %w", err)
+	}
+	*job = JobSpec(decoded)
+	_, job.reviewCommentPresent = fields["review_comment"]
+	return nil
 }
 
 type JobRepository struct {
@@ -57,38 +89,63 @@ type AgentPackRef struct {
 }
 
 type CommandPayload struct {
-	Command                      string                                 `json:"command"`
-	Job                          *JobSpec                               `json:"job,omitempty"`
-	JobID                        string                                 `json:"job_id,omitempty"`
-	AttemptID                    string                                 `json:"attempt_id,omitempty"`
-	FencingToken                 uint64                                 `json:"fencing_token,omitempty"`
-	LeaseExpiresAt               time.Time                              `json:"lease_expires_at,omitempty"`
-	Reason                       string                                 `json:"reason,omitempty"`
-	QuestionID                   string                                 `json:"question_id,omitempty"`
-	Decision                     string                                 `json:"decision,omitempty"`
-	DecidedBy                    string                                 `json:"decided_by,omitempty"`
-	UpdateID                     string                                 `json:"update_id,omitempty"`
-	DrainDeadline                *time.Time                             `json:"drain_deadline,omitempty"`
-	SourcePublication            *SourcePublicationOperation            `json:"source_publication,omitempty"`
-	ProviderReviewerAssignment   *ProviderReviewerAssignmentOperation   `json:"provider_reviewer_assignment,omitempty"`
-	PreviewObservation           *PreviewObservationOperation           `json:"preview_observation,omitempty"`
-	ReviewerIdentityVerification *ReviewerIdentityVerificationOperation `json:"reviewer_identity_verification,omitempty"`
+	Command                                  string                                             `json:"command"`
+	Job                                      *JobSpec                                           `json:"job,omitempty"`
+	JobID                                    string                                             `json:"job_id,omitempty"`
+	AttemptID                                string                                             `json:"attempt_id,omitempty"`
+	FencingToken                             uint64                                             `json:"fencing_token,omitempty"`
+	LeaseExpiresAt                           time.Time                                          `json:"lease_expires_at,omitempty"`
+	Reason                                   string                                             `json:"reason,omitempty"`
+	QuestionID                               string                                             `json:"question_id,omitempty"`
+	Decision                                 string                                             `json:"decision,omitempty"`
+	DecidedBy                                string                                             `json:"decided_by,omitempty"`
+	UpdateID                                 string                                             `json:"update_id,omitempty"`
+	DrainDeadline                            *time.Time                                         `json:"drain_deadline,omitempty"`
+	SourcePublication                        *SourcePublicationOperation                        `json:"source_publication,omitempty"`
+	ProviderReviewerAssignment               *ProviderReviewerAssignmentOperation               `json:"provider_reviewer_assignment,omitempty"`
+	ProviderReviewerAssignmentReconciliation *ProviderReviewerAssignmentReconciliationOperation `json:"provider_reviewer_assignment_reconciliation,omitempty"`
+	ProviderReviewObservation                *ProviderReviewObservationOperation                `json:"provider_review_observation,omitempty"`
+	ProviderReviewFeedbackContent            *ProviderReviewFeedbackContentOperation            `json:"provider_review_feedback_content,omitempty"`
+	ReviewFeedbackContinuation               *ReviewFeedbackContinuationAuthority               `json:"review_feedback_continuation,omitempty"`
+	PreviewObservation                       *PreviewObservationOperation                       `json:"preview_observation,omitempty"`
+	ReviewerIdentityVerification             *ReviewerIdentityVerificationOperation             `json:"reviewer_identity_verification,omitempty"`
+}
+
+func (command CommandPayload) MarshalJSON() ([]byte, error) {
+	type wireCommandPayload CommandPayload
+	raw, err := json.Marshal(wireCommandPayload(command))
+	if err != nil {
+		return nil, err
+	}
+	if !command.LeaseExpiresAt.IsZero() {
+		return raw, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	delete(fields, "lease_expires_at")
+	return json.Marshal(fields)
 }
 
 const (
-	CmdStartJob                     = "start_job"
-	CmdCancelJob                    = "cancel_job"
-	CmdEmergencyStop                = "emergency_stop"
-	CmdResumeRunner                 = "resume_runner"
-	CmdReviewComment                = "review_comment"
-	CmdUpdate                       = "update"
-	CmdDecisionResponse             = "decision_response"
-	CmdRotateCert                   = "rotate_cert"
-	CmdRenewLease                   = "renew_lease"
-	CmdSourcePublication            = "source_publication"
-	CmdProviderReviewerAssignment   = "provider_reviewer_assignment"
-	CmdPreviewObservation           = "preview_observation"
-	CmdReviewerIdentityVerification = "reviewer_identity_verification"
+	CmdStartJob                                 = "start_job"
+	CmdCancelJob                                = "cancel_job"
+	CmdEmergencyStop                            = "emergency_stop"
+	CmdResumeRunner                             = "resume_runner"
+	CmdReviewComment                            = "review_comment"
+	CmdUpdate                                   = "update"
+	CmdDecisionResponse                         = "decision_response"
+	CmdRotateCert                               = "rotate_cert"
+	CmdRenewLease                               = "renew_lease"
+	CmdSourcePublication                        = "source_publication"
+	CmdProviderReviewerAssignment               = "provider_reviewer_assignment"
+	CmdProviderReviewerAssignmentReconciliation = "provider_reviewer_assignment_reconciliation"
+	CmdProviderReviewObservation                = "provider_review_observation"
+	CmdProviderReviewFeedbackContent            = "provider_review_feedback_content"
+	CmdReviewFeedbackContinuation               = "review_feedback_continuation"
+	CmdPreviewObservation                       = "preview_observation"
+	CmdReviewerIdentityVerification             = "reviewer_identity_verification"
 )
 
 type ProgressReport struct {

@@ -139,7 +139,7 @@ func providerReviewerAssignmentRecipients(
 			return fmt.Errorf("provider reviewer assignment recipients must have unique sorted user IDs")
 		}
 		previousUserID = recipient.UserID
-		if recipient.IdentityStateRevision == 0 || recipient.IdentityStateRevision > maxJSONSafeInteger ||
+		if recipient.IdentityStateRevision > maxJSONSafeInteger ||
 			recipient.IdentityRevision == 0 || recipient.IdentityRevision > maxJSONSafeInteger ||
 			recipient.ProviderAccountProofRevision == 0 || recipient.ProviderAccountProofRevision > maxJSONSafeInteger {
 			return fmt.Errorf("provider reviewer assignment recipient revision is invalid")

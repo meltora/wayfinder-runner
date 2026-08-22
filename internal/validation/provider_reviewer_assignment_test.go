@@ -43,6 +43,15 @@ func validProviderReviewerAssignmentOperationForValidation() v1.ProviderReviewer
 	}
 }
 
+func TestProviderReviewerAssignmentOperationAcceptsExactZeroIdentityStateRevision(t *testing.T) {
+	value := validProviderReviewerAssignmentOperationForValidation()
+	value.Recipients[0].IdentityStateRevision = 0
+	value.RecipientSetDigest = v1.ProviderReviewerAssignmentRecipientSetDigest(value.Recipients)
+	if err := ProviderReviewerAssignmentOperation(value); err != nil {
+		t.Fatalf("zero is a legitimate active identity state revision: %v", err)
+	}
+}
+
 func TestProviderReviewerAssignmentOperationAcceptsBoundCanonicalAuthority(t *testing.T) {
 	if err := ProviderReviewerAssignmentOperation(validProviderReviewerAssignmentOperationForValidation()); err != nil {
 		t.Fatal(err)

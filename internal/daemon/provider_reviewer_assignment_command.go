@@ -22,7 +22,7 @@ func validateProviderReviewerAssignmentCommandBoundary(command v1.CommandPayload
 		}
 		return nil
 	}
-	if command.ProviderReviewerAssignment == nil || command.SourcePublication != nil ||
+	if command.ProviderReviewerAssignment == nil || command.ProviderReviewFeedbackContent != nil || command.ProviderReviewObservation != nil || command.ProviderReviewerAssignmentReconciliation != nil || command.SourcePublication != nil ||
 		command.PreviewObservation != nil || command.ReviewerIdentityVerification != nil || command.Job != nil ||
 		command.JobID != "" || command.AttemptID != "" || command.FencingToken != 0 ||
 		!command.LeaseExpiresAt.IsZero() || command.Reason != "" || command.QuestionID != "" ||

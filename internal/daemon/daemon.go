@@ -57,34 +57,46 @@ type Daemon struct {
 	uploader       *artifactUploader
 	supervisor     supervisor.Supervisor
 
-	jobMu                                     sync.Mutex
-	activeJob                                 *jobRunner
-	updateDrain                               *pendingUpdate
-	updateWake                                chan struct{}
-	updateRunMu                               sync.Mutex
-	updateIPC                                 updateIPC
-	updateRestored                            bool
-	updateExpiredAtStartup                    *pendingUpdate
-	controlReady                              atomic.Bool
-	rotationMu                                sync.Mutex
-	commandMu                                 sync.Mutex
-	commandOwner                              string
-	sourcePublicationPublisher                sourcePublicationPublisher
-	sourcePublicationCommandMu                sync.Mutex
-	sourcePublicationCommandActive            map[string]struct{}
-	sourcePublicationCommands                 sync.WaitGroup
-	previewObserver                           previewObserver
-	previewObservationCommandMu               sync.Mutex
-	previewObservationCommandActive           map[string]struct{}
-	previewObservationCommands                sync.WaitGroup
-	reviewerIdentityVerifier                  reviewerIdentityVerifier
-	reviewerIdentityVerificationCommandMu     sync.Mutex
-	reviewerIdentityVerificationCommandActive map[string]struct{}
-	reviewerIdentityVerificationCommands      sync.WaitGroup
-	providerReviewerAssigner                  providerReviewerAssigner
-	providerReviewerAssignmentCommandMu       sync.Mutex
-	providerReviewerAssignmentCommandActive   map[string]struct{}
-	providerReviewerAssignmentCommands        sync.WaitGroup
+	jobMu                                                 sync.Mutex
+	activeJob                                             *jobRunner
+	updateDrain                                           *pendingUpdate
+	updateWake                                            chan struct{}
+	updateRunMu                                           sync.Mutex
+	updateIPC                                             updateIPC
+	updateRestored                                        bool
+	updateExpiredAtStartup                                *pendingUpdate
+	controlReady                                          atomic.Bool
+	rotationMu                                            sync.Mutex
+	commandMu                                             sync.Mutex
+	commandOwner                                          string
+	sourcePublicationPublisher                            sourcePublicationPublisher
+	sourcePublicationCommandMu                            sync.Mutex
+	sourcePublicationCommandActive                        map[string]struct{}
+	sourcePublicationCommands                             sync.WaitGroup
+	previewObserver                                       previewObserver
+	previewObservationCommandMu                           sync.Mutex
+	previewObservationCommandActive                       map[string]struct{}
+	previewObservationCommands                            sync.WaitGroup
+	reviewerIdentityVerifier                              reviewerIdentityVerifier
+	reviewerIdentityVerificationCommandMu                 sync.Mutex
+	reviewerIdentityVerificationCommandActive             map[string]struct{}
+	reviewerIdentityVerificationCommands                  sync.WaitGroup
+	providerReviewerAssigner                              providerReviewerAssigner
+	providerReviewerAssignmentCommandMu                   sync.Mutex
+	providerReviewerAssignmentCommandActive               map[string]struct{}
+	providerReviewerAssignmentCommands                    sync.WaitGroup
+	providerReviewerAssignmentReconciler                  providerReviewerAssignmentReconciler
+	providerReviewerAssignmentReconciliationCommandMu     sync.Mutex
+	providerReviewerAssignmentReconciliationCommandActive map[string]struct{}
+	providerReviewerAssignmentReconciliationCommands      sync.WaitGroup
+	providerReviewObserver                                providerReviewObserver
+	providerReviewObservationCommandMu                    sync.Mutex
+	providerReviewObservationCommandActive                map[string]struct{}
+	providerReviewObservationCommands                     sync.WaitGroup
+	providerReviewFeedbackContentReader                   providerReviewFeedbackContentReader
+	providerReviewFeedbackContentCommandMu                sync.Mutex
+	providerReviewFeedbackContentCommandActive            map[string]struct{}
+	providerReviewFeedbackContentCommands                 sync.WaitGroup
 
 	eventSink   func(ctx context.Context, payload any) error
 	httpMu      sync.RWMutex
@@ -99,6 +111,9 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	var publicationPublisher sourcePublicationPublisher
 	var identityVerifier reviewerIdentityVerifier
 	var reviewerAssigner providerReviewerAssigner
+	var reviewerAssignmentReconciler providerReviewerAssignmentReconciler
+	var reviewObserver providerReviewObserver
+	var feedbackContentReader providerReviewFeedbackContentReader
 	if len(cfg.SourcePublicationInstallations) != 0 {
 		registry, err := sourcepublication.NewRegistry(cfg.SourcePublicationInstallations, nil)
 		if err != nil {
@@ -107,6 +122,9 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		publicationPublisher = registry
 		identityVerifier = registry
 		reviewerAssigner = registry
+		reviewerAssignmentReconciler = registry
+		reviewObserver = registry
+		feedbackContentReader = registry
 	}
 	var localPreviewObserver previewObserver
 	if len(cfg.PreviewObservationProfiles) != 0 {
@@ -202,17 +220,20 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	updateClient.ExpectedServerUID = 0
 	d := &Daemon{
 		cfg: cfg, store: store, runnerID: runnerID, journal: j, runLock: lock, logger: logger,
-		commandOwner:               "process-" + newEventID(),
-		leases:                     leaseManager,
-		collectors:                 collector.NewStore(cfg.StateDir),
-		uploader:                   newArtifactUploader(httpURL),
-		supervisor:                 nil,
-		updateWake:                 make(chan struct{}, 1),
-		updateIPC:                  updateClient,
-		sourcePublicationPublisher: publicationPublisher,
-		previewObserver:            localPreviewObserver,
-		reviewerIdentityVerifier:   identityVerifier,
-		providerReviewerAssigner:   reviewerAssigner,
+		commandOwner:                         "process-" + newEventID(),
+		leases:                               leaseManager,
+		collectors:                           collector.NewStore(cfg.StateDir),
+		uploader:                             newArtifactUploader(httpURL),
+		supervisor:                           nil,
+		updateWake:                           make(chan struct{}, 1),
+		updateIPC:                            updateClient,
+		sourcePublicationPublisher:           publicationPublisher,
+		previewObserver:                      localPreviewObserver,
+		reviewerIdentityVerifier:             identityVerifier,
+		providerReviewerAssigner:             reviewerAssigner,
+		providerReviewerAssignmentReconciler: reviewerAssignmentReconciler,
+		providerReviewObserver:               reviewObserver,
+		providerReviewFeedbackContentReader:  feedbackContentReader,
 	}
 	d.collectors.SetMaxSpoolBytes(int64(cfg.ArtifactSpoolMB) << 20)
 	d.recoveredLease.Store(recoveredLease)
@@ -287,6 +308,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.previewObservationCommands.Wait()
 		d.reviewerIdentityVerificationCommands.Wait()
 		d.providerReviewerAssignmentCommands.Wait()
+		d.providerReviewerAssignmentReconciliationCommands.Wait()
+		d.providerReviewObservationCommands.Wait()
+		d.providerReviewFeedbackContentCommands.Wait()
 		_ = d.journal.Close()
 		_ = d.runLock.Close()
 	}()
@@ -442,6 +466,15 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	}
 	if d.providerReviewerAssigner != nil {
 		det.ProviderReviewerAssignmentInstallations = d.providerReviewerAssigner.ReadyProviderReviewerAssignmentInstallations()
+	}
+	if d.providerReviewerAssignmentReconciler != nil {
+		det.ProviderReviewerAssignmentReconciliationInstallations = d.providerReviewerAssignmentReconciler.ReadyProviderReviewerAssignmentReconciliationInstallations()
+	}
+	if d.providerReviewObserver != nil {
+		det.ProviderReviewObservationInstallations = d.providerReviewObserver.ReadyProviderReviewObservationInstallations()
+	}
+	if d.providerReviewFeedbackContentReader != nil {
+		det.ProviderReviewFeedbackContentInstallations = d.providerReviewFeedbackContentReader.ReadyProviderReviewFeedbackContentInstallations()
 	}
 	m := det.Collect(ctx)
 	key, err := d.store.LoadKey()
@@ -672,6 +705,9 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		decodeErr == nil && cmd.Command == v1.CmdReviewerIdentityVerification
 	asyncProviderReviewerAssignment :=
 		decodeErr == nil && cmd.Command == v1.CmdProviderReviewerAssignment
+	asyncProviderReviewerAssignmentReconciliation := decodeErr == nil && cmd.Command == v1.CmdProviderReviewerAssignmentReconciliation
+	asyncProviderReviewObservation := decodeErr == nil && cmd.Command == v1.CmdProviderReviewObservation
+	asyncProviderReviewFeedbackContent := decodeErr == nil && cmd.Command == v1.CmdProviderReviewFeedbackContent
 	if asyncSourcePublication && d.sourcePublicationCommandIsActive(env.ID) {
 		return nil
 	}
@@ -682,6 +718,15 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		return nil
 	}
 	if asyncProviderReviewerAssignment && d.providerReviewerAssignmentCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncProviderReviewerAssignmentReconciliation && d.providerReviewerAssignmentReconciliationCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncProviderReviewObservation && d.providerReviewObservationCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncProviderReviewFeedbackContent && d.providerReviewFeedbackContentCommandIsActive(env.ID) {
 		return nil
 	}
 	claimOwner := d.commandOwner + "-" + newEventID()
@@ -738,6 +783,30 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		}
 		d.providerReviewerAssignmentCommands.Add(1)
 		go d.completeProviderReviewerAssignmentCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
+		return nil
+	}
+	if asyncProviderReviewerAssignmentReconciliation {
+		if !d.providerReviewerAssignmentReconciliationCommandStart(env.ID) {
+			return nil
+		}
+		d.providerReviewerAssignmentReconciliationCommands.Add(1)
+		go d.completeProviderReviewerAssignmentReconciliationCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
+		return nil
+	}
+	if asyncProviderReviewObservation {
+		if !d.providerReviewObservationCommandStart(env.ID) {
+			return nil
+		}
+		d.providerReviewObservationCommands.Add(1)
+		go d.completeProviderReviewObservationCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
+		return nil
+	}
+	if asyncProviderReviewFeedbackContent {
+		if !d.providerReviewFeedbackContentCommandStart(env.ID) {
+			return nil
+		}
+		d.providerReviewFeedbackContentCommands.Add(1)
+		go d.completeProviderReviewFeedbackContentCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
 		return nil
 	}
 	return d.completeClaimedCommand(
@@ -838,6 +907,18 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	if err := validateProviderReviewerAssignmentCommandBoundary(cmd); err != nil {
 		return err
 	}
+	if err := validateProviderReviewerAssignmentReconciliationCommandBoundary(cmd); err != nil {
+		return err
+	}
+	if err := validateProviderReviewObservationCommandBoundary(cmd); err != nil {
+		return err
+	}
+	if err := validateProviderReviewFeedbackContentCommandBoundary(cmd); err != nil {
+		return err
+	}
+	if err := validateReviewFeedbackContinuationCommandBoundary(cmd); err != nil {
+		return err
+	}
 	if err := validatePreviewObservationCommandBoundary(cmd); err != nil {
 		return err
 	}
@@ -867,6 +948,11 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			}
 		}
 		return d.startJob(ctx, *cmd.Job)
+	case v1.CmdReviewFeedbackContinuation:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.startReviewFeedbackContinuation(ctx, *cmd.Job, *cmd.ReviewFeedbackContinuation)
 	case v1.CmdCancelJob:
 		return d.cancelJob(ctx, cmd.AttemptID, cmd.Reason)
 	case v1.CmdRenewLease:
@@ -924,6 +1010,21 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executeProviderReviewerAssignment(ctx, env.ID, *cmd.ProviderReviewerAssignment)
+	case v1.CmdProviderReviewerAssignmentReconciliation:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executeProviderReviewerAssignmentReconciliation(ctx, env.ID, *cmd.ProviderReviewerAssignmentReconciliation)
+	case v1.CmdProviderReviewObservation:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executeProviderReviewObservation(ctx, env.ID, *cmd.ProviderReviewObservation)
+	case v1.CmdProviderReviewFeedbackContent:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executeProviderReviewFeedbackContent(ctx, env.ID, *cmd.ProviderReviewFeedbackContent)
 	case v1.CmdPreviewObservation:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)

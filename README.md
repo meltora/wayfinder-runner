@@ -11,6 +11,14 @@ Slack, Sentry, workflow design, approvals, preview deployment, organization and
 team management, and completion-state policy belong to the control plane and
 its integrations.
 
+Provider review-feedback content retrieval in protocol v1 is intentionally
+limited to exact native GitHub change-request review bodies. GitLab and
+Bitbucket reviewer-state events are derived, have no native content identifier,
+and carry zero content bytes, so the control plane must never dispatch them for
+content continuation. Those providers still support reviewer-state and comment
+metadata observation; the runner does not guess a causal comment or fetch
+content by matching an actor.
+
 ## Current production boundary
 
 The supported production target is Linux with systemd and rootless Docker (or a

@@ -22,17 +22,20 @@ import (
 )
 
 type Detector struct {
-	RunnerID                                  string
-	RunnerVersion                             string
-	Labels                                    map[string]string
-	LookPath                                  func(string) (string, error)
-	RunVersion                                func(ctx context.Context, name string, args ...string) (string, error)
-	ProbeDocker                               func(ctx context.Context) isolation.DockerInfo
-	SourcePublicationProviders                []string
-	PreviewObservationProfiles                []v1.PreviewObservationProfileCapability
-	ReviewerIdentityVerificationInstallations []v1.ReviewerIdentityVerificationInstallationCapability
-	ProviderReviewerAssignmentInstallations   []v1.ProviderReviewerAssignmentInstallationCapability
-	trustedAgentPackKeyIDs                    []string
+	RunnerID                                              string
+	RunnerVersion                                         string
+	Labels                                                map[string]string
+	LookPath                                              func(string) (string, error)
+	RunVersion                                            func(ctx context.Context, name string, args ...string) (string, error)
+	ProbeDocker                                           func(ctx context.Context) isolation.DockerInfo
+	SourcePublicationProviders                            []string
+	PreviewObservationProfiles                            []v1.PreviewObservationProfileCapability
+	ReviewerIdentityVerificationInstallations             []v1.ReviewerIdentityVerificationInstallationCapability
+	ProviderReviewerAssignmentInstallations               []v1.ProviderReviewerAssignmentInstallationCapability
+	ProviderReviewerAssignmentReconciliationInstallations []v1.ProviderReviewerAssignmentReconciliationInstallationCapability
+	ProviderReviewObservationInstallations                []v1.ProviderReviewObservationInstallationCapability
+	ProviderReviewFeedbackContentInstallations            []v1.ProviderReviewFeedbackContentInstallationCapability
+	trustedAgentPackKeyIDs                                []string
 }
 
 func New(runnerID, version string, labels, agentPackPublicKeys map[string]string) *Detector {
@@ -75,6 +78,24 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		providerReviewerAssignmentProviders = append(providerReviewerAssignmentProviders, installation.Provider)
 	}
 	providerReviewerAssignmentProviders = uniqueSorted(providerReviewerAssignmentProviders)
+	providerReviewerAssignmentReconciliationInstallations := cloneProviderReviewerAssignmentReconciliationInstallations(d.ProviderReviewerAssignmentReconciliationInstallations)
+	providerReviewerAssignmentReconciliationProviders := make([]string, 0, len(providerReviewerAssignmentReconciliationInstallations))
+	for _, installation := range providerReviewerAssignmentReconciliationInstallations {
+		providerReviewerAssignmentReconciliationProviders = append(providerReviewerAssignmentReconciliationProviders, installation.Provider)
+	}
+	providerReviewerAssignmentReconciliationProviders = uniqueSorted(providerReviewerAssignmentReconciliationProviders)
+	providerReviewObservationInstallations := cloneProviderReviewObservationInstallations(d.ProviderReviewObservationInstallations)
+	providerReviewObservationProviders := make([]string, 0, len(providerReviewObservationInstallations))
+	for _, installation := range providerReviewObservationInstallations {
+		providerReviewObservationProviders = append(providerReviewObservationProviders, installation.Provider)
+	}
+	providerReviewObservationProviders = uniqueSorted(providerReviewObservationProviders)
+	providerReviewFeedbackContentInstallations := cloneProviderReviewFeedbackContentInstallations(d.ProviderReviewFeedbackContentInstallations)
+	providerReviewFeedbackContentProviders := make([]string, 0, len(providerReviewFeedbackContentInstallations))
+	for _, installation := range providerReviewFeedbackContentInstallations {
+		providerReviewFeedbackContentProviders = append(providerReviewFeedbackContentProviders, installation.Provider)
+	}
+	providerReviewFeedbackContentProviders = uniqueSorted(providerReviewFeedbackContentProviders)
 	m := v1.CapabilityManifest{
 		RunnerID:                              d.RunnerID,
 		CollectedAt:                           time.Now().UTC(),
@@ -90,9 +111,15 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		SourcePublicationProviders:            sourcePublicationProviders,
 		PreviewObservationProfiles:            previewObservationProfiles,
 		ReviewerIdentityVerificationProviders: reviewerIdentityProviders,
-		ReviewerIdentityVerificationInstallations: reviewerIdentityInstallations,
-		ProviderReviewerAssignmentProviders:       providerReviewerAssignmentProviders,
-		ProviderReviewerAssignmentInstallations:   providerReviewerAssignmentInstallations,
+		ReviewerIdentityVerificationInstallations:             reviewerIdentityInstallations,
+		ProviderReviewerAssignmentProviders:                   providerReviewerAssignmentProviders,
+		ProviderReviewerAssignmentInstallations:               providerReviewerAssignmentInstallations,
+		ProviderReviewerAssignmentReconciliationProviders:     providerReviewerAssignmentReconciliationProviders,
+		ProviderReviewerAssignmentReconciliationInstallations: providerReviewerAssignmentReconciliationInstallations,
+		ProviderReviewObservationProviders:                    providerReviewObservationProviders,
+		ProviderReviewObservationInstallations:                providerReviewObservationInstallations,
+		ProviderReviewFeedbackContentProviders:                providerReviewFeedbackContentProviders,
+		ProviderReviewFeedbackContentInstallations:            providerReviewFeedbackContentInstallations,
 	}
 	if len(sourcePublicationProviders) != 0 {
 		m.SourcePublicationTransportVersion = v1.SourcePublicationTransportVersion
@@ -105,6 +132,15 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	}
 	if len(providerReviewerAssignmentInstallations) != 0 {
 		m.ProviderReviewerAssignmentTransportVersion = v1.ProviderReviewerAssignmentTransportVersion
+	}
+	if len(providerReviewerAssignmentReconciliationInstallations) != 0 {
+		m.ProviderReviewerAssignmentReconciliationTransportVersion = v1.ProviderReviewerAssignmentReconciliationTransportVersion
+	}
+	if len(providerReviewObservationInstallations) != 0 {
+		m.ProviderReviewObservationTransportVersion = v1.ProviderReviewObservationTransportVersion
+	}
+	if len(providerReviewFeedbackContentInstallations) != 0 {
+		m.ProviderReviewFeedbackContentTransportVersion = v1.ProviderReviewFeedbackContentTransportVersion
 	}
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(".", &fs); err == nil {
@@ -196,6 +232,22 @@ func cloneProviderReviewerAssignmentInstallations(
 	sort.Slice(result, func(left, right int) bool {
 		return result[left].InstallationID < result[right].InstallationID
 	})
+	return result
+}
+
+func cloneProviderReviewerAssignmentReconciliationInstallations(values []v1.ProviderReviewerAssignmentReconciliationInstallationCapability) []v1.ProviderReviewerAssignmentReconciliationInstallationCapability {
+	result := append([]v1.ProviderReviewerAssignmentReconciliationInstallationCapability(nil), values...)
+	sort.Slice(result, func(left, right int) bool { return result[left].InstallationID < result[right].InstallationID })
+	return result
+}
+func cloneProviderReviewObservationInstallations(values []v1.ProviderReviewObservationInstallationCapability) []v1.ProviderReviewObservationInstallationCapability {
+	result := append([]v1.ProviderReviewObservationInstallationCapability(nil), values...)
+	sort.Slice(result, func(i, j int) bool { return result[i].InstallationID < result[j].InstallationID })
+	return result
+}
+func cloneProviderReviewFeedbackContentInstallations(values []v1.ProviderReviewFeedbackContentInstallationCapability) []v1.ProviderReviewFeedbackContentInstallationCapability {
+	result := append([]v1.ProviderReviewFeedbackContentInstallationCapability(nil), values...)
+	sort.Slice(result, func(i, j int) bool { return result[i].InstallationID < result[j].InstallationID })
 	return result
 }
 

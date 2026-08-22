@@ -12,10 +12,15 @@ import (
 // lease was durably installed but before the command outcome was persisted.
 // Other commands are deliberately re-executed through their idempotent paths.
 func (d *Daemon) commandEffectAlreadyApplied(command v1.CommandPayload) bool {
-	if command.Command != v1.CmdStartJob && command.Command != v1.CmdReviewComment {
+	if command.Command != v1.CmdStartJob && command.Command != v1.CmdReviewComment &&
+		command.Command != v1.CmdReviewFeedbackContinuation {
 		return false
 	}
 	if command.Job == nil || validation.JobSpec(*command.Job) != nil {
+		return false
+	}
+	if command.Command == v1.CmdReviewFeedbackContinuation &&
+		validateReviewFeedbackContinuationCommandBoundary(command) != nil {
 		return false
 	}
 

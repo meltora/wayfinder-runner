@@ -112,6 +112,45 @@ func (registry *Registry) ReadyProviderReviewerAssignmentInstallations() []v1.Pr
 	return result
 }
 
+func (registry *Registry) ReadyProviderReviewerAssignmentReconciliationInstallations() []v1.ProviderReviewerAssignmentReconciliationInstallationCapability {
+	result := make([]v1.ProviderReviewerAssignmentReconciliationInstallationCapability, 0, len(registry.installations))
+	for installationID, installation := range registry.installations {
+		if _, err := readToken(installation.TokenFile); err != nil {
+			continue
+		}
+		result = append(result, v1.ProviderReviewerAssignmentReconciliationInstallationCapability{InstallationID: installationID, Provider: installation.Provider, ProviderInstanceKey: configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL)})
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left].InstallationID < result[right].InstallationID })
+	return result
+}
+
+func (registry *Registry) ReadyProviderReviewObservationInstallations() []v1.ProviderReviewObservationInstallationCapability {
+	result := make([]v1.ProviderReviewObservationInstallationCapability, 0, len(registry.installations))
+	for id, installation := range registry.installations {
+		if _, err := readToken(installation.TokenFile); err != nil {
+			continue
+		}
+		result = append(result, v1.ProviderReviewObservationInstallationCapability{InstallationID: id, Provider: installation.Provider, ProviderInstanceKey: configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL)})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].InstallationID < result[j].InstallationID })
+	return result
+}
+
+func (registry *Registry) ReadyProviderReviewFeedbackContentInstallations() []v1.ProviderReviewFeedbackContentInstallationCapability {
+	result := make([]v1.ProviderReviewFeedbackContentInstallationCapability, 0, len(registry.installations))
+	for id, installation := range registry.installations {
+		if installation.Provider != "github" {
+			continue
+		}
+		if _, err := readToken(installation.TokenFile); err != nil {
+			continue
+		}
+		result = append(result, v1.ProviderReviewFeedbackContentInstallationCapability{InstallationID: id, Provider: installation.Provider, ProviderInstanceKey: configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL)})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].InstallationID < result[j].InstallationID })
+	return result
+}
+
 func (registry *Registry) Publish(
 	ctx context.Context,
 	operation v1.SourcePublicationOperation,
