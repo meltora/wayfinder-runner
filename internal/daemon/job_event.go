@@ -7,7 +7,12 @@ import (
 )
 
 func manifestBoundEvent(job v1.JobSpec, kind string, fields map[string]any, observedAt time.Time) map[string]any {
-	return authorityBoundEvent(job.ManifestAuthority(), job.JobID, job.AttemptID, job.FencingToken, kind, fields, observedAt)
+	payload := authorityBoundEvent(job.ManifestAuthority(), job.JobID, job.AttemptID, job.FencingToken, kind, fields, observedAt)
+	if job.AgentRunAuthority != nil {
+		authority := *job.AgentRunAuthority
+		payload["agent_run_authority"] = authority
+	}
+	return payload
 }
 
 func authorityBoundEvent(authority v1.ManifestAuthority, jobID, attemptID string, fencingToken uint64, kind string, fields map[string]any, observedAt time.Time) map[string]any {

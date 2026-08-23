@@ -156,6 +156,11 @@ func (s *Store) SaveCheckpoint(cp v1.Checkpoint) error {
 	if cp.FencingToken == 0 || cp.CreatedAt.IsZero() {
 		return fmt.Errorf("checkpoint requires fencing token and creation time")
 	}
+	if cp.TrustedRecovery != nil {
+		if err := validation.TrustedRecoveryCheckpoint(*cp.TrustedRecovery); err != nil {
+			return err
+		}
+	}
 	for field, value := range map[string]string{
 		"plan_step": cp.PlanStep, "branch_state": cp.BranchState, "next_action": cp.NextAction,
 	} {

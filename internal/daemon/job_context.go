@@ -23,6 +23,10 @@ func (jr *jobRunner) jobContext() map[string]any {
 	if jr.job.PlanRevisionContext != nil {
 		result["plan_revision_context"] = jr.job.PlanRevisionContext
 	}
+	if jr.job.AgentRunAuthority != nil {
+		authority := *jr.job.AgentRunAuthority
+		result["agent_run_authority"] = authority
+	}
 	if checks := jr.runnableChecks(); checks != nil {
 		result["runnable_checks"] = checks
 	}

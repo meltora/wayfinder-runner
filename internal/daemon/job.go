@@ -33,14 +33,19 @@ type jobRunner struct {
 	proc     supervisor.Process
 	logger   *slog.Logger
 
-	ctx             context.Context
-	cancel          context.CancelFunc
-	procMu          sync.Mutex
-	cancelled       bool
-	leaseLost       bool
-	sessionID       string
-	providerError   string
-	capacityFailure *provider.CapacityFailure
+	ctx               context.Context
+	cancel            context.CancelFunc
+	controlMu         sync.Mutex
+	procMu            sync.Mutex
+	cancelled         bool
+	leaseLost         bool
+	completionStarted bool
+	sessionID         string
+	providerError     string
+	capacityFailure   *provider.CapacityFailure
+	controlAction     v1.JobControlAction
+	controlResultDone chan struct{}
+	sanitizedLogs     int
 
 	reviewFeedbackContinuation *v1.ReviewFeedbackContinuationAuthority
 
@@ -852,6 +857,7 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 				jr.procMu.Unlock()
 			}
 			jr.logger.Info("agent event", "type", safeLogValue(m["type"]), "status", safeLogValue(m["status"]))
+			jr.publishSanitizedAgentStatus(m)
 		} else {
 			jr.logger.Debug("unstructured agent output suppressed", "bytes", len(line))
 		}
@@ -886,8 +892,17 @@ func providerErrorMessage(event map[string]any) string {
 
 func safeLogValue(value any) string {
 	s, _ := value.(string)
+	redacted := hookspool.Redact(map[string]any{"value": s})["value"]
+	s, _ = redacted.(string)
+	if s == "[redacted]" {
+		return s
+	}
 	s = strings.NewReplacer("\r", " ", "\n", " ", "\x00", "").Replace(s)
-	return truncate(s, 128)
+	s = strings.TrimSpace(s)
+	if !allowedAgentEventType(s) && !allowedAgentStatus(s) {
+		return "[suppressed]"
+	}
+	return s
 }
 
 func (jr *jobRunner) currentSessionID() string {

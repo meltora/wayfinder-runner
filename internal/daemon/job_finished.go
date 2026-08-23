@@ -15,6 +15,11 @@ type jobOutcome struct {
 }
 
 func (jr *jobRunner) jobFinishedEvent(outcome jobOutcome) v1.JobFinishedEvent {
+	var authority *v1.AgentRunAuthority
+	if jr.job.AgentRunAuthority != nil {
+		copyValue := *jr.job.AgentRunAuthority
+		authority = &copyValue
+	}
 	return v1.JobFinishedEvent{
 		Kind:              "job_finished",
 		ManifestKind:      jr.job.Kind,
@@ -31,5 +36,6 @@ func (jr *jobRunner) jobFinishedEvent(outcome jobOutcome) v1.JobFinishedEvent {
 		FailureCategory:   outcome.FailureCategory,
 		Retryable:         outcome.Retryable,
 		FailureMessage:    truncateUTF8Bytes(outcome.FailureMessage, 512),
+		AgentRunAuthority: authority,
 	}
 }

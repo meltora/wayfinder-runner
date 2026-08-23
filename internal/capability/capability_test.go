@@ -80,6 +80,9 @@ func TestCollect(t *testing.T) {
 	if m.AgentPackDeliveryAuthorityVersion != v1.AgentPackDeliveryAuthorityVersion {
 		t.Fatalf("agent pack authority version = %d", m.AgentPackDeliveryAuthorityVersion)
 	}
+	if m.AgentRunTransportVersion != v1.AgentRunTransportVersion {
+		t.Fatalf("agent run transport version = %d", m.AgentRunTransportVersion)
+	}
 	if len(m.TrustedAgentPackKeyIDs) != 2 || m.TrustedAgentPackKeyIDs[0] != "trust-a" || m.TrustedAgentPackKeyIDs[1] != "trust-z" {
 		t.Fatalf("trusted Agent Pack key IDs = %v", m.TrustedAgentPackKeyIDs)
 	}

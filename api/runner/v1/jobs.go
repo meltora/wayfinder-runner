@@ -31,6 +31,7 @@ type JobSpec struct {
 	AgentPack           *AgentPackRef             `json:"agent_pack,omitempty"`
 	AgentPackAuthority  *SignedAgentPackAuthority `json:"agent_pack_authority,omitempty"`
 	PlanRevisionContext *PlanRevisionContext      `json:"plan_revision_context,omitempty"`
+	AgentRunAuthority   *AgentRunAuthority        `json:"agent_run_authority,omitempty"`
 
 	ApprovedPlanRevision         int                  `json:"approved_plan_revision,omitempty"`
 	RequiredChecks               []string             `json:"required_checks,omitempty"`
@@ -93,6 +94,9 @@ type CommandPayload struct {
 	Job                                      *JobSpec                                           `json:"job,omitempty"`
 	JobID                                    string                                             `json:"job_id,omitempty"`
 	AttemptID                                string                                             `json:"attempt_id,omitempty"`
+	LeaseID                                  string                                             `json:"lease_id,omitempty"`
+	ManifestID                               string                                             `json:"manifest_id,omitempty"`
+	ManifestDigest                           string                                             `json:"manifest_digest,omitempty"`
 	FencingToken                             uint64                                             `json:"fencing_token,omitempty"`
 	LeaseExpiresAt                           time.Time                                          `json:"lease_expires_at,omitempty"`
 	Reason                                   string                                             `json:"reason,omitempty"`
@@ -110,6 +114,12 @@ type CommandPayload struct {
 	PreviewObservation                       *PreviewObservationOperation                       `json:"preview_observation,omitempty"`
 	PreviewLifecycle                         *PreviewLifecycleOperation                         `json:"preview_lifecycle,omitempty"`
 	ReviewerIdentityVerification             *ReviewerIdentityVerificationOperation             `json:"reviewer_identity_verification,omitempty"`
+	ControlID                                string                                             `json:"control_id,omitempty"`
+	Action                                   JobControlAction                                   `json:"action,omitempty"`
+	RequestedAt                              string                                             `json:"requested_at,omitempty"`
+	ExpiresAt                                string                                             `json:"expires_at,omitempty"`
+	AgentRunAuthority                        *AgentRunAuthority                                 `json:"agent_run_authority,omitempty"`
+	CommandDigest                            string                                             `json:"command_digest,omitempty"`
 }
 
 func (command CommandPayload) MarshalJSON() ([]byte, error) {
@@ -148,6 +158,7 @@ const (
 	CmdPreviewObservation                       = "preview_observation"
 	CmdPreviewLifecycle                         = "preview_lifecycle"
 	CmdReviewerIdentityVerification             = "reviewer_identity_verification"
+	CmdControlJob                               = "control_job"
 )
 
 type ProgressReport struct {
@@ -160,14 +171,15 @@ type ProgressReport struct {
 }
 
 type Checkpoint struct {
-	JobID             string    `json:"job_id"`
-	AttemptID         string    `json:"attempt_id"`
-	FencingToken      uint64    `json:"fencing_token"`
-	PlanStep          string    `json:"plan_step,omitempty"`
-	BranchState       string    `json:"branch_state,omitempty"`
-	NextAction        string    `json:"next_action,omitempty"`
-	ProviderSessionID string    `json:"provider_session_id,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	JobID             string                     `json:"job_id"`
+	AttemptID         string                     `json:"attempt_id"`
+	FencingToken      uint64                     `json:"fencing_token"`
+	PlanStep          string                     `json:"plan_step,omitempty"`
+	BranchState       string                     `json:"branch_state,omitempty"`
+	NextAction        string                     `json:"next_action,omitempty"`
+	ProviderSessionID string                     `json:"provider_session_id,omitempty"`
+	CreatedAt         time.Time                  `json:"created_at"`
+	TrustedRecovery   *TrustedRecoveryCheckpoint `json:"recovery_checkpoint,omitempty"`
 }
 
 type ArtifactRef struct {

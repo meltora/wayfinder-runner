@@ -44,6 +44,7 @@ type CapabilityManifest struct {
 	ProviderReviewFeedbackContentTransportVersion            int                                                              `json:"provider_review_feedback_content_transport_version,omitempty"`
 	ProviderReviewFeedbackContentProviders                   []string                                                         `json:"provider_review_feedback_content_providers,omitempty"`
 	ProviderReviewFeedbackContentInstallations               []ProviderReviewFeedbackContentInstallationCapability            `json:"provider_review_feedback_content_installations,omitempty"`
+	AgentRunTransportVersion                                 int                                                              `json:"agent_run_transport_version,omitempty"`
 	Signature                                                string                                                           `json:"signature"`
 }
 

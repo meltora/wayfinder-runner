@@ -931,6 +931,9 @@ func (d *Daemon) sourcePublicationCommandFinish(commandID string) {
 }
 
 func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.CommandPayload) error {
+	if err := validateJobControlCommandBoundary(cmd, time.Now()); err != nil {
+		return err
+	}
 	if err := validateSourcePublicationCommandBoundary(cmd); err != nil {
 		return err
 	}
@@ -988,6 +991,8 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 		return d.startReviewFeedbackContinuation(ctx, *cmd.Job, *cmd.ReviewFeedbackContinuation)
 	case v1.CmdCancelJob:
 		return d.cancelJob(ctx, cmd.AttemptID, cmd.Reason)
+	case v1.CmdControlJob:
+		return d.executeJobControl(ctx, env.ID, cmd.JobControlOperation())
 	case v1.CmdRenewLease:
 		if err := validation.ID("attempt_id", cmd.AttemptID); err != nil {
 			return err

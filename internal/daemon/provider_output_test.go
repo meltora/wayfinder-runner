@@ -63,6 +63,18 @@ func TestProviderErrorMessageExtractsAndRedactsStructuredErrors(t *testing.T) {
 	}
 }
 
+func TestSafeLogValueRedactsCredentialShapedProviderMetadata(t *testing.T) {
+	if got := safeLogValue("Bearer abcdefghijklmnop"); got != "[redacted]" {
+		t.Fatalf("safeLogValue()=%q", got)
+	}
+	if got := safeLogValue("private arbitrary provider detail"); got != "[suppressed]" {
+		t.Fatalf("safeLogValue()=%q", got)
+	}
+	if got := safeLogValue("success"); got != "success" {
+		t.Fatalf("safeLogValue()=%q", got)
+	}
+}
+
 func TestCapacityResumePolicyDefaultsToManual(t *testing.T) {
 	if got := (&jobRunner{}).effectiveCapacityResumePolicy(); got != "manual" {
 		t.Fatalf("default resume policy = %q", got)

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
@@ -12,6 +13,13 @@ import (
 // lease was durably installed but before the command outcome was persisted.
 // Other commands are deliberately re-executed through their idempotent paths.
 func (d *Daemon) commandEffectAlreadyApplied(command v1.CommandPayload) bool {
+	if command.Command == v1.CmdControlJob {
+		if command.ControlID == "" {
+			return false
+		}
+		exists, err := d.journal.HasRecord(context.Background(), jobControlResultEventID(command.ControlID))
+		return err == nil && exists
+	}
 	if command.Command != v1.CmdStartJob && command.Command != v1.CmdReviewComment &&
 		command.Command != v1.CmdReviewFeedbackContinuation {
 		return false

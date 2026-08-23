@@ -15,6 +15,8 @@ func TestJobFinishedEventBindsTrustedJobAuthorityAndBoundsDetail(t *testing.T) {
 	job := withTestAuthority(v1.JobSpec{
 		JobID: "job-1", AttemptID: "attempt-1", Kind: v1.JobKindBuild, FencingToken: 42,
 	})
+	authority := v1.AgentRunAuthority{SchemaVersion: 1, AgentRunID: "agent-run-1", StepRunID: "step-run-1", StepSequence: 1}
+	job.AgentRunAuthority = &authority
 	jr := &jobRunner{job: job, sessionID: "session-1"}
 	event := jr.jobFinishedEvent(jobOutcome{
 		State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentExit,
@@ -30,6 +32,9 @@ func TestJobFinishedEventBindsTrustedJobAuthorityAndBoundsDetail(t *testing.T) {
 	}
 	if len(event.FailureMessage) > 512 {
 		t.Fatalf("failure message bytes = %d", len(event.FailureMessage))
+	}
+	if event.AgentRunAuthority == nil || *event.AgentRunAuthority != authority || event.AgentRunAuthority == job.AgentRunAuthority {
+		t.Fatalf("terminal AgentRun authority was not copied: %#v", event.AgentRunAuthority)
 	}
 }
 

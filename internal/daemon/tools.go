@@ -219,11 +219,17 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		if err != nil {
 			return nil, err
 		}
+		var agentRunAuthority *v1.AgentRunAuthority
+		if jr.job.AgentRunAuthority != nil {
+			copyValue := *jr.job.AgentRunAuthority
+			agentRunAuthority = &copyValue
+		}
 		if err := spool.Append(hookspool.Event{
 			Type: eventType, Timestamp: time.Now().UTC(), ManifestKind: jr.job.Kind,
 			LeaseID: jr.job.LeaseID, JobID: jr.job.JobID, AttemptID: jr.job.AttemptID,
 			ManifestID: jr.job.ManifestID, ManifestDigest: jr.job.ManifestDigest,
-			FencingToken: jr.job.FencingToken,
+			FencingToken:      jr.job.FencingToken,
+			AgentRunAuthority: agentRunAuthority,
 		}); err != nil {
 			return nil, err
 		}
@@ -484,10 +490,10 @@ func (jr *jobRunner) handlePublishArtifact(ctx context.Context, raw map[string]a
 	if name == "" || relPath == "" {
 		return nil, fmt.Errorf("name and path are required")
 	}
+	if (jr.job.AgentRunAuthority != nil && strings.TrimSpace(contentType) == "") || len(contentType) > 200 {
+		return nil, fmt.Errorf("content_type is required and must be at most 200 bytes")
+	}
 	if contentType != "" {
-		if len(contentType) > 255 {
-			return nil, fmt.Errorf("content_type is too long")
-		}
 		if _, _, err := mime.ParseMediaType(contentType); err != nil {
 			return nil, fmt.Errorf("invalid content_type: %w", err)
 		}
@@ -501,7 +507,12 @@ func (jr *jobRunner) handlePublishArtifact(ctx context.Context, raw map[string]a
 	if err != nil {
 		return nil, err
 	}
-	pending, err := jr.d.queueArtifactUpload(ctx, jr.job.ManifestAuthority(), *ref, storedPath)
+	var agentRunAuthority *v1.AgentRunAuthority
+	if jr.job.AgentRunAuthority != nil {
+		authority := *jr.job.AgentRunAuthority
+		agentRunAuthority = &authority
+	}
+	pending, err := jr.d.queueArtifactUpload(ctx, jr.job.ManifestAuthority(), agentRunAuthority, *ref, storedPath)
 	if err != nil {
 		_ = os.Remove(storedPath)
 		return nil, fmt.Errorf("queue artifact upload: %w", err)

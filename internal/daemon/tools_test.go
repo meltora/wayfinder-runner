@@ -100,6 +100,8 @@ func testJobRunner(t *testing.T) (*jobRunner, *capturedEvents) {
 
 func TestInternalHookEventOnlySpoolsAllowlistedMetadata(t *testing.T) {
 	jr, _ := testJobRunner(t)
+	authority := v1.AgentRunAuthority{SchemaVersion: 1, AgentRunID: "agent-run-1", StepRunID: "step-run-1", StepSequence: 1}
+	jr.job.AgentRunAuthority = &authority
 	_, err := call(t, jr, mcpbridge.InternalHookEventTool, `{"event_type":"post-tool","idempotency_key":"hook-1"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +119,9 @@ func TestInternalHookEventOnlySpoolsAllowlistedMetadata(t *testing.T) {
 		event.LeaseID != jr.job.LeaseID || event.FencingToken != jr.job.FencingToken ||
 		event.ManifestID != jr.job.ManifestID || event.ManifestDigest != jr.job.ManifestDigest {
 		t.Fatalf("hook telemetry authority=%+v", event)
+	}
+	if event.AgentRunAuthority == nil || *event.AgentRunAuthority != authority {
+		t.Fatalf("hook AgentRun authority=%+v", event.AgentRunAuthority)
 	}
 	if _, err := call(t, jr, mcpbridge.InternalHookEventTool, `{"event_type":"post-tool","data":{"source":"repository contents"},"idempotency_key":"hook-2"}`); err == nil {
 		t.Fatal("hook telemetry accepted arbitrary data")

@@ -26,15 +26,16 @@ const (
 )
 
 type Event struct {
-	Type           string     `json:"type"`
-	Timestamp      time.Time  `json:"timestamp"`
-	ManifestKind   v1.JobKind `json:"manifest_kind"`
-	LeaseID        string     `json:"lease_id"`
-	JobID          string     `json:"job_id"`
-	AttemptID      string     `json:"attempt_id"`
-	ManifestID     string     `json:"manifest_id"`
-	ManifestDigest string     `json:"manifest_digest"`
-	FencingToken   uint64     `json:"fencing_token"`
+	Type              string                `json:"type"`
+	Timestamp         time.Time             `json:"timestamp"`
+	ManifestKind      v1.JobKind            `json:"manifest_kind"`
+	LeaseID           string                `json:"lease_id"`
+	JobID             string                `json:"job_id"`
+	AttemptID         string                `json:"attempt_id"`
+	ManifestID        string                `json:"manifest_id"`
+	ManifestDigest    string                `json:"manifest_digest"`
+	FencingToken      uint64                `json:"fencing_token"`
+	AgentRunAuthority *v1.AgentRunAuthority `json:"agent_run_authority,omitempty"`
 }
 
 var secretKeyPattern = regexp.MustCompile(`(?i)(^|[_-])(api[_-]?key|token|secret|password|cookie|authorization)($|[_-])`)
@@ -247,6 +248,11 @@ func validateEvent(ev Event) error {
 	}
 	if ev.FencingToken == 0 || ev.FencingToken > 9_007_199_254_740_991 {
 		return fmt.Errorf("hook event fencing token is invalid")
+	}
+	if ev.AgentRunAuthority != nil {
+		if err := validation.AgentRunAuthority(*ev.AgentRunAuthority); err != nil {
+			return err
+		}
 	}
 	return nil
 }

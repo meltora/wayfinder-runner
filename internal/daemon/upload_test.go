@@ -19,6 +19,8 @@ import (
 
 func TestQueuedArtifactUploadsWithFencingAndRegistersOnce(t *testing.T) {
 	jr, cap := testJobRunner(t)
+	authority := v1.AgentRunAuthority{SchemaVersion: 1, AgentRunID: "agent-run-1", StepRunID: "step-run-1", StepSequence: 1}
+	jr.job.AgentRunAuthority = &authority
 	var uploads int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uploads++
@@ -38,7 +40,7 @@ func TestQueuedArtifactUploadsWithFencingAndRegistersOnce(t *testing.T) {
 	if err := os.WriteFile(source, []byte("artifact body"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := call(t, jr, "platform_publish_artifact", `{"name":"result.txt","path":"result.txt","idempotency_key":"upload-ok"}`)
+	result, err := call(t, jr, "platform_publish_artifact", `{"name":"result.txt","path":"result.txt","content_type":"text/plain","idempotency_key":"upload-ok"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +61,9 @@ func TestQueuedArtifactUploadsWithFencingAndRegistersOnce(t *testing.T) {
 	}
 	if event["name"] != "result.txt" || event["artifact"] != nil || event["observed_at"] == nil {
 		t.Fatalf("artifact event does not match strict wire shape: %v", event)
+	}
+	if event["agent_run_authority"] != authority {
+		t.Fatalf("artifact event agent authority=%v", event["agent_run_authority"])
 	}
 	if records, err := jr.d.journal.Unacked(context.Background(), "upload", 10); err != nil || len(records) != 0 {
 		t.Fatalf("pending uploads = %v, %v", records, err)

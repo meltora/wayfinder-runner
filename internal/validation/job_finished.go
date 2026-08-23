@@ -33,6 +33,11 @@ func JobFinishedEvent(event v1.JobFinishedEvent) error {
 			return err
 		}
 	}
+	if event.AgentRunAuthority != nil {
+		if err := AgentRunAuthority(*event.AgentRunAuthority); err != nil {
+			return err
+		}
+	}
 	if err := boundedText("failure_message", event.FailureMessage, 512, false); err != nil {
 		return err
 	}

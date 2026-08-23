@@ -13,6 +13,10 @@ import (
 )
 
 func (jr *jobRunner) completeJob(outcome jobOutcome, capacityEvent *v1.ProviderCapacityExhaustedEvent) {
+	jr.procMu.Lock()
+	jr.completionStarted = true
+	jr.procMu.Unlock()
+	jr.awaitControlResult()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	outcome, capacityEvent = jr.enforceCompletionAuthority(outcome, capacityEvent)

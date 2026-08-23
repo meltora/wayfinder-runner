@@ -82,10 +82,11 @@ func (u *artifactUploader) Upload(ctx context.Context, jobID, attemptID, name, d
 }
 
 type pendingArtifactUpload struct {
-	RecordID  string               `json:"record_id"`
-	Authority v1.ManifestAuthority `json:"authority"`
-	Artifact  v1.ArtifactRef       `json:"artifact"`
-	Path      string               `json:"path"`
+	RecordID          string                `json:"record_id"`
+	Authority         v1.ManifestAuthority  `json:"authority"`
+	AgentRunAuthority *v1.AgentRunAuthority `json:"agent_run_authority,omitempty"`
+	Artifact          v1.ArtifactRef        `json:"artifact"`
+	Path              string                `json:"path"`
 }
 
 type permanentUploadError struct{ err error }
@@ -100,13 +101,18 @@ func permanentUpload(err error) error {
 	return permanentUploadError{err: err}
 }
 
-func (d *Daemon) queueArtifactUpload(ctx context.Context, authority v1.ManifestAuthority, ref v1.ArtifactRef, storedPath string) (*pendingArtifactUpload, error) {
+func (d *Daemon) queueArtifactUpload(ctx context.Context, authority v1.ManifestAuthority, agentRunAuthority *v1.AgentRunAuthority, ref v1.ArtifactRef, storedPath string) (*pendingArtifactUpload, error) {
 	relative, err := filepath.Rel(d.collectors.Root, storedPath)
 	if err != nil {
 		return nil, err
 	}
+	var authorityCopy *v1.AgentRunAuthority
+	if agentRunAuthority != nil {
+		value := *agentRunAuthority
+		authorityCopy = &value
+	}
 	pending := &pendingArtifactUpload{
-		RecordID: "upload-" + newEventID(), Authority: authority,
+		RecordID: "upload-" + newEventID(), Authority: authority, AgentRunAuthority: authorityCopy,
 		Artifact: ref, Path: filepath.ToSlash(relative),
 	}
 	raw, err := json.Marshal(pending)
@@ -146,12 +152,17 @@ func (d *Daemon) processArtifactUpload(ctx context.Context, pending pendingArtif
 	if pending.Artifact.SizeBytes < 0 || pending.Artifact.SizeBytes > 256<<20 {
 		return permanentUpload(fmt.Errorf("artifact size is invalid"))
 	}
+	if (pending.AgentRunAuthority != nil && strings.TrimSpace(pending.Artifact.ContentType) == "") || len(pending.Artifact.ContentType) > 200 {
+		return permanentUpload(fmt.Errorf("artifact content type is invalid"))
+	}
 	if pending.Artifact.ContentType != "" {
-		if len(pending.Artifact.ContentType) > 200 {
-			return permanentUpload(fmt.Errorf("artifact content type is too long"))
-		}
 		if _, _, err := mime.ParseMediaType(pending.Artifact.ContentType); err != nil {
 			return permanentUpload(fmt.Errorf("artifact content type is invalid"))
+		}
+	}
+	if pending.AgentRunAuthority != nil {
+		if err := validation.AgentRunAuthority(*pending.AgentRunAuthority); err != nil {
+			return permanentUpload(err)
 		}
 	}
 	file, err := safeio.OpenRegular(d.collectors.Root, pending.Path)
@@ -195,6 +206,10 @@ func (d *Daemon) processArtifactUpload(ctx context.Context, pending pendingArtif
 			"digest_sha256": pending.Artifact.DigestSHA256, "size_bytes": pending.Artifact.SizeBytes,
 		}, time.Now(),
 	)
+	if pending.AgentRunAuthority != nil {
+		authority := *pending.AgentRunAuthority
+		event["agent_run_authority"] = authority
+	}
 	if err := d.sendEventWithID(ctx, "artifact-event-"+pending.RecordID, event); err != nil {
 		return err
 	}

@@ -51,4 +51,5 @@ type JobFinishedEvent struct {
 	FailureCategory   AgentPackMaterializationFailureCategory `json:"failure_category,omitempty"`
 	Retryable         *bool                                   `json:"retryable,omitempty"`
 	FailureMessage    string                                  `json:"failure_message,omitempty"`
+	AgentRunAuthority *AgentRunAuthority                      `json:"agent_run_authority,omitempty"`
 }
