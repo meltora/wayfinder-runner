@@ -27,6 +27,7 @@ import (
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/lease"
+	"github.com/example/app-runner/internal/previewlifecycle"
 	"github.com/example/app-runner/internal/previewobserver"
 	"github.com/example/app-runner/internal/runlock"
 	"github.com/example/app-runner/internal/safeio"
@@ -77,6 +78,10 @@ type Daemon struct {
 	previewObservationCommandMu                           sync.Mutex
 	previewObservationCommandActive                       map[string]struct{}
 	previewObservationCommands                            sync.WaitGroup
+	previewLifecycleController                            previewLifecycleController
+	previewLifecycleCommandMu                             sync.Mutex
+	previewLifecycleCommandActive                         map[string]struct{}
+	previewLifecycleCommands                              sync.WaitGroup
 	reviewerIdentityVerifier                              reviewerIdentityVerifier
 	reviewerIdentityVerificationCommandMu                 sync.Mutex
 	reviewerIdentityVerificationCommandActive             map[string]struct{}
@@ -133,6 +138,14 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 			return nil, fmt.Errorf("initialize preview observer: %w", err)
 		}
 		localPreviewObserver = registry
+	}
+	var localPreviewLifecycleController previewLifecycleController
+	if len(cfg.PreviewLifecycleControllers) != 0 {
+		registry, err := previewlifecycle.NewRegistry(cfg.PreviewLifecycleControllers, previewlifecycle.Dependencies{})
+		if err != nil {
+			return nil, fmt.Errorf("initialize preview lifecycle controller: %w", err)
+		}
+		localPreviewLifecycleController = registry
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -229,6 +242,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		updateIPC:                            updateClient,
 		sourcePublicationPublisher:           publicationPublisher,
 		previewObserver:                      localPreviewObserver,
+		previewLifecycleController:           localPreviewLifecycleController,
 		reviewerIdentityVerifier:             identityVerifier,
 		providerReviewerAssigner:             reviewerAssigner,
 		providerReviewerAssignmentReconciler: reviewerAssignmentReconciler,
@@ -306,6 +320,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer func() {
 		d.sourcePublicationCommands.Wait()
 		d.previewObservationCommands.Wait()
+		d.previewLifecycleCommands.Wait()
 		d.reviewerIdentityVerificationCommands.Wait()
 		d.providerReviewerAssignmentCommands.Wait()
 		d.providerReviewerAssignmentReconciliationCommands.Wait()
@@ -460,6 +475,9 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	}
 	if d.previewObserver != nil {
 		det.PreviewObservationProfiles = d.previewObserver.ReadyProfiles()
+	}
+	if d.previewLifecycleController != nil {
+		det.PreviewLifecycleProfiles = d.previewLifecycleController.ReadyProfiles()
 	}
 	if d.reviewerIdentityVerifier != nil {
 		det.ReviewerIdentityVerificationInstallations = d.reviewerIdentityVerifier.ReadyReviewerIdentityInstallations()
@@ -701,6 +719,7 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		decodeErr == nil && cmd.Command == v1.CmdSourcePublication
 	asyncPreviewObservation :=
 		decodeErr == nil && cmd.Command == v1.CmdPreviewObservation
+	asyncPreviewLifecycle := decodeErr == nil && cmd.Command == v1.CmdPreviewLifecycle
 	asyncReviewerIdentityVerification :=
 		decodeErr == nil && cmd.Command == v1.CmdReviewerIdentityVerification
 	asyncProviderReviewerAssignment :=
@@ -712,6 +731,9 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		return nil
 	}
 	if asyncPreviewObservation && d.previewObservationCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncPreviewLifecycle && d.previewLifecycleCommandIsActive(env.ID) {
 		return nil
 	}
 	if asyncReviewerIdentityVerification && d.reviewerIdentityVerificationCommandIsActive(env.ID) {
@@ -767,6 +789,14 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 			claimOwner,
 			effectMayHaveRun,
 		)
+		return nil
+	}
+	if asyncPreviewLifecycle {
+		if !d.previewLifecycleCommandStart(env.ID) {
+			return nil
+		}
+		d.previewLifecycleCommands.Add(1)
+		go d.completePreviewLifecycleCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
 		return nil
 	}
 	if asyncReviewerIdentityVerification {
@@ -922,6 +952,9 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	if err := validatePreviewObservationCommandBoundary(cmd); err != nil {
 		return err
 	}
+	if err := validatePreviewLifecycleCommandBoundary(cmd); err != nil {
+		return err
+	}
 	if err := validateReviewerIdentityVerificationCommandBoundary(cmd); err != nil {
 		return err
 	}
@@ -1030,6 +1063,11 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executePreviewObservation(ctx, env.ID, *cmd.PreviewObservation)
+	case v1.CmdPreviewLifecycle:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executePreviewLifecycle(ctx, env.ID, *cmd.PreviewLifecycle)
 	case v1.CmdReviewerIdentityVerification:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)

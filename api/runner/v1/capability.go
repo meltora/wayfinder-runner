@@ -27,6 +27,8 @@ type CapabilityManifest struct {
 	SourcePublicationProviders                               []string                                                         `json:"source_publication_providers,omitempty"`
 	PreviewObservationTransportVersion                       int                                                              `json:"preview_observation_transport_version,omitempty"`
 	PreviewObservationProfiles                               []PreviewObservationProfileCapability                            `json:"preview_observation_profiles,omitempty"`
+	PreviewLifecycleTransportVersion                         int                                                              `json:"preview_lifecycle_transport_version,omitempty"`
+	PreviewLifecycleProfiles                                 []PreviewLifecycleProfileCapability                              `json:"preview_lifecycle_profiles,omitempty"`
 	ReviewerIdentityVerificationTransportVersion             int                                                              `json:"reviewer_identity_verification_transport_version,omitempty"`
 	ReviewerIdentityVerificationProviders                    []string                                                         `json:"reviewer_identity_verification_providers,omitempty"`
 	ReviewerIdentityVerificationInstallations                []ReviewerIdentityVerificationInstallationCapability             `json:"reviewer_identity_verification_installations,omitempty"`

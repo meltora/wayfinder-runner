@@ -108,6 +108,7 @@ type CommandPayload struct {
 	ProviderReviewFeedbackContent            *ProviderReviewFeedbackContentOperation            `json:"provider_review_feedback_content,omitempty"`
 	ReviewFeedbackContinuation               *ReviewFeedbackContinuationAuthority               `json:"review_feedback_continuation,omitempty"`
 	PreviewObservation                       *PreviewObservationOperation                       `json:"preview_observation,omitempty"`
+	PreviewLifecycle                         *PreviewLifecycleOperation                         `json:"preview_lifecycle,omitempty"`
 	ReviewerIdentityVerification             *ReviewerIdentityVerificationOperation             `json:"reviewer_identity_verification,omitempty"`
 }
 
@@ -145,6 +146,7 @@ const (
 	CmdProviderReviewFeedbackContent            = "provider_review_feedback_content"
 	CmdReviewFeedbackContinuation               = "review_feedback_continuation"
 	CmdPreviewObservation                       = "preview_observation"
+	CmdPreviewLifecycle                         = "preview_lifecycle"
 	CmdReviewerIdentityVerification             = "reviewer_identity_verification"
 )
 

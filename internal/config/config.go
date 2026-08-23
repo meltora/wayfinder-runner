@@ -51,6 +51,7 @@ type Config struct {
 	Checks                         map[string]CheckConfig                         `yaml:"checks,omitempty"`
 	SourcePublicationInstallations map[string]SourcePublicationInstallationConfig `yaml:"source_publication_installations,omitempty"`
 	PreviewObservationProfiles     map[string]PreviewObservationProfileConfig     `yaml:"preview_observation_profiles,omitempty"`
+	PreviewLifecycleControllers    map[string]PreviewLifecycleControllerConfig    `yaml:"preview_lifecycle_controllers,omitempty"`
 	Labels                         map[string]string                              `yaml:"labels,omitempty"`
 }
 
@@ -177,6 +178,7 @@ func Normalize(in Config) Config {
 		}
 	}
 	out.PreviewObservationProfiles = normalizePreviewObservationProfiles(in.PreviewObservationProfiles)
+	out.PreviewLifecycleControllers = normalizePreviewLifecycleControllers(in.PreviewLifecycleControllers)
 	out.AllowedArtifactOrigins = append([]string(nil), in.AllowedArtifactOrigins...)
 	return out
 }
@@ -365,6 +367,9 @@ func (c Config) Validate() error {
 		}
 	}
 	if err := validatePreviewObservationProfiles(c.PreviewObservationProfiles); err != nil {
+		return err
+	}
+	if err := validatePreviewLifecycleControllers(c.PreviewLifecycleControllers); err != nil {
 		return err
 	}
 	return nil

@@ -30,6 +30,7 @@ type Detector struct {
 	ProbeDocker                                           func(ctx context.Context) isolation.DockerInfo
 	SourcePublicationProviders                            []string
 	PreviewObservationProfiles                            []v1.PreviewObservationProfileCapability
+	PreviewLifecycleProfiles                              []v1.PreviewLifecycleProfileCapability
 	ReviewerIdentityVerificationInstallations             []v1.ReviewerIdentityVerificationInstallationCapability
 	ProviderReviewerAssignmentInstallations               []v1.ProviderReviewerAssignmentInstallationCapability
 	ProviderReviewerAssignmentReconciliationInstallations []v1.ProviderReviewerAssignmentReconciliationInstallationCapability
@@ -66,6 +67,7 @@ func defaultRunVersion(ctx context.Context, name string, args ...string) (string
 func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	sourcePublicationProviders := uniqueSorted(d.SourcePublicationProviders)
 	previewObservationProfiles := clonePreviewObservationProfiles(d.PreviewObservationProfiles)
+	previewLifecycleProfiles := clonePreviewLifecycleProfiles(d.PreviewLifecycleProfiles)
 	reviewerIdentityInstallations := cloneReviewerIdentityInstallations(d.ReviewerIdentityVerificationInstallations)
 	reviewerIdentityProviders := make([]string, 0, len(reviewerIdentityInstallations))
 	for _, installation := range reviewerIdentityInstallations {
@@ -110,6 +112,7 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		TrustedAgentPackKeyIDs:                append([]string(nil), d.trustedAgentPackKeyIDs...),
 		SourcePublicationProviders:            sourcePublicationProviders,
 		PreviewObservationProfiles:            previewObservationProfiles,
+		PreviewLifecycleProfiles:              previewLifecycleProfiles,
 		ReviewerIdentityVerificationProviders: reviewerIdentityProviders,
 		ReviewerIdentityVerificationInstallations:             reviewerIdentityInstallations,
 		ProviderReviewerAssignmentProviders:                   providerReviewerAssignmentProviders,
@@ -126,6 +129,9 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	}
 	if len(previewObservationProfiles) != 0 {
 		m.PreviewObservationTransportVersion = v1.PreviewObservationTransportVersion
+	}
+	if len(previewLifecycleProfiles) != 0 {
+		m.PreviewLifecycleTransportVersion = v1.PreviewLifecycleTransportVersion
 	}
 	if len(reviewerIdentityInstallations) != 0 {
 		m.ReviewerIdentityVerificationTransportVersion = v1.ReviewerIdentityVerificationTransportVersion
@@ -201,6 +207,30 @@ func clonePreviewObservationProfiles(
 	result := make([]v1.PreviewObservationProfileCapability, len(values))
 	for index, value := range values {
 		value.HealthCheckIDs = append([]string(nil), value.HealthCheckIDs...)
+		result[index] = value
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].BlueprintID != result[right].BlueprintID {
+			return result[left].BlueprintID < result[right].BlueprintID
+		}
+		if result[left].Version != result[right].Version {
+			return result[left].Version < result[right].Version
+		}
+		return result[left].Digest < result[right].Digest
+	})
+	return result
+}
+
+func clonePreviewLifecycleProfiles(
+	values []v1.PreviewLifecycleProfileCapability,
+) []v1.PreviewLifecycleProfileCapability {
+	result := make([]v1.PreviewLifecycleProfileCapability, len(values))
+	for index, value := range values {
+		value.Actions = append([]v1.PreviewLifecycleAction(nil), value.Actions...)
+		if value.MaxExtensionMS != nil {
+			copyValue := *value.MaxExtensionMS
+			value.MaxExtensionMS = &copyValue
+		}
 		result[index] = value
 	}
 	sort.Slice(result, func(left, right int) bool {

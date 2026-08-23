@@ -308,6 +308,52 @@ code. An observed failed check is evidence of unhealthy reality; it never
 satisfies readiness. Preview observation cannot approve, merge, transition QA,
 or mark Done.
 
+## Runner-local preview lifecycle controller
+
+Preview extension and destruction use a separate mutation capability backed by
+a customer-operated HTTPS controller. A runner administrator binds each local
+controller to one exact environment-blueprint ID, version, and digest:
+
+```yaml
+preview_lifecycle_controllers:
+  node-web-preview:
+    blueprint_id: node-web-app
+    version: "2026.08.20"
+    digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    controller_url: https://preview-controller.example.com/v1/preview-lifecycle
+    trusted_ca_file: /etc/our-runner/preview-controller-root-ca.pem
+    authorization_file: /run/secrets/our-runner/preview-controller-authorization
+    actions: [destroy, extend]
+    max_extension_ms: 2592000000
+    timeout_seconds: 20
+    max_response_bytes: 65536
+```
+
+The controller URL, CA root, complete Authorization value, actions, timeout,
+and response bound stay local. A control-plane command contains no endpoint,
+method, header, credential, or script. Only profiles with currently readable,
+permission-safe credential and CA files are advertised. `max_extension_ms` is
+mandatory whenever `extend` is advertised, forbidden for destroy-only
+profiles, and bounded to 30 days.
+
+The runner sends one bounded `POST` with controller protocol v1, the exact
+validated operation, its stable idempotency key, and lifecycle fence. Redirects,
+environment proxies, compression, and connection reuse are disabled. TLS,
+headers, response bodies, and total time are bounded. The controller must apply
+an absolute desired expiry for `extend`, or desired absence for `destroy`, and
+return an exact normalized resource state with binding and receipt digests.
+Destroying an already absent resource returns successful `already_absent`; it
+must not return a generic 404 after mutation.
+
+The controller contract reserves 401/403/404/409/429 for definite pre-mutation
+rejections. Every ambiguous post-send condition—including connection loss,
+timeout, 5xx, malformed or truncated success, mismatched returned state, and a
+crossed operation lease—is recorded as `uncertain`, never as success and never
+blindly retried under a new identity. Crash redelivery repeats the same absolute
+desired state under the same idempotency identity and fence. The durable result
+event is journaled before command acknowledgement. A paused or emergency-stopped
+runner rejects both lifecycle actions.
+
 ## Signed Agent Packs
 
 Agent Pack trust is administrator-owned runner configuration, never repository
