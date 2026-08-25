@@ -13,6 +13,12 @@ import (
 // lease was durably installed but before the command outcome was persisted.
 // Other commands are deliberately re-executed through their idempotent paths.
 func (d *Daemon) commandEffectAlreadyApplied(command v1.CommandPayload) bool {
+	if command.Command == v1.CmdWorkIntakeProposal {
+		// Claiming the durable command receipt is the pre-provider paid-call
+		// fence. A processing receipt after restart therefore means the effect
+		// may have run and must never be invoked again automatically.
+		return true
+	}
 	if command.Command == v1.CmdControlJob {
 		if command.ControlID == "" {
 			return false

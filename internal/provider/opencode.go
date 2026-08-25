@@ -104,6 +104,41 @@ func (o *OpenCode) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	}, nil
 }
 
+func (o *OpenCode) BuildPromptOnlySpec(p PromptOnlyParams) (supervisor.Spec, error) {
+	if err := validatePromptOnlyParams(p); err != nil {
+		return supervisor.Spec{}, err
+	}
+	if !openCodeModelIsValid(p.Model) || p.Model == "" {
+		return supervisor.Spec{}, fmt.Errorf("OpenCode prompt-only model must use provider/model format")
+	}
+	config := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"plugin":  []string{},
+		"permission": map[string]any{
+			"*": "deny",
+		},
+	}
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return supervisor.Spec{}, fmt.Errorf("encode OpenCode prompt-only config: %w", err)
+	}
+	bin := p.BinaryPath
+	if bin == "" {
+		bin = "opencode"
+	}
+	env := append(allowedEnvironment(),
+		"OPENCODE_CONFIG_CONTENT="+string(configJSON),
+		"OPENCODE_DISABLE_AUTOUPDATE=1", "OPENCODE_DISABLE_SHARE=1",
+		"OPENCODE_DISABLE_LSP_DOWNLOAD=1", "OPENCODE_DISABLE_DEFAULT_PLUGINS=1",
+		"OPENCODE_DISABLE_PROJECT_CONFIG=1",
+	)
+	return supervisor.Spec{
+		Name: "opencode-work-intake-proposal-" + p.ExecutionID, Command: bin,
+		Args: []string{"run", "--format", "json", "--pure", "--model", p.Model},
+		Dir:  p.WorkDir, Env: env, Stdin: strings.NewReader(p.Prompt),
+	}, nil
+}
+
 func openCodeRuntimeConfig(p StartParams) (map[string]any, error) {
 	permission := map[string]any{
 		"*":                  "deny",

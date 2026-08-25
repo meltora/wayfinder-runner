@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/journal"
@@ -13,6 +14,48 @@ import (
 
 func commandContentDigest(payload any) (string, error) {
 	return v1.CommandContentDigest(payload)
+}
+
+// durableCommandRecordPayload keeps work-intake content memory-only. The
+// receipt table's independently computed content digest remains authoritative
+// for exact-redelivery conflict detection; this record retains only the
+// routing/fence fields needed to audit the paid-call fence and stable result.
+func durableCommandRecordPayload(envelope v1.Envelope, contentDigest string) ([]byte, error) {
+	rawPayload, err := json.Marshal(envelope.Payload)
+	if err != nil {
+		return nil, err
+	}
+	var discriminator struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(rawPayload, &discriminator) != nil || discriminator.Command != v1.CmdWorkIntakeProposal {
+		return json.Marshal(envelope)
+	}
+	command, _ := decodeCommandPayload(envelope.Payload)
+	redacted := struct {
+		Version  int            `json:"version"`
+		Type     v1.MessageType `json:"type"`
+		ID       string         `json:"id"`
+		SentAt   time.Time      `json:"sent_at"`
+		RunnerID string         `json:"runner_id,omitempty"`
+		Receipt  struct {
+			Command             string                          `json:"command"`
+			Authority           *v1.WorkIntakeProposalAuthority `json:"authority,omitempty"`
+			ContentDigest       string                          `json:"content_digest"`
+			StableResultEventID string                          `json:"stable_result_event_id"`
+		} `json:"work_intake_proposal_receipt"`
+	}{
+		Version: envelope.Version, Type: envelope.Type, ID: envelope.ID,
+		SentAt: envelope.SentAt, RunnerID: envelope.RunnerID,
+	}
+	redacted.Receipt.Command = v1.CmdWorkIntakeProposal
+	redacted.Receipt.ContentDigest = contentDigest
+	redacted.Receipt.StableResultEventID = workIntakeProposalResultEventID(envelope.ID)
+	if command.WorkIntakeProposal != nil {
+		authority := command.WorkIntakeProposal.WorkIntakeProposalAuthority
+		redacted.Receipt.Authority = &authority
+	}
+	return json.Marshal(redacted)
 }
 
 func decodeCommandPayload(payload any) (v1.CommandPayload, error) {

@@ -72,6 +72,7 @@ func TestDockerWrap(t *testing.T) {
 		ReadOnlyWorkDir: true, WorkDir: "/workspace/repositories/primary", WorkspaceRoot: "/workspace", JobHome: "/job-home",
 		MCPSock: "/run/job/mcp.sock", MCPTokenFile: "/run/job/token",
 		RunnerID: "runner-1", AttemptID: "attempt-1", NestedSandbox: true,
+		DisableLogs: true,
 		Environment: []string{"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"},
 	})
 	if err != nil {
@@ -87,6 +88,7 @@ func TestDockerWrap(t *testing.T) {
 		"/run/job:/run/job:ro",
 		"-e CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1",
 		"--name our-runner-", "com.ourplatform.runner-id=runner-1", "com.ourplatform.attempt-id=attempt-1",
+		"--log-driver none",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args %q missing %q", joined, want)
@@ -106,6 +108,25 @@ func TestDockerWrapRejectsUnapprovedContainerEnvironment(t *testing.T) {
 		if _, _, err := d.Wrap("opencode", nil, p); err == nil {
 			t.Fatalf("invalid container environment %q accepted", entry)
 		}
+	}
+}
+
+func TestDockerWrapPinsConsultationNetworkIdentityAndDisablesLogs(t *testing.T) {
+	networkID := strings.Repeat("a", 64)
+	_, args, err := (Docker{}).Wrap("codex", []string{"exec"}, Policy{
+		NetworkName: networkID, RunnerID: "runner-1", AttemptID: "attempt-1",
+		ReadOnlyFS: true, DisableLogs: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--network "+networkID) ||
+		!strings.Contains(joined, "--log-driver none") {
+		t.Fatalf("consultation Docker boundary is not identity/log pinned: %s", joined)
+	}
+	if strings.Contains(joined, "provider-egress") {
+		t.Fatalf("reusable network name reached Docker start: %s", joined)
 	}
 }
 

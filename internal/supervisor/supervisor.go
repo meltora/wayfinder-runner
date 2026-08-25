@@ -36,6 +36,7 @@ type Spec struct {
 	Args       []string
 	Dir        string
 	Env        []string
+	Stdin      io.Reader
 	Stdout     io.Writer
 	Stderr     io.Writer
 	RuntimeDir string
@@ -97,6 +98,7 @@ func (d *DirectProcess) Start(ctx context.Context, spec Spec) (Process, error) {
 	cmd := exec.CommandContext(ctx, spec.Command, spec.Args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
+	cmd.Stdin = spec.Stdin
 	cmd.Stdout = spec.Stdout
 	cmd.Stderr = spec.Stderr
 	setProcGroup(cmd)

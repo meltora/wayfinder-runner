@@ -176,8 +176,8 @@ systemctl status our-runner-updater.socket
 
 - No commands: confirm outbound DNS/TLS and the mTLS certificate with `doctor`.
 - Agent cannot reach its provider: `job_network: none` blocks all network. Check
-  the restricted network and its policy labels; do not switch to unrestricted
-  bridge networking.
+  the restricted network identity, discovery labels, and root egress-policy
+  verifier; do not switch to unrestricted bridge networking.
 - Agent starts but publishes nothing: inspect MCP socket/token mounting and the
   signed Agent Pack. Hook events are telemetry and cannot replace MCP results.
 - Build passes but cannot push: verify the service user's trusted Git credential

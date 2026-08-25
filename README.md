@@ -37,8 +37,9 @@ A production deployment also needs:
 
 `job_network: none` is the secure default, but cloud-backed agent CLIs cannot
 operate without an administrator-provisioned restricted egress network. The
-runner verifies that network labels match its configured policy ID; the network
-policy itself must be enforced outside the runner.
+runner verifies that network identity and labels match its configured policy
+ID. Prompt-only consultation additionally requires a fresh effective-policy
+attestation from the root-owned verifier described below.
 
 ## Security and trust model
 
@@ -441,13 +442,34 @@ sudo systemctl status our-runner
 
 For a manually configured rootless daemon, confirm the service's `DOCKER_HOST`
 matches the socket created for the `our-runner` UID. Before enabling restricted
-network access, create the egress-enforced network and apply both labels checked
-by the runner:
+network access, create the egress-enforced network and apply the discovery
+labels checked by the runner:
 
 ```text
 com.ourplatform.egress-enforced=true
 com.ourplatform.egress-policy=<configured egress_policy_id>
 ```
+
+These mutable Docker labels are not proof of effective egress enforcement.
+Prompt-only work-intake consultation also requires a root-authenticated policy
+agent at `egress_policy_verifier_socket` (default
+`/run/our-runner-egress/policy.sock`). Immediately before a provider start, the
+runner acquires a nonce-bound enforcement lease over that authenticated Unix
+connection. The root agent must atomically pin the immutable Docker network ID,
+configured policy ID, enforcement/rules identity, and blocked unauthorized
+reachability for the full lease lifetime; it must close the connection if that
+guarantee is lost. The runner holds the lease until the provider exits and kills
+the provider/container if the verifier disconnects, revokes, or expires it.
+Provider output is accepted only after the agent acknowledges that enforcement
+was held through the runner's nonce-bound release request. Missing, stale,
+mismatched, or ineffective leases fail closed.
+
+This requires a separately deployed root policy agent that is the exclusive
+authority for the applicable host firewall/proxy rules. No such agent is bundled
+with the runner repository; consultation cannot be enabled until one implements
+this lease contract and is provisioned at the configured socket.
+Kernel-authenticated verifier IPC is Linux-only; consultation must remain
+disabled on other operating systems.
 
 Start from [`config.example.yaml`](config.example.yaml). Configuration parsing
 rejects unknown fields, insecure service URLs, mutable image tags, invalid

@@ -22,6 +22,11 @@ job_network: none
 # job_network: restricted
 # job_network_name: runner-egress
 # egress_policy_id: provider-git-v1
+# Prompt-only work-intake consultation additionally requires a root-owned
+# effective-policy lease agent on Linux. It must exclusively pin the applicable
+# host firewall/proxy rules while each authenticated lease connection is open;
+# Docker labels are not treated as proof that enforcement is still active.
+# egress_policy_verifier_socket: /run/our-runner-egress/policy.sock
 labels:
   pool: default
 

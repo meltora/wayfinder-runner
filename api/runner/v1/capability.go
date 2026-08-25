@@ -45,6 +45,12 @@ type CapabilityManifest struct {
 	ProviderReviewFeedbackContentProviders                   []string                                                         `json:"provider_review_feedback_content_providers,omitempty"`
 	ProviderReviewFeedbackContentInstallations               []ProviderReviewFeedbackContentInstallationCapability            `json:"provider_review_feedback_content_installations,omitempty"`
 	AgentRunTransportVersion                                 int                                                              `json:"agent_run_transport_version,omitempty"`
+	WorkIntakeProposalTransportVersion                       int                                                              `json:"work_intake_proposal_transport_version,omitempty"`
+	WorkIntakeProposalAdapter                                string                                                           `json:"work_intake_proposal_adapter,omitempty"`
+	WorkIntakeProposalModel                                  string                                                           `json:"work_intake_proposal_model,omitempty"`
+	WorkIntakeProposalPromptTemplateDigest                   string                                                           `json:"work_intake_proposal_prompt_template_digest,omitempty"`
+	WorkIntakeProposalPolicyDigest                           string                                                           `json:"work_intake_proposal_policy_digest,omitempty"`
+	WorkIntakeProposalModelExecutionConfigDigest             string                                                           `json:"work_intake_proposal_model_execution_config_digest,omitempty"`
 	Signature                                                string                                                           `json:"signature"`
 }
 

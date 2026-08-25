@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/example/app-runner/internal/safeio"
@@ -33,6 +34,7 @@ type Config struct {
 	Supervisor                     string                                         `yaml:"supervisor,omitempty"`
 	Provider                       string                                         `yaml:"provider,omitempty"`
 	AgentModel                     string                                         `yaml:"agent_model,omitempty"`
+	WorkIntakeProposal             WorkIntakeProposalConfig                       `yaml:"work_intake_proposal,omitempty"`
 	ProviderBinaries               map[string]string                              `yaml:"provider_binaries,omitempty"`
 	JobImage                       string                                         `yaml:"job_image,omitempty"`
 	JobMemoryMB                    int                                            `yaml:"job_memory_mb,omitempty"`
@@ -44,6 +46,7 @@ type Config struct {
 	JobNetwork                     string                                         `yaml:"job_network,omitempty"`
 	JobNetworkName                 string                                         `yaml:"job_network_name,omitempty"`
 	EgressPolicyID                 string                                         `yaml:"egress_policy_id,omitempty"`
+	EgressPolicyVerifierSocket     string                                         `yaml:"egress_policy_verifier_socket,omitempty"`
 	UpdateSocketPath               string                                         `yaml:"update_socket_path,omitempty"`
 	AgentPackPublicKeys            map[string]string                              `yaml:"agent_pack_public_keys,omitempty"`
 	AllowedArtifactOrigins         []string                                       `yaml:"allowed_artifact_origins,omitempty"`
@@ -53,6 +56,12 @@ type Config struct {
 	PreviewObservationProfiles     map[string]PreviewObservationProfileConfig     `yaml:"preview_observation_profiles,omitempty"`
 	PreviewLifecycleControllers    map[string]PreviewLifecycleControllerConfig    `yaml:"preview_lifecycle_controllers,omitempty"`
 	Labels                         map[string]string                              `yaml:"labels,omitempty"`
+}
+
+type WorkIntakeProposalConfig struct {
+	Enabled bool   `yaml:"enabled,omitempty"`
+	Adapter string `yaml:"adapter,omitempty"`
+	Model   string `yaml:"model,omitempty"`
 }
 
 type RepositoryConfig struct {
@@ -76,19 +85,20 @@ type SourcePublicationInstallationConfig struct {
 
 func Default() Config {
 	return Config{
-		StateDir:             defaultStateDir(),
-		Transport:            "websocket",
-		Isolation:            "docker",
-		Supervisor:           "auto",
-		Provider:             "codex",
-		JobMemoryMB:          4096,
-		JobCPUs:              2,
-		JobPIDs:              512,
-		ArtifactSpoolMB:      1024,
-		JournalRetentionDays: 30,
-		JournalMaxMB:         512,
-		JobNetwork:           "none",
-		UpdateSocketPath:     "/run/our-runner-updater/control.sock",
+		StateDir:                   defaultStateDir(),
+		Transport:                  "websocket",
+		Isolation:                  "docker",
+		Supervisor:                 "auto",
+		Provider:                   "codex",
+		JobMemoryMB:                4096,
+		JobCPUs:                    2,
+		JobPIDs:                    512,
+		ArtifactSpoolMB:            1024,
+		JournalRetentionDays:       30,
+		JournalMaxMB:               512,
+		JobNetwork:                 "none",
+		UpdateSocketPath:           "/run/our-runner-updater/control.sock",
+		EgressPolicyVerifierSocket: "/run/our-runner-egress/policy.sock",
 	}
 }
 
@@ -134,6 +144,9 @@ func Normalize(in Config) Config {
 	}
 	if out.UpdateSocketPath == "" {
 		out.UpdateSocketPath = defaults.UpdateSocketPath
+	}
+	if out.EgressPolicyVerifierSocket == "" {
+		out.EgressPolicyVerifierSocket = defaults.EgressPolicyVerifierSocket
 	}
 	if in.ProviderBinaries != nil {
 		out.ProviderBinaries = make(map[string]string, len(in.ProviderBinaries))
@@ -267,6 +280,25 @@ func (c Config) Validate() error {
 			return fmt.Errorf("agent_model must use provider/model format")
 		}
 	}
+	if c.WorkIntakeProposal.Enabled {
+		if !workIntakeProposalSupportedOS(runtime.GOOS) {
+			return fmt.Errorf("work_intake_proposal requires Linux kernel-authenticated policy leases")
+		}
+		if c.Isolation != "docker" {
+			return fmt.Errorf("work_intake_proposal requires hardened docker isolation")
+		}
+		if c.JobNetwork != "restricted" {
+			return fmt.Errorf("work_intake_proposal requires an approved restricted job network")
+		}
+		if !supportedProvider(c.WorkIntakeProposal.Adapter) {
+			return fmt.Errorf("work_intake_proposal.adapter must be codex, claude, or opencode when enabled")
+		}
+		if !workIntakeProposalModelPattern.MatchString(c.WorkIntakeProposal.Model) {
+			return fmt.Errorf("work_intake_proposal.model must be nonempty canonical text when enabled")
+		}
+	} else if c.WorkIntakeProposal.Adapter != "" || c.WorkIntakeProposal.Model != "" {
+		return fmt.Errorf("work_intake_proposal adapter/model require enabled: true")
+	}
 	for provider, binary := range c.ProviderBinaries {
 		if !supportedProvider(provider) {
 			return fmt.Errorf("provider binary %q is unsupported", provider)
@@ -300,6 +332,10 @@ func (c Config) Validate() error {
 	if !filepath.IsAbs(c.UpdateSocketPath) || filepath.Clean(c.UpdateSocketPath) != c.UpdateSocketPath ||
 		len(c.UpdateSocketPath) > 100 || strings.ContainsRune(c.UpdateSocketPath, '\x00') {
 		return fmt.Errorf("update_socket_path must be a clean absolute Unix socket path of at most 100 bytes")
+	}
+	if !filepath.IsAbs(c.EgressPolicyVerifierSocket) || filepath.Clean(c.EgressPolicyVerifierSocket) != c.EgressPolicyVerifierSocket ||
+		len(c.EgressPolicyVerifierSocket) > 100 || strings.ContainsRune(c.EgressPolicyVerifierSocket, '\x00') {
+		return fmt.Errorf("egress_policy_verifier_socket must be a clean absolute Unix socket path of at most 100 bytes")
 	}
 	if len(c.AgentPackPublicKeys) > MaxAgentPackPublicKeys {
 		return fmt.Errorf("agent_pack_public_keys must contain at most %d keys", MaxAgentPackPublicKeys)
@@ -462,6 +498,9 @@ func validateServiceURL(raw, secureScheme, developmentScheme string, allowInsecu
 
 var immutableImagePattern = regexp.MustCompile(`^[^\s@]+@sha256:[a-fA-F0-9]{64}$`)
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var workIntakeProposalModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$`)
+
+func workIntakeProposalSupportedOS(goos string) bool { return goos == "linux" }
 
 func validateRepositoryURL(raw string, allowLocal bool) error {
 	if raw == "" {

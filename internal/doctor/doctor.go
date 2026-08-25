@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/example/app-runner/internal/egresspolicy"
 	"github.com/example/app-runner/internal/identity"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/safeio"
@@ -47,13 +48,15 @@ func (r Report) ExitCode() int {
 }
 
 type Options struct {
-	ControlPlaneURL string
-	StateDir        string
-	Isolation       string
-	JobImage        string
-	JobNetwork      string
-	JobNetworkName  string
-	EgressPolicyID  string
+	ControlPlaneURL            string
+	StateDir                   string
+	Isolation                  string
+	JobImage                   string
+	JobNetwork                 string
+	JobNetworkName             string
+	EgressPolicyID             string
+	WorkIntakeProposalEnabled  bool
+	EgressPolicyVerifierSocket string
 }
 
 func Run(ctx context.Context, opts Options) Report {
@@ -72,7 +75,15 @@ func Run(ctx context.Context, opts Options) Report {
 }
 
 var probeNestedSandbox = isolation.ProbeNestedSandbox
-var verifyDockerNetwork = isolation.VerifyDockerNetwork
+var attestDockerNetwork = isolation.AttestDockerNetwork
+var attestEffectivePolicy = func(
+	ctx context.Context,
+	socketPath string,
+	attestation isolation.DockerNetworkAttestation,
+) error {
+	_, err := egresspolicy.NewClient(socketPath).Attest(ctx, attestation.ID, attestation.Name, attestation.PolicyID)
+	return err
+}
 
 func checkRestrictedNetwork(ctx context.Context, opts Options) Check {
 	c := Check{Name: "restricted-egress"}
@@ -88,11 +99,20 @@ func checkRestrictedNetwork(ctx context.Context, opts Options) Check {
 		c.Status, c.Detail = Fail, "unknown job network mode"
 		return c
 	}
-	if err := verifyDockerNetwork(ctx, opts.JobNetworkName, opts.EgressPolicyID); err != nil {
+	attestation, err := attestDockerNetwork(ctx, opts.JobNetworkName, opts.EgressPolicyID)
+	if err != nil {
 		c.Status, c.Detail = Fail, err.Error()
 		return c
 	}
-	c.Status, c.Detail = OK, "verified externally enforced network policy "+opts.EgressPolicyID
+	if opts.WorkIntakeProposalEnabled {
+		if err := attestEffectivePolicy(ctx, opts.EgressPolicyVerifierSocket, attestation); err != nil {
+			c.Status, c.Detail = Fail, "effective consultation egress policy: "+err.Error()
+			return c
+		}
+		c.Status, c.Detail = OK, "verified effective leased egress policy "+opts.EgressPolicyID
+		return c
+	}
+	c.Status, c.Detail = OK, "verified Docker network identity and configured policy label "+opts.EgressPolicyID
 	return c
 }
 

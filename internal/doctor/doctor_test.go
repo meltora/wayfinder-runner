@@ -48,12 +48,19 @@ func TestNestedSandboxProbePassesAndFailsClosed(t *testing.T) {
 }
 
 func TestRestrictedNetworkVerification(t *testing.T) {
-	original := verifyDockerNetwork
-	t.Cleanup(func() { verifyDockerNetwork = original })
+	originalNetwork := attestDockerNetwork
+	originalPolicy := attestEffectivePolicy
+	t.Cleanup(func() {
+		attestDockerNetwork = originalNetwork
+		attestEffectivePolicy = originalPolicy
+	})
 	called := false
-	verifyDockerNetwork = func(context.Context, string, string) error {
+	attestation := isolation.DockerNetworkAttestation{
+		ID: strings.Repeat("a", 64), Name: "egress", PolicyID: "policy-v1", Driver: "bridge", Scope: "local",
+	}
+	attestDockerNetwork = func(context.Context, string, string) (isolation.DockerNetworkAttestation, error) {
 		called = true
-		return nil
+		return attestation, nil
 	}
 	opts := Options{JobNetwork: "restricted", JobNetworkName: "egress", EgressPolicyID: "policy-v1"}
 	if c := checkRestrictedNetwork(context.Background(), opts); c.Status != OK || !called {
@@ -61,6 +68,22 @@ func TestRestrictedNetworkVerification(t *testing.T) {
 	}
 	if c := checkRestrictedNetwork(context.Background(), Options{JobNetwork: "none"}); c.Status != OK {
 		t.Fatalf("none status = %v: %s", c.Status, c.Detail)
+	}
+	policyCalled := false
+	attestEffectivePolicy = func(context.Context, string, isolation.DockerNetworkAttestation) error {
+		policyCalled = true
+		return nil
+	}
+	opts.WorkIntakeProposalEnabled = true
+	opts.EgressPolicyVerifierSocket = "/run/our-runner-egress/policy.sock"
+	if c := checkRestrictedNetwork(context.Background(), opts); c.Status != OK || !policyCalled {
+		t.Fatalf("effective status = %v, called = %t: %s", c.Status, policyCalled, c.Detail)
+	}
+	attestEffectivePolicy = func(context.Context, string, isolation.DockerNetworkAttestation) error {
+		return errors.New("policy lease unavailable")
+	}
+	if c := checkRestrictedNetwork(context.Background(), opts); c.Status != Fail {
+		t.Fatalf("missing effective policy status = %v: %s", c.Status, c.Detail)
 	}
 }
 
@@ -177,17 +200,21 @@ func TestRunExecutesCompleteConfiguredPreflight(t *testing.T) {
 	defer func() { _ = listener.Close() }()
 	originalDocker := probeDocker
 	originalSandbox := probeNestedSandbox
-	originalNetwork := verifyDockerNetwork
+	originalNetwork := attestDockerNetwork
+	originalPolicy := attestEffectivePolicy
 	t.Cleanup(func() {
 		probeDocker = originalDocker
 		probeNestedSandbox = originalSandbox
-		verifyDockerNetwork = originalNetwork
+		attestDockerNetwork = originalNetwork
+		attestEffectivePolicy = originalPolicy
 	})
 	probeDocker = func(context.Context) isolation.DockerInfo {
 		return isolation.DockerInfo{Available: true, Rootless: true, ServerVersion: "test"}
 	}
 	probeNestedSandbox = func(context.Context, string, string) error { return nil }
-	verifyDockerNetwork = func(context.Context, string, string) error { return nil }
+	attestDockerNetwork = func(context.Context, string, string) (isolation.DockerNetworkAttestation, error) {
+		return isolation.DockerNetworkAttestation{}, nil
+	}
 
 	report := Run(context.Background(), Options{
 		ControlPlaneURL: "wss://" + listener.Addr().String() + "/stream",

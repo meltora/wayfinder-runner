@@ -8,8 +8,23 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+var dockerNetworkIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// DockerNetworkAttestation binds a configured network label to Docker's
+// immutable object identity. It deliberately does not claim that mutable host
+// firewall/proxy enforcement is effective; consultation separately requires a
+// fresh root-owned egress-policy attestation.
+type DockerNetworkAttestation struct {
+	ID       string
+	Name     string
+	PolicyID string
+	Driver   string
+	Scope    string
+}
 
 func ContainerName(runnerID, attemptID string) string {
 	digest := sha256.Sum256([]byte(runnerID + "\x00" + attemptID))
@@ -41,22 +56,53 @@ func RemoveRunnerContainers(ctx context.Context, runnerID string) error {
 }
 
 func VerifyDockerNetwork(ctx context.Context, networkName, policyID string) error {
+	_, err := AttestDockerNetwork(ctx, networkName, policyID)
+	return err
+}
+
+func AttestDockerNetwork(ctx context.Context, networkName, policyID string) (DockerNetworkAttestation, error) {
 	if networkName == "" || policyID == "" {
-		return fmt.Errorf("network name and policy ID are required")
+		return DockerNetworkAttestation{}, fmt.Errorf("network name and policy ID are required")
 	}
 	// #nosec G204 -- executable/flags are fixed and networkName is validated configuration, passed as one argv item.
-	cmd := exec.CommandContext(ctx, "docker", "network", "inspect", "--format", "{{json .Labels}}", networkName)
+	cmd := exec.CommandContext(ctx, "docker", "network", "inspect", "--format", "{{json .}}", networkName)
 	cmd.Env = dockerEnvironment()
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("inspect restricted Docker network: %w", err)
+		return DockerNetworkAttestation{}, fmt.Errorf("inspect restricted Docker network: %w", err)
 	}
-	var labels map[string]string
-	if err := json.Unmarshal(out, &labels); err != nil {
-		return fmt.Errorf("decode Docker network labels: %w", err)
+	var inspected struct {
+		ID         string            `json:"Id"`
+		Name       string            `json:"Name"`
+		Driver     string            `json:"Driver"`
+		Scope      string            `json:"Scope"`
+		Internal   bool              `json:"Internal"`
+		Attachable bool              `json:"Attachable"`
+		Ingress    bool              `json:"Ingress"`
+		Labels     map[string]string `json:"Labels"`
 	}
-	if labels["com.ourplatform.egress-enforced"] != "true" || labels["com.ourplatform.egress-policy"] != policyID {
-		return fmt.Errorf("Docker network is not bound to enforced egress policy %q", policyID)
+	if err := json.Unmarshal(out, &inspected); err != nil {
+		return DockerNetworkAttestation{}, fmt.Errorf("decode Docker network attestation: %w", err)
+	}
+	if !dockerNetworkIDPattern.MatchString(inspected.ID) || inspected.Name != networkName ||
+		inspected.Driver != "bridge" || inspected.Scope != "local" || inspected.Internal || inspected.Attachable || inspected.Ingress {
+		return DockerNetworkAttestation{}, fmt.Errorf("Docker network topology is not eligible for restricted consultation")
+	}
+	if inspected.Labels["com.ourplatform.egress-enforced"] != "true" || inspected.Labels["com.ourplatform.egress-policy"] != policyID {
+		return DockerNetworkAttestation{}, fmt.Errorf("Docker network is not bound to enforced egress policy %q", policyID)
+	}
+	return DockerNetworkAttestation{
+		ID: inspected.ID, Name: inspected.Name, PolicyID: policyID, Driver: inspected.Driver, Scope: inspected.Scope,
+	}, nil
+}
+
+func VerifyDockerNetworkAttestation(ctx context.Context, expected DockerNetworkAttestation) error {
+	current, err := AttestDockerNetwork(ctx, expected.Name, expected.PolicyID)
+	if err != nil {
+		return err
+	}
+	if current != expected {
+		return fmt.Errorf("restricted Docker network identity changed")
 	}
 	return nil
 }

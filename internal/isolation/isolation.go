@@ -32,6 +32,7 @@ type Policy struct {
 	RunnerID            string
 	AttemptID           string
 	NestedSandbox       bool
+	DisableLogs         bool
 	Environment         []string
 	ManagedConfigMounts []supervisor.ManagedConfigMount
 }
@@ -91,6 +92,9 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 		"--label", "com.ourplatform.runner-id="+p.RunnerID,
 		"--label", "com.ourplatform.attempt-id="+p.AttemptID,
 	)
+	if p.DisableLogs {
+		dockerArgs = append(dockerArgs, "--log-driver", "none")
+	}
 	if p.MemoryMB > 0 {
 		dockerArgs = append(dockerArgs, "--memory", strconv.Itoa(p.MemoryMB)+"m")
 	}

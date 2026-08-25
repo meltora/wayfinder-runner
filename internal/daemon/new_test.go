@@ -85,6 +85,25 @@ func TestNewRestoresDurableLeaseAndPersistentPause(t *testing.T) {
 	}
 }
 
+func TestNewScavengesStaleWorkIntakeProposalExecutionBeforeServing(t *testing.T) {
+	cfg := enrolledDirectConfig(t)
+	stale := filepath.Join(cfg.StateDir, workIntakeProposalExecutionRootName, "execution-123456")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "prompt-or-result.json"), []byte("sensitive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d, err := New(cfg, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeConstructedDaemon(d)
+	if _, err := os.Lstat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale execution survived daemon startup: %v", err)
+	}
+}
+
 func TestNewRestoresPendingUpdateDrain(t *testing.T) {
 	cfg := enrolledDirectConfig(t)
 	pending := &pendingUpdate{

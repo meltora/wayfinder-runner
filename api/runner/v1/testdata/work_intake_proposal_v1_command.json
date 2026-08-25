@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "type": "command",
+  "id": "work-intake-proposal-command-4444444444444444444444444444444444444444444444444444444444444444",
+  "sent_at": "2030-08-25T12:00:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "command": "work_intake_proposal",
+    "work_intake_proposal": {
+      "schema_version": 1,
+      "work_intake_proposal_request_id": "request-1",
+      "work_intake_proposal_revision": 2,
+      "work_intake_proposal_effect_id": "effect-1",
+      "work_intake_proposal_attempt_id": "attempt-1",
+      "project_id": "project-1",
+      "input_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+      "adapter": "fixed-adapter",
+      "model": "fixed-model",
+      "prompt_template_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+      "policy_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+      "model_execution_config_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+      "lease_id": "lease-1",
+      "fencing_token": 1,
+      "lease_expires_at": "2030-08-25T12:01:00Z",
+      "command_digest": "b43604aa2e55b0d85706ed627762ae7d23d5665167a39d24b74f67e1aa618b49",
+      "kind": "draft",
+      "intent": {
+        "problem": "Duplicate charges appear.",
+        "affected_user": "Billing specialists",
+        "desired_outcome": "Each charge appears once."
+      },
+      "clarifications": [
+        {
+          "source_question_index": 1,
+          "question": "Which imports are affected?",
+          "answer": "Stripe card imports."
+        }
+      ]
+    }
+  }
+}

@@ -140,7 +140,7 @@ func (d *Daemon) startJobWithReviewFeedbackContinuation(
 	if d.updateDrain != nil {
 		return rejectCommand(v1.CommandAckReasonRunnerDraining, nil)
 	}
-	if d.activeJob != nil {
+	if d.activeJob != nil || d.workIntakeProposalActive {
 		return rejectCommand(v1.CommandAckReasonRunnerBusy, nil)
 	}
 	expiresAt := job.LeaseExpiresAt

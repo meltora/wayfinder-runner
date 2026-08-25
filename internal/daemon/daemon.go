@@ -22,6 +22,7 @@ import (
 	"github.com/example/app-runner/internal/capability"
 	"github.com/example/app-runner/internal/collector"
 	"github.com/example/app-runner/internal/config"
+	"github.com/example/app-runner/internal/egresspolicy"
 	"github.com/example/app-runner/internal/hookspool"
 	"github.com/example/app-runner/internal/identity"
 	"github.com/example/app-runner/internal/isolation"
@@ -60,6 +61,7 @@ type Daemon struct {
 
 	jobMu                                                 sync.Mutex
 	activeJob                                             *jobRunner
+	workIntakeProposalActive                              bool
 	updateDrain                                           *pendingUpdate
 	updateWake                                            chan struct{}
 	updateRunMu                                           sync.Mutex
@@ -102,6 +104,10 @@ type Daemon struct {
 	providerReviewFeedbackContentCommandMu                sync.Mutex
 	providerReviewFeedbackContentCommandActive            map[string]struct{}
 	providerReviewFeedbackContentCommands                 sync.WaitGroup
+	workIntakeProposalGenerator                           workIntakeProposalGenerator
+	workIntakeProposalCommandMu                           sync.Mutex
+	workIntakeProposalCommandActive                       map[string]struct{}
+	workIntakeProposalCommands                            sync.WaitGroup
 
 	eventSink   func(ctx context.Context, payload any) error
 	httpMu      sync.RWMutex
@@ -164,6 +170,10 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		_ = lock.Close()
 		return nil, fmt.Errorf("load runner ID: %w", err)
 	}
+	if err := cleanupStaleWorkIntakeProposalExecutions(cfg.StateDir, nil); err != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("cleanup stale work intake proposal executions: %w", err)
+	}
 	j, err := journal.Open(filepath.Join(cfg.StateDir, "journal.db"))
 	if err != nil {
 		_ = lock.Close()
@@ -204,6 +214,8 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		_ = lock.Close()
 		return nil, fmt.Errorf("cleanup orphaned job state: %w", err)
 	}
+	var workIntakeNetworkAttestation isolation.DockerNetworkAttestation
+	var workIntakeEffectivePolicy egresspolicy.Binding
 	if cfg.Isolation == "docker" {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		info := isolation.ProbeDocker(cleanupCtx)
@@ -214,11 +226,26 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 			return nil, fmt.Errorf("production Docker isolation requires an available rootless or userns-remapped daemon")
 		}
 		if cfg.JobNetwork == "restricted" {
-			if err := isolation.VerifyDockerNetwork(cleanupCtx, cfg.JobNetworkName, cfg.EgressPolicyID); err != nil {
+			attestation, attestErr := isolation.AttestDockerNetwork(cleanupCtx, cfg.JobNetworkName, cfg.EgressPolicyID)
+			if attestErr != nil {
 				cleanupCancel()
 				_ = j.Close()
 				_ = lock.Close()
-				return nil, err
+				return nil, attestErr
+			}
+			workIntakeNetworkAttestation = attestation
+			if cfg.WorkIntakeProposal.Enabled {
+				policyClient := egresspolicy.NewClient(cfg.EgressPolicyVerifierSocket)
+				binding, policyErr := policyClient.Attest(
+					cleanupCtx, attestation.ID, attestation.Name, attestation.PolicyID,
+				)
+				if policyErr != nil {
+					cleanupCancel()
+					_ = j.Close()
+					_ = lock.Close()
+					return nil, fmt.Errorf("attest effective consultation egress policy: %w", policyErr)
+				}
+				workIntakeEffectivePolicy = binding
 			}
 		}
 		cleanupErr := isolation.RemoveRunnerContainers(cleanupCtx, runnerID)
@@ -256,6 +283,14 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		_ = j.Close()
 		_ = lock.Close()
 		return nil, err
+	}
+	if cfg.WorkIntakeProposal.Enabled {
+		// Docker is the hardened execution boundary for consultation. Starting
+		// the Docker CLI directly also keeps the raw prompt exclusively on stdin
+		// instead of persisting it in a tmux/herdr command specification.
+		d.workIntakeProposalGenerator = newProviderWorkIntakeProposalGenerator(
+			cfg, runnerID, supervisor.NewDirectProcess(), workIntakeNetworkAttestation, workIntakeEffectivePolicy,
+		)
 	}
 	paused, err := ReadPausedState(cfg.StateDir)
 	if err != nil {
@@ -326,6 +361,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.providerReviewerAssignmentReconciliationCommands.Wait()
 		d.providerReviewObservationCommands.Wait()
 		d.providerReviewFeedbackContentCommands.Wait()
+		d.workIntakeProposalCommands.Wait()
 		_ = d.journal.Close()
 		_ = d.runLock.Close()
 	}()
@@ -470,6 +506,22 @@ func (d *Daemon) OnConnected(ctx context.Context) {
 
 func (d *Daemon) publishCapability(ctx context.Context) error {
 	det := capability.New(d.runnerID, Version, d.cfg.Labels, d.cfg.AgentPackPublicKeys)
+	if d.cfg.WorkIntakeProposal.Enabled && d.cfg.Isolation == "docker" && d.cfg.JobNetwork == "restricted" {
+		det.WorkIntakeProposalHardened = true
+		det.WorkIntakeProposalRestrictedEgress = true
+		det.WorkIntakeProposalAdapter = d.cfg.WorkIntakeProposal.Adapter
+		det.WorkIntakeProposalModel = d.cfg.WorkIntakeProposal.Model
+		det.WorkIntakeProposalPromptTemplateDigest = workIntakeProposalPromptTemplateDigest()
+		det.WorkIntakeProposalPolicyDigest = workIntakeProposalPolicyDigest()
+		if d.workIntakeProposalGenerator != nil {
+			digest, err := d.workIntakeProposalGenerator.ModelExecutionConfigDigest(ctx)
+			if err != nil {
+				d.logger.Warn("omit work intake proposal capability: execution binding unavailable", "err", err)
+			} else {
+				det.WorkIntakeProposalModelExecutionConfigDigest = digest
+			}
+		}
+	}
 	if d.sourcePublicationPublisher != nil {
 		det.SourcePublicationProviders = d.sourcePublicationPublisher.ReadyProviders()
 	}
@@ -691,7 +743,7 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		_ = d.sendCommandAck(ctx, env.ID, v1.CommandAckRejected, v1.CommandAckReasonInvalidCommand)
 		return nil
 	}
-	payload, err := json.Marshal(env)
+	payload, err := durableCommandRecordPayload(env, contentDigest)
 	if err != nil {
 		_ = d.sendCommandAck(ctx, env.ID, v1.CommandAckRejected, v1.CommandAckReasonInternalRejection)
 		return nil
@@ -727,6 +779,7 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 	asyncProviderReviewerAssignmentReconciliation := decodeErr == nil && cmd.Command == v1.CmdProviderReviewerAssignmentReconciliation
 	asyncProviderReviewObservation := decodeErr == nil && cmd.Command == v1.CmdProviderReviewObservation
 	asyncProviderReviewFeedbackContent := decodeErr == nil && cmd.Command == v1.CmdProviderReviewFeedbackContent
+	asyncWorkIntakeProposal := decodeErr == nil && cmd.Command == v1.CmdWorkIntakeProposal
 	if asyncSourcePublication && d.sourcePublicationCommandIsActive(env.ID) {
 		return nil
 	}
@@ -749,6 +802,9 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		return nil
 	}
 	if asyncProviderReviewFeedbackContent && d.providerReviewFeedbackContentCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncWorkIntakeProposal && d.workIntakeProposalCommandIsActive(env.ID) {
 		return nil
 	}
 	claimOwner := d.commandOwner + "-" + newEventID()
@@ -837,6 +893,14 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		}
 		d.providerReviewFeedbackContentCommands.Add(1)
 		go d.completeProviderReviewFeedbackContentCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
+		return nil
+	}
+	if asyncWorkIntakeProposal {
+		if !d.workIntakeProposalCommandStart(env.ID) {
+			return nil
+		}
+		d.workIntakeProposalCommands.Add(1)
+		go d.completeWorkIntakeProposalCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
 		return nil
 	}
 	return d.completeClaimedCommand(
@@ -961,6 +1025,9 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	if err := validateReviewerIdentityVerificationCommandBoundary(cmd); err != nil {
 		return err
 	}
+	if err := validateWorkIntakeProposalCommandBoundary(cmd); err != nil {
+		return err
+	}
 
 	switch cmd.Command {
 	case v1.CmdStartJob:
@@ -1078,6 +1145,8 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executeReviewerIdentityVerification(ctx, env.ID, *cmd.ReviewerIdentityVerification)
+	case v1.CmdWorkIntakeProposal:
+		return d.executeWorkIntakeProposal(ctx, env.ID, *cmd.WorkIntakeProposal)
 	}
 	return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 }

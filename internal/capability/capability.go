@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,6 +37,14 @@ type Detector struct {
 	ProviderReviewerAssignmentReconciliationInstallations []v1.ProviderReviewerAssignmentReconciliationInstallationCapability
 	ProviderReviewObservationInstallations                []v1.ProviderReviewObservationInstallationCapability
 	ProviderReviewFeedbackContentInstallations            []v1.ProviderReviewFeedbackContentInstallationCapability
+	WorkIntakeProposalAdapter                             string
+	WorkIntakeProposalModel                               string
+	WorkIntakeProposalPromptTemplateDigest                string
+	WorkIntakeProposalPolicyDigest                        string
+	WorkIntakeProposalModelExecutionConfigDigest          string
+	WorkIntakeProposalHardened                            bool
+	WorkIntakeProposalRestrictedEgress                    bool
+	AuthReady                                             func(string) bool
 	trustedAgentPackKeyIDs                                []string
 }
 
@@ -125,6 +134,23 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		ProviderReviewFeedbackContentProviders:                providerReviewFeedbackContentProviders,
 		ProviderReviewFeedbackContentInstallations:            providerReviewFeedbackContentInstallations,
 	}
+	if d.WorkIntakeProposalHardened && d.WorkIntakeProposalRestrictedEgress && d.hardenedDockerReady(ctx) && d.WorkIntakeProposalAdapter != "" && d.WorkIntakeProposalModel != "" &&
+		validCapabilityDigest(d.WorkIntakeProposalPromptTemplateDigest) &&
+		validCapabilityDigest(d.WorkIntakeProposalPolicyDigest) &&
+		validCapabilityDigest(d.WorkIntakeProposalModelExecutionConfigDigest) {
+		ready := authReady(d.WorkIntakeProposalAdapter)
+		if d.AuthReady != nil {
+			ready = d.AuthReady(d.WorkIntakeProposalAdapter)
+		}
+		if _, err := d.LookPath(d.WorkIntakeProposalAdapter); err == nil && ready {
+			m.WorkIntakeProposalTransportVersion = v1.WorkIntakeProposalTransportVersion
+			m.WorkIntakeProposalAdapter = d.WorkIntakeProposalAdapter
+			m.WorkIntakeProposalModel = d.WorkIntakeProposalModel
+			m.WorkIntakeProposalPromptTemplateDigest = d.WorkIntakeProposalPromptTemplateDigest
+			m.WorkIntakeProposalPolicyDigest = d.WorkIntakeProposalPolicyDigest
+			m.WorkIntakeProposalModelExecutionConfigDigest = d.WorkIntakeProposalModelExecutionConfigDigest
+		}
+	}
 	if len(sourcePublicationProviders) != 0 {
 		m.SourcePublicationTransportVersion = v1.SourcePublicationTransportVersion
 	}
@@ -190,7 +216,11 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 			if out, err := d.RunVersion(ctx, agent.bin, "--version"); err == nil {
 				ac.Version = out
 			}
-			ac.AuthReady = authReady(agent.adapter)
+			if d.AuthReady != nil {
+				ac.AuthReady = d.AuthReady(agent.adapter)
+			} else {
+				ac.AuthReady = authReady(agent.adapter)
+			}
 		}
 		m.Agents = append(m.Agents, ac)
 	}
@@ -200,6 +230,25 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		}
 	}
 	return m
+}
+
+func validCapabilityDigest(value string) bool {
+	if len(value) != 64 || strings.ToLower(value) != value {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size
+}
+
+func (d *Detector) hardenedDockerReady(ctx context.Context) bool {
+	if d.LookPath == nil {
+		return false
+	}
+	if _, err := d.LookPath("docker"); err != nil || d.ProbeDocker == nil {
+		return false
+	}
+	info := d.ProbeDocker(ctx)
+	return info.Available && (info.Rootless || info.UsernsRemap)
 }
 
 func clonePreviewObservationProfiles(

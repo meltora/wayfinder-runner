@@ -241,13 +241,15 @@ func cmdDoctor(args []string) error {
 			return err
 		}
 		opts = doctor.Options{
-			ControlPlaneURL: cfg.ControlPlaneURL,
-			StateDir:        cfg.StateDir,
-			Isolation:       cfg.Isolation,
-			JobImage:        cfg.JobImage,
-			JobNetwork:      cfg.JobNetwork,
-			JobNetworkName:  cfg.JobNetworkName,
-			EgressPolicyID:  cfg.EgressPolicyID,
+			ControlPlaneURL:            cfg.ControlPlaneURL,
+			StateDir:                   cfg.StateDir,
+			Isolation:                  cfg.Isolation,
+			JobImage:                   cfg.JobImage,
+			JobNetwork:                 cfg.JobNetwork,
+			JobNetworkName:             cfg.JobNetworkName,
+			EgressPolicyID:             cfg.EgressPolicyID,
+			WorkIntakeProposalEnabled:  cfg.WorkIntakeProposal.Enabled,
+			EgressPolicyVerifierSocket: cfg.EgressPolicyVerifierSocket,
 		}
 	} else if f.url == "" {
 		return fmt.Errorf("doctor requires --config FILE or --url URL")

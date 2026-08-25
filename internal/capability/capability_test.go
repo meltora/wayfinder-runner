@@ -91,6 +91,71 @@ func TestCollect(t *testing.T) {
 	}
 }
 
+func TestCollectAdvertisesOnlyAuthReadyConfiguredConsultation(t *testing.T) {
+	detector := fakeDetector()
+	previousLookPath := detector.LookPath
+	detector.LookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/usr/bin/docker", nil
+		}
+		return previousLookPath(name)
+	}
+	detector.ProbeDocker = func(context.Context) isolation.DockerInfo {
+		return isolation.DockerInfo{Available: true, Rootless: true}
+	}
+	detector.WorkIntakeProposalAdapter = "codex"
+	detector.WorkIntakeProposalModel = "consultation-model"
+	detector.WorkIntakeProposalPromptTemplateDigest = strings.Repeat("a", 64)
+	detector.WorkIntakeProposalPolicyDigest = strings.Repeat("b", 64)
+	detector.WorkIntakeProposalModelExecutionConfigDigest = strings.Repeat("c", 64)
+	detector.WorkIntakeProposalHardened = true
+	detector.WorkIntakeProposalRestrictedEgress = true
+	detector.AuthReady = func(adapter string) bool { return adapter == "codex" }
+	manifest := detector.Collect(context.Background())
+	if manifest.WorkIntakeProposalTransportVersion != v1.WorkIntakeProposalTransportVersion ||
+		manifest.WorkIntakeProposalAdapter != "codex" || manifest.WorkIntakeProposalModel != "consultation-model" ||
+		manifest.WorkIntakeProposalPromptTemplateDigest != strings.Repeat("a", 64) ||
+		manifest.WorkIntakeProposalPolicyDigest != strings.Repeat("b", 64) ||
+		manifest.WorkIntakeProposalModelExecutionConfigDigest != strings.Repeat("c", 64) {
+		t.Fatalf("consultation capability = %+v", manifest)
+	}
+
+	detector.AuthReady = func(string) bool { return false }
+	manifest = detector.Collect(context.Background())
+	if manifest.WorkIntakeProposalTransportVersion != 0 || manifest.WorkIntakeProposalAdapter != "" ||
+		manifest.WorkIntakeProposalModel != "" || manifest.WorkIntakeProposalPromptTemplateDigest != "" ||
+		manifest.WorkIntakeProposalPolicyDigest != "" || manifest.WorkIntakeProposalModelExecutionConfigDigest != "" {
+		t.Fatalf("unready consultation must be all-or-none omitted: %+v", manifest)
+	}
+	detector.AuthReady = func(string) bool { return true }
+	detector.ProbeDocker = func(context.Context) isolation.DockerInfo {
+		return isolation.DockerInfo{Available: true}
+	}
+	manifest = detector.Collect(context.Background())
+	if manifest.WorkIntakeProposalTransportVersion != 0 {
+		t.Fatal("rootful Docker consultation was advertised")
+	}
+	detector.LookPath = previousLookPath
+	manifest = detector.Collect(context.Background())
+	if manifest.WorkIntakeProposalTransportVersion != 0 {
+		t.Fatal("consultation was advertised without Docker")
+	}
+	detector.LookPath = func(name string) (string, error) {
+		if name == "docker" {
+			return "/usr/bin/docker", nil
+		}
+		return previousLookPath(name)
+	}
+	detector.ProbeDocker = func(context.Context) isolation.DockerInfo {
+		return isolation.DockerInfo{Available: true, Rootless: true}
+	}
+	detector.WorkIntakeProposalRestrictedEgress = false
+	manifest = detector.Collect(context.Background())
+	if manifest.WorkIntakeProposalTransportVersion != 0 {
+		t.Fatal("remote consultation was advertised without restricted egress")
+	}
+}
+
 func TestCollectReportsRootless(t *testing.T) {
 	d := fakeDetector()
 	d.LookPath = func(name string) (string, error) {

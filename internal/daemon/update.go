@@ -193,7 +193,7 @@ func (d *Daemon) processPendingUpdate(ctx context.Context) error {
 		return nil
 	}
 	pending := *d.updateDrain
-	busy := d.activeJob != nil
+	busy := d.activeJob != nil || d.workIntakeProposalActive
 	d.jobMu.Unlock()
 	if pending.Phase == updatePhaseDraining && time.Now().After(pending.DrainDeadline) {
 		return d.failPendingUpdate(ctx, pending.UpdateID, updatePhaseExpired, "drain_deadline_exceeded", errors.New("update drain deadline expired"))
