@@ -353,6 +353,9 @@ func writeHerdrLaunchScript(spec Spec, exitFile, outputPath string) (string, err
 			fmt.Fprintf(&script, "export %s\n", shellQuote(entry))
 		}
 	}
+	for _, entry := range spec.ProviderEnvironment {
+		fmt.Fprintf(&script, "export %s\n", shellQuote(entry))
+	}
 	script.WriteString("(\n  cd ")
 	script.WriteString(shellQuote(spec.Dir))
 	script.WriteString(" || exit $?\n  exec ")

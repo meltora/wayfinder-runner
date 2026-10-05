@@ -78,6 +78,9 @@ func (t *TmuxSupervisor) Start(ctx context.Context, spec Spec) (Process, error) 
 			fmt.Fprintf(&cmdStr, "export %s; ", shellQuote(e))
 		}
 	}
+	for _, e := range spec.ProviderEnvironment {
+		fmt.Fprintf(&cmdStr, "export %s; ", shellQuote(e))
+	}
 	fmt.Fprintf(&cmdStr, "cd %s && %s", shellQuote(spec.Dir), shellQuote(spec.Command))
 	for _, a := range spec.Args {
 		cmdStr.WriteString(" " + shellQuote(a))

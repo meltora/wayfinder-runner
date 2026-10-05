@@ -100,7 +100,7 @@ func (d *Daemon) executeWorkIntakeProposal(
 		return rejectCommand(v1.CommandAckReasonLeaseRejected, nil)
 	}
 	d.jobMu.Lock()
-	if d.activeJob != nil || d.updateDrain != nil || d.workIntakeProposalActive {
+	if d.activeJob != nil || d.agentConfigScanCancel != nil || d.updateDrain != nil || d.workIntakeProposalActive {
 		d.jobMu.Unlock()
 		return rejectCommand(v1.CommandAckReasonRunnerBusy, nil)
 	}

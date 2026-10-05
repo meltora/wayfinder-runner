@@ -128,6 +128,137 @@ func TestSelfContainedWorkspaceDoesNotReferenceRunnerMirror(t *testing.T) {
 	}
 }
 
+func TestCreateDetachedWorkspacePinsExactCommitAcrossBranchMove(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	expected := gitOutputForTest(t, origin, "rev-parse", "HEAD")
+	m := NewManager(filepath.Join(t.TempDir(), "repos"))
+	m.AllowLocal = true
+	if _, err := m.Register(ctx, origin); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(origin, "moved.txt"), []byte("new head\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, origin, "add", "moved.txt")
+	git(t, origin, "commit", "-m", "move branch")
+
+	dest := filepath.Join(t.TempDir(), "detached-workspace")
+	if err := m.CreateDetachedWorkspace(ctx, origin, expected, dest); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOutputForTest(t, dest, "rev-parse", "HEAD"); got != expected {
+		t.Fatalf("workspace HEAD = %s, want observed %s", got, expected)
+	}
+	if branch := gitOutputForTest(t, dest, "branch", "--show-current"); branch != "" {
+		t.Fatalf("planning workspace is attached to mutable branch %q", branch)
+	}
+}
+
+func TestCreateDetachedWorkspaceRejectsWrongOrMissingCommit(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	m := NewManager(filepath.Join(t.TempDir(), "repos"))
+	m.AllowLocal = true
+	if _, err := m.Register(ctx, origin); err != nil {
+		t.Fatal(err)
+	}
+	for _, sha := range []string{"", "abc", strings.Repeat("f", 40)} {
+		if err := m.CreateDetachedWorkspace(ctx, origin, sha, filepath.Join(t.TempDir(), "workspace")); err == nil {
+			t.Fatalf("invalid or unavailable commit %q accepted", sha)
+		}
+	}
+}
+
+func TestCreateDetachedWorkspaceFetchesObservedCommitMissingFromMirror(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	m := NewManager(filepath.Join(t.TempDir(), "repos"))
+	m.AllowLocal = true
+	if _, err := m.Register(ctx, origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(origin, "observed-after-register.txt"), []byte("observed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, origin, "add", "observed-after-register.txt")
+	git(t, origin, "commit", "-m", "observed after mirror registration")
+	expected := gitOutputForTest(t, origin, "rev-parse", "HEAD")
+	dest := filepath.Join(t.TempDir(), "detached-workspace")
+	if err := m.CreateDetachedWorkspace(ctx, origin, expected, dest); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOutputForTest(t, dest, "rev-parse", "HEAD"); got != expected {
+		t.Fatalf("workspace HEAD = %s, want fetched %s", got, expected)
+	}
+}
+
+func TestCreateDetachedWorkspaceRejectsExistingDestination(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	m := NewManager(filepath.Join(t.TempDir(), "repos"))
+	m.AllowLocal = true
+	if _, err := m.Register(ctx, origin); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "existing")
+	if err := os.Mkdir(dest, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CreateDetachedWorkspace(ctx, origin, gitOutputForTest(t, origin, "rev-parse", "HEAD"), dest); err == nil {
+		t.Fatal("existing workspace destination was accepted")
+	}
+}
+
+func TestCreateDetachedWorkspaceRejectsUnsafeOrigin(t *testing.T) {
+	m := NewManager(t.TempDir())
+	if err := m.CreateDetachedWorkspace(
+		context.Background(),
+		"file:///etc/passwd",
+		strings.Repeat("1", 40),
+		filepath.Join(t.TempDir(), "workspace"),
+	); err == nil {
+		t.Fatal("unsafe planning repository origin was accepted")
+	}
+}
+
+func TestCreateDetachedWorkspaceFailsClosedOnUnwritableDestination(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	m := NewManager(filepath.Join(t.TempDir(), "repos"))
+	m.AllowLocal = true
+	if _, err := m.Register(ctx, origin); err != nil {
+		t.Fatal(err)
+	}
+	sha := gitOutputForTest(t, origin, "rev-parse", "HEAD")
+	for _, nested := range []bool{false, true} {
+		parent := filepath.Join(t.TempDir(), "blocked")
+		if err := os.Mkdir(parent, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+		dest := filepath.Join(parent, "workspace")
+		if nested {
+			dest = filepath.Join(parent, "nested", "workspace")
+		}
+		if err := m.CreateDetachedWorkspace(ctx, origin, sha, dest); err == nil {
+			t.Fatalf("unwritable destination nested=%v was accepted", nested)
+		}
+	}
+}
+
+func gitOutputForTest(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func TestCreateWorkspaceResolvesPreviouslyPushedRemoteJobBranch(t *testing.T) {
 	ctx := context.Background()
 	origin := seedOrigin(t)

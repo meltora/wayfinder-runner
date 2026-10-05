@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# This token is replaced with GITHUB_REPOSITORY by the release workflow. Source
+# This token is replaced by packaging/scripts/prepare-release.sh during the release build. Source
 # checkouts can set OUR_RUNNER_RELEASE_REPOSITORY explicitly for local testing.
 DEFAULT_RELEASE_REPOSITORY=__OUR_RUNNER_RELEASE_REPOSITORY__
 COSIGN_VERSION=v3.0.6

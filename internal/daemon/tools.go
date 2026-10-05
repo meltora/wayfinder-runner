@@ -27,6 +27,9 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
 		return nil, fmt.Errorf("local tool authority is unavailable")
 	}
+	if err := jr.awaitStartEvidence(ctx); err != nil {
+		return nil, fmt.Errorf("job start evidence is unavailable")
+	}
 	if err := mcpbridge.ValidateSocketTool(tool); err != nil {
 		return nil, err
 	}

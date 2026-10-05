@@ -20,7 +20,7 @@ func feedbackRetryable(code v1.ProviderReviewFeedbackContentErrorCode, retry *ui
 	return v1.ProviderReviewFeedbackContentResultOutcome{Kind: v1.ProviderReviewFeedbackContentRetryable, Code: code, RetryAfterMS: retry}
 }
 
-func (registry *Registry) FetchProviderReviewFeedbackContent(ctx context.Context, op v1.ProviderReviewFeedbackContentOperation) v1.ProviderReviewFeedbackContentResultOutcome {
+func (registry *Registry) FetchProviderReviewFeedbackContent(ctx context.Context, op v1.ProviderReviewFeedbackContentOperation, credential *v1.ProviderCredential) v1.ProviderReviewFeedbackContentResultOutcome {
 	installation, ok := registry.installations[op.InstallationID]
 	if !ok {
 		return feedbackPermanent(v1.ProviderReviewFeedbackContentInstallationInactive)
@@ -31,11 +31,16 @@ func (registry *Registry) FetchProviderReviewFeedbackContent(ctx context.Context
 	if op.Provider != "github" || configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL) != op.ProviderInstanceKey {
 		return feedbackPermanent(v1.ProviderReviewFeedbackContentUnsupportedProviderInstance)
 	}
-	token, err := readToken(installation.TokenFile)
-	if err != nil {
+	authority, access := resolveReviewAuthority(installation, credential, op.ProviderRepositoryID)
+	switch access {
+	case reviewAccessCredentialUnavailable:
+		return feedbackRetryable(v1.ProviderReviewFeedbackContentProviderUnavailable, nil)
+	case reviewAccessRepositoryDenied:
+		return feedbackPermanent(v1.ProviderReviewFeedbackContentInstallationPermissionDenied)
+	case reviewAccessTokenFileInvalid:
 		return feedbackPermanent(v1.ProviderReviewFeedbackContentInstallationInactive)
 	}
-	publisher := newGitHubPublisher(installation.APIBaseURL, token, registry.httpClient)
+	publisher := registry.newGitHubReviewPublisher(installation, authority)
 	verification := v1.ReviewerIdentityVerificationOperation{Provider: op.Provider, ProviderAccountID: op.ProviderAccountID, InstallationID: op.InstallationID, ProviderInstanceKey: op.ProviderInstanceKey, Repositories: []v1.ReviewerIdentityVerificationRepository{{RepositoryID: op.RepositoryID, RepositoryExternalID: op.ProviderRepositoryID, RepositoryPath: op.ProviderRepositoryPath}}}
 	if failure := feedbackIdentityFailure(publisher.verifyReviewerIdentity(ctx, verification)); failure != nil {
 		return *failure

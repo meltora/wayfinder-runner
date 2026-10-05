@@ -130,6 +130,7 @@ func assignmentIdentityFailure(
 func (registry *Registry) AssignProviderReviewers(
 	ctx context.Context,
 	operation v1.ProviderReviewerAssignmentOperation,
+	credential *v1.ProviderCredential,
 ) v1.ProviderReviewerAssignmentResultOutcome {
 	now := time.Now()
 	for _, recipient := range operation.Recipients {
@@ -150,14 +151,19 @@ func (registry *Registry) AssignProviderReviewers(
 	if configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL) != operation.ProviderInstanceKey {
 		return assignmentPermanent(v1.ProviderReviewerAssignmentUnsupportedProviderInstance)
 	}
-	token, err := readToken(installation.TokenFile)
-	if err != nil {
+	authority, access := resolveReviewAuthority(installation, credential, operation.ProviderRepositoryID)
+	switch access {
+	case reviewAccessCredentialUnavailable:
+		return assignmentRetryable(v1.ProviderReviewerAssignmentProviderUnavailable, nil)
+	case reviewAccessRepositoryDenied:
+		return assignmentPermanent(v1.ProviderReviewerAssignmentInstallationPermissionDenied)
+	case reviewAccessTokenFileInvalid:
 		return assignmentPermanent(v1.ProviderReviewerAssignmentInstallationInactive)
 	}
+	token := authority.token
 	switch installation.Provider {
 	case "github":
-		return newGitHubPublisher(installation.APIBaseURL, token, registry.httpClient).
-			assignReviewers(ctx, operation)
+		return registry.newGitHubReviewPublisher(installation, authority).assignReviewers(ctx, operation)
 	case "gitlab":
 		return newGitLabPublisher(installation.APIBaseURL, token, registry.httpClient).
 			assignReviewers(ctx, operation)

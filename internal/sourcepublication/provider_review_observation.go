@@ -48,7 +48,7 @@ func reviewObservationSuccess(op v1.ProviderReviewObservationOperation, state v1
 	return v1.ProviderReviewObservationResultOutcome{Kind: v1.ProviderReviewObservationSucceeded, RequestState: state, ObservedHeadSHA: head, StaleHead: head != op.ExpectedHeadSHA, SnapshotSemantics: "current_state", SnapshotComplete: true, Collections: &v1.ProviderReviewObservationCollections{ReviewEvents: v1.ProviderReviewObservationCollectionCompleteness{Complete: true, PagesRead: reviewPages, ItemsObserved: len(reviews)}, Comments: v1.ProviderReviewObservationCollectionCompleteness{Complete: true, PagesRead: commentPages, ItemsObserved: len(comments)}}, ReviewEvents: reviews, Comments: comments}
 }
 
-func (registry *Registry) ObserveProviderReviews(ctx context.Context, op v1.ProviderReviewObservationOperation) v1.ProviderReviewObservationResultOutcome {
+func (registry *Registry) ObserveProviderReviews(ctx context.Context, op v1.ProviderReviewObservationOperation, credential *v1.ProviderCredential) v1.ProviderReviewObservationResultOutcome {
 	installation, ok := registry.installations[op.InstallationID]
 	if !ok {
 		return reviewObservationPermanent(v1.ProviderReviewObservationInstallationInactive)
@@ -59,13 +59,22 @@ func (registry *Registry) ObserveProviderReviews(ctx context.Context, op v1.Prov
 	if configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL) != op.ProviderInstanceKey {
 		return reviewObservationPermanent(v1.ProviderReviewObservationUnsupportedProviderInstance)
 	}
-	token, err := readToken(installation.TokenFile)
-	if err != nil {
+	if providerReviewCompletionRequested(op) && op.Provider != "github" {
+		return reviewObservationPermanent(v1.ProviderReviewObservationUnsupportedProviderInstance)
+	}
+	authority, access := resolveReviewAuthority(installation, credential, op.ProviderRepositoryID)
+	switch access {
+	case reviewAccessCredentialUnavailable:
+		return reviewObservationRetryable(v1.ProviderReviewObservationProviderUnavailable, nil)
+	case reviewAccessRepositoryDenied:
+		return reviewObservationPermanent(v1.ProviderReviewObservationInstallationPermissionDenied)
+	case reviewAccessTokenFileInvalid:
 		return reviewObservationPermanent(v1.ProviderReviewObservationInstallationInactive)
 	}
+	token := authority.token
 	switch op.Provider {
 	case "github":
-		publisher := newGitHubPublisher(installation.APIBaseURL, token, registry.httpClient)
+		publisher := registry.newGitHubReviewPublisher(installation, authority)
 		if failure := publisher.revalidateReviewObservationSubjects(ctx, op); failure != nil {
 			return *failure
 		}

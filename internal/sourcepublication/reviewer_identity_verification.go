@@ -104,6 +104,7 @@ func configuredProviderInstanceKey(provider, rawBaseURL string) string {
 func (registry *Registry) VerifyReviewerIdentity(
 	ctx context.Context,
 	operation v1.ReviewerIdentityVerificationOperation,
+	credential *v1.ProviderCredential,
 ) v1.ReviewerIdentityVerificationResultOutcome {
 	installation, ok := registry.installations[operation.InstallationID]
 	if !ok {
@@ -115,14 +116,23 @@ func (registry *Registry) VerifyReviewerIdentity(
 	if configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL) != operation.ProviderInstanceKey {
 		return reviewerIdentityPermanent(v1.ReviewerIdentityUnsupportedProviderInstance)
 	}
-	token, err := readToken(installation.TokenFile)
-	if err != nil {
+	repositoryIDs := make([]string, 0, len(operation.Repositories))
+	for _, repository := range operation.Repositories {
+		repositoryIDs = append(repositoryIDs, repository.RepositoryExternalID)
+	}
+	authority, access := resolveReviewAuthority(installation, credential, repositoryIDs...)
+	switch access {
+	case reviewAccessCredentialUnavailable:
+		return reviewerIdentityRetryable(v1.ReviewerIdentityProviderUnavailable, nil)
+	case reviewAccessRepositoryDenied:
+		return reviewerIdentityPermanent(v1.ReviewerIdentityInstallationPermissionDenied)
+	case reviewAccessTokenFileInvalid:
 		return reviewerIdentityPermanent(v1.ReviewerIdentityInstallationInactive)
 	}
+	token := authority.token
 	switch installation.Provider {
 	case "github":
-		return newGitHubPublisher(installation.APIBaseURL, token, registry.httpClient).
-			verifyReviewerIdentity(ctx, operation)
+		return registry.newGitHubReviewPublisher(installation, authority).verifyReviewerIdentity(ctx, operation)
 	case "gitlab":
 		return newGitLabPublisher(installation.APIBaseURL, token, registry.httpClient).
 			verifyReviewerIdentity(ctx, operation)

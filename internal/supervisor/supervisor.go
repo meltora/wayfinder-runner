@@ -31,15 +31,16 @@ func forwardSessionEnvironment(entry string) bool {
 }
 
 type Spec struct {
-	Name       string
-	Command    string
-	Args       []string
-	Dir        string
-	Env        []string
-	Stdin      io.Reader
-	Stdout     io.Writer
-	Stderr     io.Writer
-	RuntimeDir string
+	Name                string
+	Command             string
+	Args                []string
+	Dir                 string
+	Env                 []string
+	Stdin               io.Reader
+	Stdout              io.Writer
+	Stderr              io.Writer
+	RuntimeDir          string
+	ProviderEnvironment []string
 	// ManagedConfigMounts are runner-generated, read-only provider policy files.
 	// The production isolator applies a fixed target allowlist before mounting.
 	ManagedConfigMounts []ManagedConfigMount
@@ -98,6 +99,9 @@ func (d *DirectProcess) Start(ctx context.Context, spec Spec) (Process, error) {
 	cmd := exec.CommandContext(ctx, spec.Command, spec.Args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
+	if len(spec.ProviderEnvironment) > 0 {
+		cmd.Env = append(append([]string(nil), spec.Env...), spec.ProviderEnvironment...)
+	}
 	cmd.Stdin = spec.Stdin
 	cmd.Stdout = spec.Stdout
 	cmd.Stderr = spec.Stderr

@@ -43,7 +43,7 @@ func TestBitbucketPublicationCreatesExactPullRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation())
+	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationSucceeded || outcome.Result == nil {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -78,7 +78,7 @@ func TestBitbucketPublicationReusesExistingExactPullRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation())
+	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationSucceeded || outcome.Result == nil || outcome.Result.ExternalRequestID != "7" {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -112,7 +112,7 @@ func TestBitbucketPublicationReconcilesCreateConflict(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation())
+	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationSucceeded || outcome.Result == nil || outcome.Result.ExternalRequestID != "9" {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -128,7 +128,7 @@ func TestBitbucketPublicationFailsClosedOnHeadMismatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation())
+	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlHeadMismatch {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -147,7 +147,7 @@ func TestBitbucketPublicationRejectsAmbiguousPagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation())
+	outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlInvalidProviderResponse {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -218,7 +218,7 @@ func TestBitbucketPublicationRefusesRedirectAndOversizedResponses(t *testing.T) 
 			writer.WriteHeader(http.StatusFound)
 		}))
 		defer server.Close()
-		outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation())
+		outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation(), nil)
 		if outcome.Kind != v1.SourcePublicationPermanent || redirectedCalls.Load() != 0 {
 			t.Fatalf("outcome = %+v redirected = %d", outcome, redirectedCalls.Load())
 		}
@@ -229,7 +229,7 @@ func TestBitbucketPublicationRefusesRedirectAndOversizedResponses(t *testing.T) 
 			_, _ = writer.Write(bytes.Repeat([]byte("x"), maxProviderResponseBytes+1))
 		}))
 		defer server.Close()
-		outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation())
+		outcome := testBitbucketRegistryForServer(t, server).Publish(t.Context(), testBitbucketOperation(), nil)
 		if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlInvalidProviderResponse {
 			t.Fatalf("outcome = %+v", outcome)
 		}

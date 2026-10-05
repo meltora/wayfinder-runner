@@ -3,9 +3,7 @@ package daemon_test
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -39,7 +37,10 @@ func buildRunnerBinary(t *testing.T) string {
 func writeFakeAgent(t *testing.T, script string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-agent.sh")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	// Capability discovery invokes the same executable as jobs. A version probe
+	// must not execute the fixture's job effects (MCP calls, markers or sleeps).
+	versionProbe := "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then\n  echo \"controlled-planning-agent 1.0\"\n  exit 0\nfi\n"
+	if err := os.WriteFile(path, []byte(versionProbe+script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -66,18 +67,29 @@ func seedGitRepo(t *testing.T) string {
 	return dir
 }
 
+func pinnedPlanRepository(t *testing.T, repositoryID, origin string) v1.JobRepository {
+	t.Helper()
+	command := exec.Command("git", "rev-parse", "HEAD")
+	command.Dir = origin
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve observed repository head: %v\n%s", err, output)
+	}
+	return v1.JobRepository{
+		RepositoryID: repositoryID, RepositoryHeadObservationID: "head-observation-" + repositoryID,
+		BaseBranch: "main", BaseSHA: strings.TrimSpace(string(output)), Primary: true,
+	}
+}
+
 func makeTestPack(t *testing.T) (archive []byte, pubKeyB64 string, signingKey ed25519.PrivateKey) {
 	t.Helper()
-	legacyKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
 	src := t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, "WORKFLOW.md"), []byte("# platform workflow"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if _, err := agentpack.PackDir(src, "1.0.0", "", &buf, legacyKey); err != nil {
+	options := agentpack.ArchiveBuildOptions{PackKey: "default-pack", Provider: "claude-code", Version: "1.0.0"}
+	if _, err := agentpack.BuildArchiveFromDirectory(src, options, &buf); err != nil {
 		t.Fatal(err)
 	}
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -123,6 +135,12 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
+	runnerBin := buildRunnerBinary(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cp, err := mockcp.NewServer()
 	if err != nil {
 		t.Fatal(err)
@@ -136,17 +154,33 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 	enrollRunner(t, cp, stateDir)
 
 	origin := seedGitRepo(t)
+	pinned := pinnedPlanRepository(t, "repo-1", origin)
+	planningGit(t, origin, "commit", "--allow-empty", "-m", "advance after capture")
+	advancedSHA := planningGit(t, origin, "rev-parse", "HEAD")
+	if advancedSHA == pinned.BaseSHA {
+		t.Fatal("fixture branch must advance after capture")
+	}
 	packBytes, pub, packSigningKey := makeTestPack(t)
 	archiveSum := sha256.Sum256(packBytes)
 	digest := hex.EncodeToString(archiveSum[:])
 	packPath := cp.ServePack("base-1.0.0.tar.gz", packBytes)
 
-	runnerBin := buildRunnerBinary(t)
-	fakeAgent := writeFakeAgent(t, strings.ReplaceAll(fakeAgentScript, "$RUNNER_BIN", runnerBin))
+	receipt := filepath.Join(t.TempDir(), "planning-resources")
+	checks := `#!/bin/sh
+set -eu
+[ "$(git rev-parse HEAD)" = "` + pinned.BaseSHA + `" ]
+if git symbolic-ref -q HEAD >/dev/null; then exit 1; fi
+printf '%s\n' "$PWD" "$PLATFORM_MCP_SOCKET" "$PLATFORM_MCP_TOKEN_FILE" > '` + strings.ReplaceAll(receipt, "'", "'\"'\"'") + `'
+`
+	fakeAgent := writeFakeAgent(t, checks+strings.ReplaceAll(fakeAgentScript, "$RUNNER_BIN", runnerBin))
 
 	cfg := directRunnerConfig(cp.WSURL(), stateDir)
 	cfg.Provider = "claude"
-	cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
+	cfg.ProviderBinaries = map[string]string{
+		"claude":   fakeAgent,
+		"codex":    filepath.Join(home, "unavailable-codex"),
+		"opencode": filepath.Join(home, "unavailable-opencode"),
+	}
 	cfg.AgentPackPublicKeys = map[string]string{"test-pack": pub}
 	cfg.AllowedArtifactOrigins = []string{cp.SecureHTTPURL()}
 	cfg.Repositories = map[string]config.RepositoryConfig{"repo-1": {URL: origin}}
@@ -155,8 +189,19 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = d.Run(ctx) }()
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil && err != context.Canceled {
+				t.Errorf("daemon shutdown: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("daemon did not stop after planning test")
+		}
+	}()
 
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
 
@@ -164,9 +209,11 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 		Version: "1.0.0", Digest: digest,
 		URL: cp.SecureHTTPURL() + packPath, KeyID: "test-pack",
 	}
+	awaitConfiguredPlanningCapability(t, cp, stateDir, fakeAgent)
+
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-1", AttemptID: "att-1", Kind: v1.JobKindPlan, FencingToken: 1,
-		Repositories:       []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
+		Repositories:       []v1.JobRepository{pinned},
 		Ticket:             v1.TicketContext{Key: "PROJ-1", Summary: "Add feature X", Description: "Details"},
 		AgentPack:          packReference,
 		AgentPackAuthority: signedIntegrationPackAuthority(t, *packReference, packSigningKey),
@@ -217,11 +264,18 @@ func TestPlanningJobEndToEnd(t *testing.T) {
 	}
 	discovery := discoveryEvents[0].Payload.(map[string]any)
 	if discovery["project_id"] != job.ProjectID || discovery["repository_id"] != "repo-1" ||
-		discovery["catalog_version"] != v1.AgentConfigCatalogVersion || discovery["commit_sha"] == "" {
+		discovery["catalog_version"] != v1.AgentConfigCatalogVersion || discovery["commit_sha"] != pinned.BaseSHA {
 		t.Fatalf("discovery authority = %v", discovery)
 	}
 	if len(cp.EventsByKind("progress")) == 0 {
 		t.Fatal("expected progress events")
+	}
+	assertPlanningResourcesRemoved(t, receipt)
+	if got := planningGit(t, origin, "rev-parse", "HEAD"); got != advancedSHA {
+		t.Fatalf("planning changed origin HEAD: %s", got)
+	}
+	if got := planningGit(t, origin, "status", "--porcelain"); got != "" {
+		t.Fatalf("planning changed origin worktree: %s", got)
 	}
 }
 
@@ -272,7 +326,7 @@ func TestPlanningJobFailsClosedBeforeProviderWhenRepositoryConfigurationNeedsApp
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-config-review", AttemptID: "att-1", Kind: v1.JobKindPlan, FencingToken: 1,
-		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)},
 		Ticket:       v1.TicketContext{Key: "PROJ-12", Summary: "Review repository configuration"},
 	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
@@ -336,7 +390,7 @@ func TestEmergencyStopCancelsJob(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-2", AttemptID: "att-2", Kind: v1.JobKindPlan, FencingToken: 1,
-		Repositories: []v1.JobRepository{{RepositoryID: "repo-2", Primary: true}},
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-2", origin)},
 		Ticket:       v1.TicketContext{Key: "PROJ-2", Summary: "Long job"},
 	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
@@ -390,7 +444,7 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-renew", AttemptID: "att-renew", Kind: v1.JobKindPlan, FencingToken: 9,
 		LeaseExpiresAt: time.Now().Add(6 * time.Second),
-		Repositories:   []v1.JobRepository{{RepositoryID: "repo-renew", Primary: true}},
+		Repositories:   []v1.JobRepository{pinnedPlanRepository(t, "repo-renew", origin)},
 		Ticket:         v1.TicketContext{Key: "PROJ-RENEW", Summary: "Long planning job"},
 	})
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {

@@ -88,7 +88,7 @@ func TestCommitCleanRepositoryAndPushRequiresLease(t *testing.T) {
 	git("commit", "-m", "initial")
 	jr, _ := testJobRunner(t)
 	jr.d.cfg.Isolation = "direct"
-	repository := checkedOutRepository{ID: "repo-1", WorkDir: dir, Branch: "feature/test", URL: "https://example.test/repo.git", Primary: true}
+	repository := checkedOutRepository{ID: "repo-1", WorkDir: dir, Branch: "feature/test", URL: "https://example.test/repo.git", Primary: true, BaseSHA: gitHead(t, dir)}
 	sha, err := jr.commitAgentChanges(context.Background(), repository)
 	if err != nil || len(sha) != 40 {
 		t.Fatalf("sha=%q err=%v", sha, err)

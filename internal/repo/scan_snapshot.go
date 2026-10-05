@@ -1,0 +1,153 @@
+package repo
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/example/app-runner/internal/scanner"
+	"github.com/example/app-runner/internal/validation"
+)
+
+// AgentConfigScanSupportedOS names platforms with the process-group cancellation
+// guarantees required by this transport. Advertising and execution use one rule.
+func AgentConfigScanSupportedOS(platform string) bool {
+	return platform == "linux" || platform == "darwin"
+}
+
+var (
+	ErrScanUnavailable  = errors.New("registered repository snapshot is unavailable")
+	ErrScanInvalidInput = errors.New("registered repository scan input is invalid")
+	ErrScanLimit        = scanner.ErrScanLimit
+)
+
+// ScanAgentConfig scans a trusted administrator-configured origin. Callers must
+// resolve repository identity through runner configuration before calling it.
+// A private, disposable bare clone isolates this read from job mirrors and Git
+// configuration. No checkout, attributes, filters, hooks or submodules run.
+func (m *Manager) ScanAgentConfig(ctx context.Context, registeredURL, branchRef string) (string, scanner.Inventory, error) {
+	empty := scanner.Inventory{}
+	if !AgentConfigScanSupportedOS(runtime.GOOS) {
+		return "", empty, ErrScanUnavailable
+	}
+	if validateURL(registeredURL, m.AllowLocal) != nil || validation.AgentConfigScanBranch(branchRef) != nil {
+		return "", empty, ErrScanInvalidInput
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return "", empty, err
+	}
+	parent := filepath.Join(m.Root, "agent-config-scans")
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", empty, ErrScanUnavailable
+	}
+	dir, err := os.MkdirTemp(parent, "snapshot-")
+	if err != nil {
+		return "", empty, ErrScanUnavailable
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	bare := filepath.Join(dir, "repository.git")
+	branch := strings.TrimPrefix(branchRef, "refs/heads/")
+	// A shallow single-branch clone negotiates the remote object format, including
+	// SHA-256 repositories. --no-local prevents local test origins using hardlinks
+	// or bypassing the requested shallow transport behavior.
+	if _, err := m.scanGit(ctx, dir, 4096, "clone", "--bare", "--no-local", "--depth=1", "--single-branch", "--no-tags", "--template=", "--branch", branch, "--", registeredURL, bare); err != nil {
+		return "", empty, err
+	}
+	return m.scanPinnedOrigin(ctx, bare, registeredURL, branchRef)
+}
+
+func (m *Manager) scanPinnedOrigin(ctx context.Context, bare, registeredURL, branchRef string) (string, scanner.Inventory, error) {
+	empty := scanner.Inventory{}
+	origin, err := m.scanGit(ctx, bare, 4096, "remote", "get-url", "origin")
+	if err != nil {
+		return "", empty, err
+	}
+	if strings.TrimSuffix(string(origin), "\n") != registeredURL {
+		return "", empty, ErrScanUnavailable
+	}
+	// Fetch only the requested branch after origin verification. Neither clone's
+	// HEAD nor a stale cached ref can substitute for a missing/deleted branch.
+	if _, err := m.scanGit(ctx, bare, 4096, "fetch", "--depth=1", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", "--no-auto-maintenance", "origin", "+"+branchRef+":refs/heads/scan-input"); err != nil {
+		return "", empty, err
+	}
+	rawSHA, err := m.scanGit(ctx, bare, 256, "rev-parse", "--verify", "refs/heads/scan-input^{commit}")
+	if err != nil {
+		return "", empty, err
+	}
+	sha := strings.TrimSuffix(string(rawSHA), "\n")
+	if !validObjectID(sha) {
+		return "", empty, ErrScanUnavailable
+	}
+	tree, err := m.scanGit(ctx, bare, scanner.MaxGitTreeBytes, "ls-tree", "-r", "-l", "-z", "--full-tree", sha)
+	if err != nil {
+		return "", empty, err
+	}
+	inventory, err := scanner.ScanGitTree(ctx, tree, func(ctx context.Context, oid string) ([]byte, error) {
+		if !validObjectID(oid) {
+			return nil, scanner.ErrIncompleteScan
+		}
+		return m.scanGit(ctx, bare, scanner.MaxFileSize, "cat-file", "blob", oid)
+	})
+	if err != nil {
+		return "", empty, err
+	}
+	return sha, inventory, nil
+}
+
+func (m *Manager) scanGit(ctx context.Context, dir string, maxOutput int, args ...string) ([]byte, error) {
+	commandCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	fixed := []string{"--no-pager", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "init.templateDir=", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false", "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "-c", "core.attributesFile=/dev/null", "-c", "credential.helper="}
+	// #nosec G204 -- Git is fixed, arguments are individually validated and no shell is used.
+	cmd := exec.CommandContext(commandCtx, "git", append(fixed, args...)...)
+	cmd.Dir = dir
+	protocols := "https:ssh"
+	if m.AllowLocal {
+		protocols += ":file"
+	}
+	cmd.Env = append(gitEnvironment(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_PROTOCOL_FROM_USER=0", "GIT_ALLOW_PROTOCOL="+protocols, "GIT_NO_REPLACE_OBJECTS=1", "GIT_LFS_SKIP_SMUDGE=1", "GIT_NO_LAZY_FETCH=1")
+	stdout := scanOutput{limit: maxOutput, cancel: cancel}
+	stderr := scanOutput{limit: 64 << 10, cancel: cancel}
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	cmd.WaitDelay = time.Second
+	stopOwnedGroup := configureScanProcess(cmd)
+	defer stopOwnedGroup()
+	err := cmd.Run()
+	if stdout.overflow || stderr.overflow {
+		return nil, ErrScanLimit
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%w: Git operation failed", ErrScanUnavailable)
+	}
+	return stdout.data, nil
+}
+
+// Separate bounded streams preserve raw stdout and never include repository
+// content, transport credentials or Git diagnostics in returned errors.
+type scanOutput struct {
+	data     []byte
+	limit    int
+	overflow bool
+	cancel   context.CancelFunc
+}
+
+func (b *scanOutput) Write(p []byte) (int, error) {
+	if len(p) > b.limit-len(b.data) {
+		b.overflow = true
+		b.cancel()
+		return 0, ErrScanLimit
+	}
+	b.data = append(b.data, p...)
+	return len(p), nil
+}

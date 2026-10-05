@@ -1,0 +1,316 @@
+{
+  "format": 1,
+  "vectors": [
+    {
+      "name": "control_plane_golden",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "Platform Default",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "0dd810eda00dbaea28d88b70f32f88847ffb22481e07c6c0c12e6b87a8fec978"
+    },
+    {
+      "name": "platform_scope",
+      "input": {
+        "scope": {
+          "kind": "platform"
+        },
+        "packKey": "platform-default",
+        "packName": "Platform Default",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "60ba05ffaf75d2ef83d4f8d57e1cef39e2f53ccb3ee69f2e888afde42b06f38d"
+    },
+    {
+      "name": "provider_claude",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "Platform Default",
+        "provider": "claude",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "00dd1033254daa6fa743912de65621723ead81e9166a4066921372f6f989b7e7"
+    },
+    {
+      "name": "platform_claude_code_gateway_url",
+      "input": {
+        "scope": {
+          "kind": "platform"
+        },
+        "packKey": "platform-agent-pack",
+        "packName": "ShortStack Platform",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "1.0.0",
+          "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "url": "https://gateway.shortstack.test/v1/agent-packs/sha256/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "key_id": "platform-2026"
+        }
+      },
+      "expectedDigest": "af81ecd5e49f2dcd77b1e0ebfd9f5e5c31f3da052209dde8acfd0deeefd7a325"
+    },
+    {
+      "name": "pack_name_non_ascii",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "\u00c9quipe \u5e73\u53f0 \ud83d\ude80 Pack",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "0ae584e728072fd846824306d32ed92bebae3547ddd2d4810c391d12b056ea44"
+    },
+    {
+      "name": "pack_name_quote_backslash",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "He said \"pack\" \\ path\\to",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "7fe12977c220b95a9dff44fd5d9ab8f7998d950f1cfc39079bf6db93db6b0adc"
+    },
+    {
+      "name": "pack_name_html_sensitive",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "<script>&amp; \"x\" > y</script>",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "43e5947a7ff10f896368c8f51791b7224e9daa8fb784d1f43248ccdd82d0224d"
+    },
+    {
+      "name": "pack_name_line_separators",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "a\u2028b\u2029c",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "627d275f009ecbbef6e22038a8c2f2389b62b3ffcefdd92e895cda0e3ff62599"
+    },
+    {
+      "name": "pack_name_c0_controls",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "c0:\u0001\u0007\b\t\n\u000b\f\r\u001b\u001f.",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "a6d2a84a52087c6167f3ae5774f786fa49cd475fc74accbc38f12bbe088065ef"
+    },
+    {
+      "name": "pack_name_del_and_c1",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "del\u007f c1\u0080\u0085\u009f",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "6e829d4079b99a78599de2a5bbbd261dd02eb3cb7568c0a91180341528e842bd"
+    },
+    {
+      "name": "pack_name_unicode_normalization_composed",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "caf\u00e9",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "20634f42f8b99415b2a242ff94d7b2760ebde72e4b7e8ddc4a5243b753bdac42"
+    },
+    {
+      "name": "pack_name_unicode_normalization_decomposed",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "org-1"
+        },
+        "packKey": "platform-default",
+        "packName": "cafe\u0301",
+        "provider": "claude-code",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "4e55a9f78ddafa6c9f4c96a0214f22c2ecb5bd57e60cfeebd0cc7b4b3019c5b2"
+    },
+    {
+      "name": "maximum_lengths_organization",
+      "input": {
+        "scope": {
+          "kind": "organization",
+          "organizationId": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo"
+        },
+        "packKey": "k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-k-kk",
+        "packName": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+        "provider": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+        "protocolVersion": 65535,
+        "minimumRunnerVersion": "2147483647.2147483647.2147483647",
+        "agentPack": {
+          "version": "2147483647.2147483647.2147483647",
+          "digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "url": "https://packs.example.test/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu",
+          "key_id": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"
+        }
+      },
+      "expectedDigest": "738240140252ab799f27107bd3ed96df28aec546d8948cc4f7b64c9be1993ac7"
+    },
+    {
+      "name": "maximum_lengths_platform_ascii",
+      "input": {
+        "scope": {
+          "kind": "platform"
+        },
+        "packKey": "platform-default",
+        "packName": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+        "provider": "claude-code",
+        "protocolVersion": 65535,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "4f05d8af90fc25f19ab18e346f765ed957711803db6f8831aea2c446d90604f1"
+    },
+    {
+      "name": "codex_platform",
+      "input": {
+        "scope": {
+          "kind": "platform"
+        },
+        "packKey": "platform-default",
+        "packName": "Codex overlay",
+        "provider": "codex",
+        "protocolVersion": 1,
+        "minimumRunnerVersion": "1.4.0",
+        "agentPack": {
+          "version": "2.1.0",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "url": "https://packs.example.test/platform-default-2.1.0.tgz",
+          "key_id": "pack-signing-1"
+        }
+      },
+      "expectedDigest": "d429d81053e3eef08959ab3455d82e9f02d541b4ba3d53ffee16e8cca7df66a1"
+    }
+  ]
+}

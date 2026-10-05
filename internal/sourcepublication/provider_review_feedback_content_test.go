@@ -151,7 +151,7 @@ func TestReviewFeedbackContentRegistryRejectsStableActorDriftBeforeFetch(t *test
 	registry := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{"installation-1": {Provider: "github", APIBaseURL: server.URL, TokenFile: writeToken(t, 0o600)}}, httpClient: server.Client()}
 	op := feedbackOperationForTest()
 	op.ProviderInstanceKey = configuredProviderInstanceKey("github", server.URL)
-	out := registry.FetchProviderReviewFeedbackContent(context.Background(), op)
+	out := registry.FetchProviderReviewFeedbackContent(context.Background(), op, nil)
 	if out.Kind != v1.ProviderReviewFeedbackContentPermanent || out.Code != v1.ProviderReviewFeedbackContentReviewerIdentityChanged || requests != 1 {
 		t.Fatalf("out=%#v requests=%d", out, requests)
 	}
@@ -169,7 +169,7 @@ func TestReviewFeedbackContentRejectsProviderWithoutNativeReviewFetch(t *testing
 			op := feedbackOperationForTest()
 			op.Provider = provider
 			op.ProviderInstanceKey = configuredProviderInstanceKey(provider, server.URL)
-			out := registry.FetchProviderReviewFeedbackContent(context.Background(), op)
+			out := registry.FetchProviderReviewFeedbackContent(context.Background(), op, nil)
 			if out.Code != v1.ProviderReviewFeedbackContentUnsupportedProviderInstance || requests != 0 {
 				t.Fatalf("out=%#v requests=%d", out, requests)
 			}
@@ -180,15 +180,15 @@ func TestReviewFeedbackContentRejectsProviderWithoutNativeReviewFetch(t *testing
 func TestReviewFeedbackContentRegistryFailsClosedAtInstallationBoundary(t *testing.T) {
 	op := feedbackOperationForTest()
 	empty := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{}, httpClient: http.DefaultClient}
-	if got := empty.FetchProviderReviewFeedbackContent(context.Background(), op); got.Code != v1.ProviderReviewFeedbackContentInstallationInactive {
+	if got := empty.FetchProviderReviewFeedbackContent(context.Background(), op, nil); got.Code != v1.ProviderReviewFeedbackContentInstallationInactive {
 		t.Fatalf("missing=%#v", got)
 	}
 	wrong := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{"installation-1": {Provider: "gitlab", APIBaseURL: "https://gitlab.com", TokenFile: writeToken(t, 0o600)}}, httpClient: http.DefaultClient}
-	if got := wrong.FetchProviderReviewFeedbackContent(context.Background(), op); got.Code != v1.ProviderReviewFeedbackContentInstallationPermissionDenied {
+	if got := wrong.FetchProviderReviewFeedbackContent(context.Background(), op, nil); got.Code != v1.ProviderReviewFeedbackContentInstallationPermissionDenied {
 		t.Fatalf("provider=%#v", got)
 	}
 	badToken := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{"installation-1": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: "/missing/token"}}, httpClient: http.DefaultClient}
-	if got := badToken.FetchProviderReviewFeedbackContent(context.Background(), op); got.Code != v1.ProviderReviewFeedbackContentInstallationInactive {
+	if got := badToken.FetchProviderReviewFeedbackContent(context.Background(), op, nil); got.Code != v1.ProviderReviewFeedbackContentInstallationInactive {
 		t.Fatalf("token=%#v", got)
 	}
 }

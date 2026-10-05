@@ -8,8 +8,10 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -27,6 +29,11 @@ type Handler interface {
 	OnDisconnected(err error)
 }
 
+type EventRejectionHandler interface {
+	OnEventRejected(ctx context.Context, eventID, code string) error
+	OnSessionRejected(ctx context.Context, code string) error
+}
+
 type Client struct {
 	url      string
 	tlsCfg   *tls.Config
@@ -38,6 +45,7 @@ type Client struct {
 	writeMu     sync.Mutex
 	conn        *websocket.Conn
 	connected   bool
+	connTLS     *tls.Config
 	heartbeatIv time.Duration
 	connectedAt time.Time
 
@@ -73,6 +81,26 @@ func (c *Client) UpdateTLSConfig(cfg *tls.Config) {
 	if conn != nil {
 		_ = conn.Close(websocket.StatusNormalClosure, "certificate rotated")
 	}
+}
+
+type UpgradeRejectedError struct {
+	StatusCode int
+	err        error
+}
+
+func (e *UpgradeRejectedError) Error() string { return "dial: " + e.err.Error() }
+
+func (e *UpgradeRejectedError) Unwrap() error { return e.err }
+
+func IsUpgradeUnauthorized(err error) bool {
+	var rejected *UpgradeRejectedError
+	return errors.As(err, &rejected) && rejected.StatusCode == http.StatusUnauthorized
+}
+
+func (c *Client) ConnectedTLSConfig() *tls.Config {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connTLS
 }
 
 func (c *Client) Run(ctx context.Context) error {
@@ -123,8 +151,11 @@ func (c *Client) connectOnce(ctx context.Context) error {
 			TLSHandshakeTimeout: 10 * time.Second,
 		}},
 	}
-	conn, _, err := websocket.Dial(ctx, c.url, dialer)
+	conn, resp, err := websocket.Dial(ctx, c.url, dialer)
 	if err != nil {
+		if resp != nil && resp.StatusCode != http.StatusSwitchingProtocols {
+			return &UpgradeRejectedError{StatusCode: resp.StatusCode, err: err}
+		}
 		return fmt.Errorf("dial: %w", err)
 	}
 	conn.SetReadLimit(2 << 20)
@@ -136,6 +167,7 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		c.mu.Lock()
 		c.conn = nil
 		c.connected = false
+		c.connTLS = nil
 		c.mu.Unlock()
 	}()
 
@@ -171,6 +203,7 @@ func (c *Client) connectOnce(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	c.connected = true
+	c.connTLS = tlsCfg
 	c.connectedAt = time.Now()
 	c.mu.Unlock()
 
@@ -213,6 +246,9 @@ func (c *Client) readLoop(ctx context.Context) error {
 		if err := c.readInto(ctx, &env); err != nil {
 			return err
 		}
+		if env.ProviderCredential != nil && env.Type != v1.TypeCommand {
+			return fmt.Errorf("%s envelope cannot carry a provider credential", env.Type)
+		}
 		switch env.Type {
 		case v1.TypeCommand:
 			if err := c.handler.OnCommand(ctx, env); err != nil {
@@ -224,15 +260,40 @@ func (c *Client) readLoop(ctx context.Context) error {
 			}
 			c.handler.OnEventAck(ctx, env.InReplyTo)
 		case v1.TypeHeartbeatAck:
+		case v1.TypeError:
+			c.recordRejection(ctx, env)
 		default:
 		}
+	}
+}
+
+func (c *Client) recordRejection(ctx context.Context, env v1.Envelope) {
+	rejections, ok := c.handler.(EventRejectionHandler)
+	if !ok {
+		return
+	}
+	payload, err := decodePayload[v1.ErrorPayload](env)
+	if err == nil && payload.Code == "" {
+		err = fmt.Errorf("error payload is missing a code")
+	}
+	if err != nil {
+		slog.Debug("ignoring undecodable gateway error", "id", env.ID, "err", err)
+		return
+	}
+	if env.InReplyTo != "" {
+		err = rejections.OnEventRejected(ctx, env.InReplyTo, payload.Code)
+	} else {
+		err = rejections.OnSessionRejected(ctx, payload.Code)
+	}
+	if err != nil {
+		slog.Debug("record gateway rejection", "in_reply_to", env.InReplyTo, "err", err)
 	}
 }
 
 func (c *Client) SendEvent(ctx context.Context, envelope v1.Envelope) error {
 	if envelope.Version != v1.ProtocolVersion || envelope.Type != v1.TypeEvent ||
 		envelope.ID == "" || envelope.SentAt.IsZero() || envelope.RunnerID != c.runnerID ||
-		envelope.InReplyTo != "" {
+		envelope.InReplyTo != "" || envelope.ProviderCredential != nil {
 		return fmt.Errorf("invalid outbound event envelope")
 	}
 	return c.send(ctx, envelope)

@@ -49,8 +49,10 @@ func NewRegistry(
 			}
 			return nil, err
 		}
-		if _, err := readToken(copyValue.TokenFile); err != nil {
-			return nil, err
+		if !credentialOnlyInstallation(copyValue) {
+			if _, err := readToken(copyValue.TokenFile); err != nil {
+				return nil, err
+			}
 		}
 		copyInstallations[id] = copyValue
 	}
@@ -67,6 +69,10 @@ func NewRegistry(
 func (registry *Registry) ReadyProviders() []string {
 	providers := map[string]struct{}{}
 	for _, installation := range registry.installations {
+		if credentialOnlyInstallation(installation) {
+			providers[installation.Provider] = struct{}{}
+			continue
+		}
 		if _, err := readToken(installation.TokenFile); err == nil {
 			providers[installation.Provider] = struct{}{}
 		}
@@ -82,7 +88,7 @@ func (registry *Registry) ReadyProviders() []string {
 func (registry *Registry) ReadyReviewerIdentityInstallations() []v1.ReviewerIdentityVerificationInstallationCapability {
 	result := make([]v1.ReviewerIdentityVerificationInstallationCapability, 0, len(registry.installations))
 	for installationID, installation := range registry.installations {
-		if _, err := readToken(installation.TokenFile); err != nil {
+		if !reviewInstallationReady(installation) {
 			continue
 		}
 		result = append(result, v1.ReviewerIdentityVerificationInstallationCapability{
@@ -100,7 +106,7 @@ func (registry *Registry) ReadyReviewerIdentityInstallations() []v1.ReviewerIden
 func (registry *Registry) ReadyProviderReviewerAssignmentInstallations() []v1.ProviderReviewerAssignmentInstallationCapability {
 	result := make([]v1.ProviderReviewerAssignmentInstallationCapability, 0, len(registry.installations))
 	for installationID, installation := range registry.installations {
-		if _, err := readToken(installation.TokenFile); err != nil {
+		if !reviewInstallationReady(installation) {
 			continue
 		}
 		result = append(result, v1.ProviderReviewerAssignmentInstallationCapability{
@@ -115,7 +121,7 @@ func (registry *Registry) ReadyProviderReviewerAssignmentInstallations() []v1.Pr
 func (registry *Registry) ReadyProviderReviewerAssignmentReconciliationInstallations() []v1.ProviderReviewerAssignmentReconciliationInstallationCapability {
 	result := make([]v1.ProviderReviewerAssignmentReconciliationInstallationCapability, 0, len(registry.installations))
 	for installationID, installation := range registry.installations {
-		if _, err := readToken(installation.TokenFile); err != nil {
+		if !reviewInstallationReady(installation) {
 			continue
 		}
 		result = append(result, v1.ProviderReviewerAssignmentReconciliationInstallationCapability{InstallationID: installationID, Provider: installation.Provider, ProviderInstanceKey: configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL)})
@@ -127,7 +133,7 @@ func (registry *Registry) ReadyProviderReviewerAssignmentReconciliationInstallat
 func (registry *Registry) ReadyProviderReviewObservationInstallations() []v1.ProviderReviewObservationInstallationCapability {
 	result := make([]v1.ProviderReviewObservationInstallationCapability, 0, len(registry.installations))
 	for id, installation := range registry.installations {
-		if _, err := readToken(installation.TokenFile); err != nil {
+		if !reviewInstallationReady(installation) {
 			continue
 		}
 		result = append(result, v1.ProviderReviewObservationInstallationCapability{InstallationID: id, Provider: installation.Provider, ProviderInstanceKey: configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL)})
@@ -142,7 +148,7 @@ func (registry *Registry) ReadyProviderReviewFeedbackContentInstallations() []v1
 		if installation.Provider != "github" {
 			continue
 		}
-		if _, err := readToken(installation.TokenFile); err != nil {
+		if !reviewInstallationReady(installation) {
 			continue
 		}
 		result = append(result, v1.ProviderReviewFeedbackContentInstallationCapability{InstallationID: id, Provider: installation.Provider, ProviderInstanceKey: configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL)})
@@ -154,6 +160,7 @@ func (registry *Registry) ReadyProviderReviewFeedbackContentInstallations() []v1
 func (registry *Registry) Publish(
 	ctx context.Context,
 	operation v1.SourcePublicationOperation,
+	credential *v1.ProviderCredential,
 ) v1.SourcePublicationResultOutcome {
 	installation, ok := registry.installations[operation.Publication.InstallationID]
 	if !ok {
@@ -161,6 +168,14 @@ func (registry *Registry) Publish(
 	}
 	if installation.Provider != operation.Publication.Provider {
 		return permanent(v1.SourceControlPermissionDenied)
+	}
+	if installation.Provider == "github" && (credential != nil || credentialOnlyInstallation(installation)) {
+		if !credential.UsableAt(time.Now()) {
+			return retryable(v1.SourceControlProviderUnavailable, nil)
+		}
+		publisher := newGitHubPublisher(installation.APIBaseURL, credential.Token, registry.httpClient)
+		publisher.repositoryIDs = append([]string(nil), credential.RepositoryIDs...)
+		return publisher.publish(ctx, operation.Publication)
 	}
 	token, err := readToken(installation.TokenFile)
 	if err != nil {
@@ -176,4 +191,8 @@ func (registry *Registry) Publish(
 	default:
 		return permanent(v1.SourceControlInstallationRevoked)
 	}
+}
+
+func credentialOnlyInstallation(installation config.SourcePublicationInstallationConfig) bool {
+	return installation.Provider == "github" && installation.TokenFile == ""
 }

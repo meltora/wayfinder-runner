@@ -3,6 +3,7 @@ package sourcepublication
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"sort"
@@ -53,6 +54,9 @@ func (publisher *githubPublisher) assignReviewers(
 	response, mutationErr := publisher.request(
 		ctx, http.MethodPost, requestPath+"/requested_reviewers", nil, body,
 	)
+	if errors.Is(mutationErr, errProviderCredentialExpiring) {
+		return assignmentRetryable(v1.ProviderReviewerAssignmentProviderUnavailable, nil)
+	}
 	// Once the mutation has been attempted, no transport or status response is
 	// sufficient proof. Only a fresh provider read may turn it into success.
 	after, reconcileFailure := publisher.assignmentSnapshot(ctx, requestPath, command)

@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,7 @@ func seedBareOrigin(t *testing.T) string {
 }
 
 const fakeBuildAgent = `#!/bin/sh
+echo '{"type":"status","status":"starting"}'
 echo 'package main
 
 func Feature() bool { return true }
@@ -111,11 +113,15 @@ func TestBuildJobEndToEnd(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-1", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)}, ApprovedPlanRevision: 1,
 		RequiredChecks: []string{"feature-file", "feature-symbol"},
 		PushBranch:     true, PRTitle: "PROJ-9 add feature",
 		Ticket: v1.TicketContext{Key: "PROJ-9", Summary: "Add Feature()"},
 	})
+	job.AgentRunAuthority = &v1.AgentRunAuthority{
+		SchemaVersion: 1, AgentRunID: "agent-run-build-1",
+		StepRunID: "step-run-build-1", StepSequence: 2,
+	}
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +139,24 @@ func TestBuildJobEndToEnd(t *testing.T) {
 		payload["manifest_id"] != job.ManifestID || payload["manifest_digest"] != job.ManifestDigest {
 		t.Fatalf("terminal authority = %v", payload)
 	}
+
+	startedEvents := cp.EventsByKind("job_started")
+	if len(startedEvents) != 1 {
+		t.Fatalf("job_started events = %d, want 1", len(startedEvents))
+	}
+	started := startedEvents[0].Payload.(map[string]any)
+	if started["manifest_kind"] != "build" || started["lease_id"] != job.LeaseID ||
+		started["attempt_id"] != job.AttemptID || started["manifest_id"] != job.ManifestID ||
+		started["manifest_digest"] != job.ManifestDigest {
+		t.Fatalf("job_started authority = %v", started)
+	}
+	agentAuthority, ok := started["agent_run_authority"].(map[string]any)
+	if !ok || agentAuthority["agent_run_id"] != job.AgentRunAuthority.AgentRunID ||
+		agentAuthority["step_run_id"] != job.AgentRunAuthority.StepRunID ||
+		agentAuthority["step_sequence"] != float64(job.AgentRunAuthority.StepSequence) {
+		t.Fatalf("job_started AgentRun authority = %v", started["agent_run_authority"])
+	}
+	assertJobStartedBeforeEvidence(t, cp.Events())
 
 	if len(cp.EventsByKind("test_results")) != 3 {
 		t.Fatalf("test_results events = %d", len(cp.EventsByKind("test_results")))
@@ -160,6 +184,95 @@ func TestBuildJobEndToEnd(t *testing.T) {
 	commitSet := review["commit_set"].(map[string]any)
 	if commitSet["repo-1"] != strings.TrimSpace(string(out)) {
 		t.Fatalf("review commit set = %v, pushed head = %s", commitSet, out)
+	}
+}
+
+func assertJobStartedBeforeEvidence(t *testing.T, events []v1.Envelope) {
+	t.Helper()
+	startedAt := -1
+	sawSanitizedAgentStatus := false
+	for index, envelope := range events {
+		payload, ok := envelope.Payload.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := payload["kind"].(string)
+		if kind == "job_started" {
+			startedAt = index
+			continue
+		}
+		if kind == "progress" && payload["milestone"] == "agent_started" {
+			t.Fatal("runner emitted the misleading pre-start agent_started milestone")
+		}
+		if kind == "sanitized_log" {
+			sawSanitizedAgentStatus = true
+		}
+		if kind == "sanitized_log" || kind == "test_results" || kind == "checkpoint" || kind == "review_ready" || kind == "job_finished" {
+			if startedAt < 0 || startedAt >= index {
+				t.Fatalf("%s arrived before durable job_started evidence", kind)
+			}
+		}
+	}
+	if startedAt < 0 {
+		t.Fatal("job_started was not observed")
+	}
+	if !sawSanitizedAgentStatus {
+		t.Fatal("immediate provider output was not consumed after job_started")
+	}
+}
+
+func TestProviderStartFailureEmitsNoJobStarted(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	cp, err := mockcp.NewServer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer cp.Close()
+
+	stateDir := t.TempDir()
+	enrollRunner(t, cp, stateDir)
+	origin := seedBareOrigin(t)
+	cfg := directRunnerConfig(cp.WSURL(), stateDir)
+	cfg.Provider = "claude"
+	cfg.ProviderBinaries = map[string]string{"claude": filepath.Join(t.TempDir(), "missing-agent")}
+	cfg.Repositories = map[string]config.RepositoryConfig{"repo-1": {URL: origin}}
+	d, err := daemon.New(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = d.Run(ctx) }()
+	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
+
+	job := withIntegrationAuthority(v1.JobSpec{
+		JobID: "build-start-failure", AttemptID: "attempt-start-failure",
+		Kind: v1.JobKindBuild, FencingToken: 1,
+		Repositories:         []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)},
+		ApprovedPlanRevision: 1,
+		Ticket:               v1.TicketContext{Key: "PROJ-START", Summary: "Fail before process start"},
+	})
+	job.AgentRunAuthority = &v1.AgentRunAuthority{
+		SchemaVersion: 1, AgentRunID: "agent-run-start-failure",
+		StepRunID: "step-run-start-failure", StepSequence: 1,
+	}
+	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "job start failure", 30*time.Second, func() bool {
+		return len(cp.EventsByKind("job_finished")) == 1
+	})
+	if events := cp.EventsByKind("job_started"); len(events) != 0 {
+		t.Fatalf("start failure emitted job_started: %v", events)
+	}
+	finished := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
+	if finished["state"] != "failed" || finished["failure_code"] != "agent_start_failed" {
+		t.Fatalf("terminal start failure = %v", finished)
 	}
 }
 
@@ -200,7 +313,7 @@ func TestBuildJobCheckFailure(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-2", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{{RepositoryID: "repo-2", Primary: true}}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-2", origin)}, ApprovedPlanRevision: 1,
 		RequiredChecks: []string{"always-fail"},
 		PushBranch:     true,
 		Ticket:         v1.TicketContext{Key: "PROJ-10", Summary: "Will fail checks"},
@@ -228,11 +341,18 @@ func TestBuildJobCheckFailure(t *testing.T) {
 	if failed != 1 {
 		t.Fatalf("failed check events = %d", failed)
 	}
-	if len(cp.EventsByKind("artifact_registered")) != 1 {
-		t.Fatalf("failed attempt patch artifacts = %d", len(cp.EventsByKind("artifact_registered")))
+	if len(cp.EventsByKind("artifact_registered")) != 0 {
+		t.Fatalf("receipt-backed failed attempt emitted generic artifact metadata = %d", len(cp.EventsByKind("artifact_registered")))
 	}
+	assertStoredBuildPatch(t, cp, origin, job)
 	if len(cp.EventsByKind("pr_ready")) != 0 {
 		t.Fatal("failed checks emitted pr_ready")
+	}
+	if len(cp.EventsByKind("job_started")) != 0 {
+		t.Fatal("legacy unbound build emitted protected job_started evidence")
+	}
+	if len(cp.EventsByKind("checkpoint")) != 1 || len(cp.EventsByKind("test_results")) == 0 {
+		t.Fatal("legacy unbound build lost its established tool/evidence flow")
 	}
 	cmd := exec.Command("git", "--git-dir", origin, "show", "job/build-2/att-1:feature.go")
 	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "Feature") {
@@ -280,7 +400,7 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-agent-failure", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{{RepositoryID: "repo-agent-failure", Primary: true}}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-agent-failure", origin)}, ApprovedPlanRevision: 1,
 		RequiredChecks: []string{"partial-file", "always-fail"}, PushBranch: true,
 		ProviderCapacityResumePolicy: v1.CapacityResumeAutomatic,
 		Ticket:                       v1.TicketContext{Key: "PROJ-11", Summary: "Preserve partial work"},
@@ -295,9 +415,10 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 	if got := len(cp.EventsByKind("job_finished")); got != 0 {
 		t.Fatalf("provider capacity emitted %d competing terminal outcomes", got)
 	}
-	if len(cp.EventsByKind("artifact_registered")) != 1 {
-		t.Fatalf("agent failure patch artifacts = %d", len(cp.EventsByKind("artifact_registered")))
+	if len(cp.EventsByKind("artifact_registered")) != 0 {
+		t.Fatalf("receipt-backed agent failure emitted generic artifact metadata = %d", len(cp.EventsByKind("artifact_registered")))
 	}
+	assertStoredBuildPatch(t, cp, origin, job)
 	if len(cp.EventsByKind("pr_ready")) != 0 {
 		t.Fatal("agent failure emitted pr_ready")
 	}
@@ -331,6 +452,25 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 	cmd := exec.Command("git", "--git-dir", origin, "show", "job/build-agent-failure/att-1:partial.go")
 	if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "PartialFeature") {
 		t.Fatalf("agent failure branch is not recoverable: %v\n%s", err, out)
+	}
+}
+
+func assertStoredBuildPatch(t *testing.T, cp *mockcp.Server, origin string, job v1.JobSpec) {
+	t.Helper()
+	branch := "job/" + job.JobID + "/" + job.AttemptID
+	head, err := exec.Command("git", "--git-dir", origin, "rev-parse", branch).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.TrimSpace(string(head))
+	patch, err := exec.Command("git", "--git-dir", origin, "diff", "--no-ext-diff", "--no-textconv", job.Repositories[0].BaseSHA+".."+sha).Output()
+	if err != nil || len(patch) == 0 {
+		t.Fatalf("retained branch patch=%q error=%v", patch, err)
+	}
+	name := "changes-" + job.Repositories[0].RepositoryID + "-" + sha[:8] + ".patch"
+	stored, ok := cp.Artifact(job.JobID, job.AttemptID, name)
+	if !ok || string(stored) != string(patch) || sha256.Sum256(stored) != sha256.Sum256(patch) {
+		t.Fatalf("stored patch does not match exact retained branch: found=%t", ok)
 	}
 }
 
@@ -377,8 +517,8 @@ echo '{"type":"result","status":"success"}'
 		JobID: "multi-1", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
 		ApprovedPlanRevision: 1,
 		Repositories: []v1.JobRepository{
-			{RepositoryID: "primary", Primary: true},
-			{RepositoryID: "secondary"},
+			pinnedPlanRepository(t, "primary", primaryOrigin),
+			{RepositoryID: "secondary", BaseBranch: "main", BaseSHA: pinnedPlanRepository(t, "secondary", secondaryOrigin).BaseSHA},
 		},
 		PushBranch: true,
 		Ticket:     v1.TicketContext{Key: "PROJ-11", Summary: "Cross-repository change"},

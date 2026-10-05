@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,19 @@ func withTestAuthority(job v1.JobSpec) v1.JobSpec {
 	job.ManifestID = "manifest-" + job.JobID
 	job.ManifestDigest = strings.Repeat("a", 64)
 	job.WorkflowRevision = 1
+	if job.Kind == v1.JobKindPlan {
+		for index := range job.Repositories {
+			if job.Repositories[index].RepositoryHeadObservationID == "" {
+				job.Repositories[index].RepositoryHeadObservationID = fmt.Sprintf("head-observation-%d", index+1)
+			}
+			if job.Repositories[index].BaseBranch == "" {
+				job.Repositories[index].BaseBranch = "main"
+			}
+			if job.Repositories[index].BaseSHA == "" {
+				job.Repositories[index].BaseSHA = strings.Repeat(fmt.Sprintf("%x", index%15+1), 40)
+			}
+		}
+	}
 	return job
 }
 

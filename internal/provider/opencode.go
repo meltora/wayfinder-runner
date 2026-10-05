@@ -96,11 +96,12 @@ func (o *OpenCode) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	}
 
 	return supervisor.Spec{
-		Name:    "opencode-" + p.Job.AttemptID,
-		Command: bin,
-		Args:    args,
-		Dir:     p.WorkDir,
-		Env:     env,
+		Name:                "opencode-" + p.Job.AttemptID,
+		Command:             bin,
+		Args:                args,
+		Dir:                 p.WorkDir,
+		Env:                 env,
+		ProviderEnvironment: p.providerEnvironment(),
 	}, nil
 }
 

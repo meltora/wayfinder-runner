@@ -106,7 +106,7 @@ func TestAssignmentHTTPClassifiersNormalizeStatuses(t *testing.T) {
 func TestRegistryAssignmentBoundaryRejectsMissingChangedAndExpiredInstallations(t *testing.T) {
 	operation := assignmentOperationForTest("github")
 	missing := (&Registry{installations: map[string]config.SourcePublicationInstallationConfig{}}).
-		AssignProviderReviewers(t.Context(), operation)
+		AssignProviderReviewers(t.Context(), operation, nil)
 	if missing.Code != v1.ProviderReviewerAssignmentInstallationInactive {
 		t.Fatalf("missing installation = %#v", missing)
 	}
@@ -117,12 +117,12 @@ func TestRegistryAssignmentBoundaryRejectsMissingChangedAndExpiredInstallations(
 	registry := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{
 		"install-1": {Provider: "gitlab", APIBaseURL: "https://gitlab.com/api/v4", TokenFile: tokenFile},
 	}}
-	changed := registry.AssignProviderReviewers(t.Context(), operation)
+	changed := registry.AssignProviderReviewers(t.Context(), operation, nil)
 	if changed.Code != v1.ProviderReviewerAssignmentInstallationPermissionDenied {
 		t.Fatalf("provider drift = %#v", changed)
 	}
 	operation.Recipients[0].IdentityVerificationExpiresAt = time.Now().Add(-time.Second)
-	expired := registry.AssignProviderReviewers(t.Context(), operation)
+	expired := registry.AssignProviderReviewers(t.Context(), operation, nil)
 	if expired.Code != v1.ProviderReviewerAssignmentReviewerIdentityExpired {
 		t.Fatalf("expired identity = %#v", expired)
 	}
@@ -158,7 +158,7 @@ func TestRegistryAssignmentBoundaryRejectsUnreadableCredentialAndUnknownProvider
 	registry := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{
 		"install-1": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: missingToken},
 	}}
-	if outcome := registry.AssignProviderReviewers(t.Context(), operation); outcome.Code != v1.ProviderReviewerAssignmentInstallationInactive {
+	if outcome := registry.AssignProviderReviewers(t.Context(), operation, nil); outcome.Code != v1.ProviderReviewerAssignmentInstallationInactive {
 		t.Fatalf("unreadable credential = %#v", outcome)
 	}
 	tokenFile := filepath.Join(t.TempDir(), "token")
@@ -170,7 +170,7 @@ func TestRegistryAssignmentBoundaryRejectsUnreadableCredentialAndUnknownProvider
 	registry = &Registry{installations: map[string]config.SourcePublicationInstallationConfig{
 		"install-1": {Provider: "unknown", APIBaseURL: "https://unknown.example", TokenFile: tokenFile},
 	}}
-	if outcome := registry.AssignProviderReviewers(t.Context(), operation); outcome.Code != v1.ProviderReviewerAssignmentUnsupportedProviderInstance {
+	if outcome := registry.AssignProviderReviewers(t.Context(), operation, nil); outcome.Code != v1.ProviderReviewerAssignmentUnsupportedProviderInstance {
 		t.Fatalf("unknown provider = %#v", outcome)
 	}
 }

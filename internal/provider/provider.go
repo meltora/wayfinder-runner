@@ -26,6 +26,7 @@ type StartParams struct {
 	ResumeSessionID string
 	ReadOnly        bool
 	HardenedRuntime bool
+	Environment     []string
 }
 
 // PromptOnlyParams is intentionally disjoint from StartParams: consultation
@@ -59,6 +60,23 @@ func validatePromptOnlyParams(p PromptOnlyParams) error {
 		}
 	}
 	return nil
+}
+
+func (p StartParams) providerEnvironment() []string {
+	if len(p.Environment) == 0 {
+		return nil
+	}
+	return append([]string(nil), p.Environment...)
+}
+
+func environmentValue(environment []string, name string) string {
+	value := ""
+	for _, entry := range environment {
+		if key, candidate, ok := strings.Cut(entry, "="); ok && key == name {
+			value = candidate
+		}
+	}
+	return value
 }
 
 func (p StartParams) mcpBin() string {
@@ -145,6 +163,7 @@ func (c *Codex) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		Args:                args,
 		Dir:                 p.WorkDir,
 		Env:                 allowedEnvironment(),
+		ProviderEnvironment: p.providerEnvironment(),
 		ManagedConfigMounts: managedConfigMounts,
 	}, nil
 }
@@ -218,26 +237,38 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if err := safeio.AtomicWriteFile(p.ConfigDir, "claude-mcp.json", raw, 0o600); err != nil {
 		return supervisor.Spec{}, err
 	}
+	deniedPermissions := []string{
+		"Read(~/.claude/**)", "Edit(~/.claude/**)",
+		"Read(~/.claude.json)", "Edit(~/.claude.json)",
+	}
+	deniedPaths := []string{"~/.claude", "~/.claude.json"}
+	deniedCredentialFiles := []map[string]string{
+		{"path": "~/.claude/.credentials.json", "mode": "deny"},
+		{"path": "~/.claude.json", "mode": "deny"},
+	}
+	if configDir := environmentValue(p.Environment, "CLAUDE_CONFIG_DIR"); filepath.IsAbs(configDir) {
+		root := filepath.Clean(configDir)
+		deniedPermissions = append(deniedPermissions, "Read(/"+root+"/**)", "Edit(/"+root+"/**)")
+		deniedPaths = append(deniedPaths, root)
+		deniedCredentialFiles = append(deniedCredentialFiles,
+			map[string]string{"path": filepath.Join(root, ".credentials.json"), "mode": "deny"},
+			map[string]string{"path": filepath.Join(root, ".claude.json"), "mode": "deny"},
+		)
+	}
 	settings := map[string]any{
 		"permissions": map[string]any{
-			"deny": []string{
-				"Read(~/.claude/**)", "Edit(~/.claude/**)",
-				"Read(~/.claude.json)", "Edit(~/.claude.json)",
-			},
+			"deny": deniedPermissions,
 		},
 		"sandbox": map[string]any{
 			"enabled":                  p.HardenedRuntime,
 			"failIfUnavailable":        p.HardenedRuntime,
 			"allowUnsandboxedCommands": false,
 			"filesystem": map[string]any{
-				"denyRead":  []string{"~/.claude", "~/.claude.json"},
-				"denyWrite": []string{"~/.claude", "~/.claude.json"},
+				"denyRead":  deniedPaths,
+				"denyWrite": deniedPaths,
 			},
 			"credentials": map[string]any{
-				"files": []map[string]string{
-					{"path": "~/.claude/.credentials.json", "mode": "deny"},
-					{"path": "~/.claude.json", "mode": "deny"},
-				},
+				"files": deniedCredentialFiles,
 			},
 			"network": map[string]any{"strictAllowlist": true, "allowedDomains": []string{}},
 		},
@@ -286,11 +317,12 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		env = append(env, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1")
 	}
 	return supervisor.Spec{
-		Name:    "claude-" + p.Job.AttemptID,
-		Command: bin,
-		Args:    args,
-		Dir:     p.WorkDir,
-		Env:     env,
+		Name:                "claude-" + p.Job.AttemptID,
+		Command:             bin,
+		Args:                args,
+		Dir:                 p.WorkDir,
+		Env:                 env,
+		ProviderEnvironment: p.providerEnvironment(),
 	}, nil
 }
 

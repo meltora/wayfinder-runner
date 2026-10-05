@@ -17,7 +17,8 @@ const (
 )
 
 func (jr *jobRunner) publishSanitizedAgentStatus(providerEvent map[string]any) {
-	if jr.job.AgentRunAuthority == nil || jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken) != nil {
+	if jr.job.AgentRunAuthority == nil || !jr.startEvidenceRecorded() ||
+		jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken) != nil {
 		return
 	}
 	jr.procMu.Lock()

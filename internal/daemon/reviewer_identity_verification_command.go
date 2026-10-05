@@ -12,7 +12,7 @@ import (
 
 type reviewerIdentityVerifier interface {
 	ReadyReviewerIdentityInstallations() []v1.ReviewerIdentityVerificationInstallationCapability
-	VerifyReviewerIdentity(context.Context, v1.ReviewerIdentityVerificationOperation) v1.ReviewerIdentityVerificationResultOutcome
+	VerifyReviewerIdentity(context.Context, v1.ReviewerIdentityVerificationOperation, *v1.ProviderCredential) v1.ReviewerIdentityVerificationResultOutcome
 }
 
 func validateReviewerIdentityVerificationCommandBoundary(command v1.CommandPayload) error {
@@ -39,8 +39,10 @@ func (d *Daemon) executeReviewerIdentityVerification(
 	ctx context.Context,
 	commandMessageID string,
 	operation v1.ReviewerIdentityVerificationOperation,
+	providerCredential *v1.ProviderCredential,
 ) error {
-	if d.reviewerIdentityVerifier == nil {
+	verifier := d.sourcePublicationServices().reviewerIdentityVerifier
+	if verifier == nil {
 		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}
 	if err := validation.ReviewerIdentityVerificationCommandMessageID(commandMessageID); err != nil {
@@ -51,7 +53,7 @@ func (d *Daemon) executeReviewerIdentityVerification(
 	}
 	verificationCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
 	defer cancel()
-	outcome := d.reviewerIdentityVerifier.VerifyReviewerIdentity(verificationCtx, operation)
+	outcome := verifier.VerifyReviewerIdentity(verificationCtx, operation, providerCredential)
 	observedAt := time.Now().UTC()
 	if observedAt.After(operation.LeaseExpiresAt) {
 		observedAt = operation.LeaseExpiresAt

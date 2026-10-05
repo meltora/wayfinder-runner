@@ -9,11 +9,13 @@ import (
 )
 
 const (
-	ProviderReviewObservationAuthorityVersion   = 1
-	ProviderReviewObservationTransportVersion   = 1
-	ProviderReviewObservationMaxCollectionPages = 10
-	ProviderReviewObservationCollectionPageSize = 100
-	EventProviderReviewObservationResult        = "provider_review_observation_result"
+	ProviderReviewObservationAuthorityVersion       = 1
+	ProviderReviewObservationCompletionVersion      = 2
+	ProviderReviewObservationTransportVersion       = 1
+	ProviderReviewObservationMaxCollectionPages     = 10
+	ProviderReviewObservationCollectionPageSize     = 100
+	ProviderReviewObservationCompletionRevalidation = "completion_revalidation"
+	EventProviderReviewObservationResult            = "provider_review_observation_result"
 )
 
 type ProviderReviewObservationSubject struct {
@@ -70,6 +72,8 @@ func ProviderReviewObservationSubjectIdentitySetDigest(values []ProviderReviewOb
 
 type ProviderReviewObservationAuthority struct {
 	SchemaVersion                        int       `json:"schema_version"`
+	Purpose                              string    `json:"purpose,omitempty"`
+	ExpectedTargetBranch                 string    `json:"expected_target_branch,omitempty"`
 	ProviderReviewObservationOperationID string    `json:"provider_review_observation_operation_id"`
 	OrganizationID                       string    `json:"organization_id"`
 	ProjectID                            string    `json:"project_id"`
@@ -230,17 +234,24 @@ type ProviderReviewObservationCollections struct {
 	Comments     ProviderReviewObservationCollectionCompleteness `json:"comments"`
 }
 type ProviderReviewObservationResultOutcome struct {
-	Kind              ProviderReviewObservationOutcomeKind   `json:"kind"`
-	RequestState      ProviderReviewObservationRequestState  `json:"request_state,omitempty"`
-	ObservedHeadSHA   string                                 `json:"observed_head_sha,omitempty"`
-	StaleHead         bool                                   `json:"stale_head,omitempty"`
-	SnapshotSemantics string                                 `json:"snapshot_semantics,omitempty"`
-	SnapshotComplete  bool                                   `json:"snapshot_complete,omitempty"`
-	Collections       *ProviderReviewObservationCollections  `json:"collections,omitempty"`
-	ReviewEvents      []ProviderReviewObservationReviewEvent `json:"review_events,omitempty"`
-	Comments          []ProviderReviewObservationComment     `json:"comments,omitempty"`
-	Code              ProviderReviewObservationErrorCode     `json:"code,omitempty"`
-	RetryAfterMS      *uint64                                `json:"retry_after_ms,omitempty"`
+	Kind                           ProviderReviewObservationOutcomeKind   `json:"kind"`
+	RequestState                   ProviderReviewObservationRequestState  `json:"request_state,omitempty"`
+	ObservedHeadSHA                string                                 `json:"observed_head_sha,omitempty"`
+	StaleHead                      bool                                   `json:"stale_head,omitempty"`
+	SnapshotSemantics              string                                 `json:"snapshot_semantics,omitempty"`
+	SnapshotComplete               bool                                   `json:"snapshot_complete,omitempty"`
+	Collections                    *ProviderReviewObservationCollections  `json:"collections,omitempty"`
+	ReviewEvents                   []ProviderReviewObservationReviewEvent `json:"review_events,omitempty"`
+	Comments                       []ProviderReviewObservationComment     `json:"comments,omitempty"`
+	MergeCommitSHA                 string                                 `json:"merge_commit_sha,omitempty"`
+	TargetBranch                   string                                 `json:"target_branch,omitempty"`
+	TargetHeadSHA                  string                                 `json:"target_head_sha,omitempty"`
+	MergeCommitReachableFromTarget bool                                   `json:"merge_commit_reachable_from_target,omitempty"`
+	MergedAt                       time.Time                              `json:"merged_at,omitempty"`
+	ProviderUpdatedAt              time.Time                              `json:"provider_updated_at,omitempty"`
+	MergedByProviderAccountID      string                                 `json:"merged_by_provider_account_id,omitempty"`
+	Code                           ProviderReviewObservationErrorCode     `json:"code,omitempty"`
+	RetryAfterMS                   *uint64                                `json:"retry_after_ms,omitempty"`
 }
 
 func (value ProviderReviewObservationResultOutcome) MarshalJSON() ([]byte, error) {
@@ -253,6 +264,26 @@ func (value ProviderReviewObservationResultOutcome) MarshalJSON() ([]byte, error
 		comments := value.Comments
 		if comments == nil {
 			comments = []ProviderReviewObservationComment{}
+		}
+		if value.MergeCommitSHA != "" {
+			return json.Marshal(struct {
+				Kind                           ProviderReviewObservationOutcomeKind   `json:"kind"`
+				RequestState                   ProviderReviewObservationRequestState  `json:"request_state"`
+				ObservedHeadSHA                string                                 `json:"observed_head_sha"`
+				StaleHead                      bool                                   `json:"stale_head"`
+				SnapshotSemantics              string                                 `json:"snapshot_semantics"`
+				SnapshotComplete               bool                                   `json:"snapshot_complete"`
+				Collections                    *ProviderReviewObservationCollections  `json:"collections"`
+				ReviewEvents                   []ProviderReviewObservationReviewEvent `json:"review_events"`
+				Comments                       []ProviderReviewObservationComment     `json:"comments"`
+				MergeCommitSHA                 string                                 `json:"merge_commit_sha"`
+				TargetBranch                   string                                 `json:"target_branch"`
+				TargetHeadSHA                  string                                 `json:"target_head_sha"`
+				MergeCommitReachableFromTarget bool                                   `json:"merge_commit_reachable_from_target"`
+				MergedAt                       time.Time                              `json:"merged_at"`
+				ProviderUpdatedAt              time.Time                              `json:"provider_updated_at"`
+				MergedByProviderAccountID      string                                 `json:"merged_by_provider_account_id"`
+			}{value.Kind, value.RequestState, value.ObservedHeadSHA, value.StaleHead, value.SnapshotSemantics, value.SnapshotComplete, value.Collections, reviews, comments, value.MergeCommitSHA, value.TargetBranch, value.TargetHeadSHA, value.MergeCommitReachableFromTarget, value.MergedAt, value.ProviderUpdatedAt, value.MergedByProviderAccountID})
 		}
 		return json.Marshal(struct {
 			Kind              ProviderReviewObservationOutcomeKind   `json:"kind"`

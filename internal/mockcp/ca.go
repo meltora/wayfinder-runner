@@ -20,6 +20,10 @@ type TestCA struct {
 }
 
 func NewTestCA() (*TestCA, error) {
+	return NewTestCAWithLifetime(24 * time.Hour)
+}
+
+func NewTestCAWithLifetime(lifetime time.Duration) (*TestCA, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
@@ -28,7 +32,7 @@ func NewTestCA() (*TestCA, error) {
 		SerialNumber:          big.NewInt(1),
 		Subject:               pkix.Name{CommonName: "mock-cp CA"},
 		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(24 * time.Hour),
+		NotAfter:              time.Now().Add(lifetime),
 		IsCA:                  true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
@@ -49,6 +53,10 @@ func NewTestCA() (*TestCA, error) {
 }
 
 func (ca *TestCA) SignCSR(csrPEM []byte, cn string) ([]byte, error) {
+	return ca.SignCSRWithLifetime(csrPEM, cn, 24*time.Hour)
+}
+
+func (ca *TestCA) SignCSRWithLifetime(csrPEM []byte, cn string, lifetime time.Duration) ([]byte, error) {
 	block, _ := pem.Decode(csrPEM)
 	if block == nil {
 		return nil, fmt.Errorf("invalid CSR PEM")
@@ -64,7 +72,7 @@ func (ca *TestCA) SignCSR(csrPEM []byte, cn string) ([]byte, error) {
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: cn},
 		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
+		NotAfter:     time.Now().Add(lifetime),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}

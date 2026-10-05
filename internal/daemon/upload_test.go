@@ -17,7 +17,7 @@ import (
 	"github.com/example/app-runner/internal/journal"
 )
 
-func TestQueuedArtifactUploadsWithFencingAndRegistersOnce(t *testing.T) {
+func TestQueuedArtifactUploadsWithFencingAndReceiptWithoutMetadataEvent(t *testing.T) {
 	jr, cap := testJobRunner(t)
 	authority := v1.AgentRunAuthority{SchemaVersion: 1, AgentRunID: "agent-run-1", StepRunID: "step-run-1", StepSequence: 1}
 	jr.job.AgentRunAuthority = &authority
@@ -31,7 +31,7 @@ func TestQueuedArtifactUploadsWithFencingAndRegistersOnce(t *testing.T) {
 		if err != nil || string(body) != "artifact body" {
 			t.Errorf("upload body = %q, %v", body, err)
 		}
-		w.WriteHeader(http.StatusNoContent)
+		writeArtifactReceipt(w, r)
 	}))
 	defer server.Close()
 	jr.d.uploader = newArtifactUploader(server.URL)
@@ -47,23 +47,8 @@ func TestQueuedArtifactUploadsWithFencingAndRegistersOnce(t *testing.T) {
 	if result.(map[string]any)["registered"] != true {
 		t.Fatalf("result = %v", result)
 	}
-	if uploads != 1 || len(cap.byKind("artifact_registered")) != 1 {
+	if uploads != 1 || len(cap.byKind("artifact_registered")) != 0 {
 		t.Fatalf("uploads=%d events=%d", uploads, len(cap.byKind("artifact_registered")))
-	}
-	event := cap.byKind("artifact_registered")[0]
-	for field, expected := range map[string]any{
-		"manifest_kind": "build", "lease_id": "lease-1", "manifest_id": "manifest-1",
-		"manifest_digest": strings.Repeat("a", 64), "job_id": "j1", "attempt_id": "a1", "fencing_token": uint64(7),
-	} {
-		if event[field] != expected {
-			t.Fatalf("artifact event %s = %v, want %v", field, event[field], expected)
-		}
-	}
-	if event["name"] != "result.txt" || event["artifact"] != nil || event["observed_at"] == nil {
-		t.Fatalf("artifact event does not match strict wire shape: %v", event)
-	}
-	if event["agent_run_authority"] != authority {
-		t.Fatalf("artifact event agent authority=%v", event["agent_run_authority"])
 	}
 	if records, err := jr.d.journal.Unacked(context.Background(), "upload", 10); err != nil || len(records) != 0 {
 		t.Fatalf("pending uploads = %v, %v", records, err)
@@ -97,7 +82,9 @@ func TestArtifactUploaderRejectsNonSuccessResponse(t *testing.T) {
 	defer server.Close()
 	uploader := newArtifactUploader(server.URL + "/")
 	uploader.SetHTTPClient(nil)
-	err := uploader.Upload(context.Background(), "job-1", "attempt-1", "report.txt", "digest", 9, strings.NewReader("body"))
+	err := uploader.Upload(context.Background(), pendingArtifactUpload{Artifact: v1.ArtifactRef{
+		JobID: "job-1", AttemptID: "attempt-1", Name: "report.txt", DigestSHA256: "digest", FencingToken: 9, SizeBytes: 4,
+	}}, strings.NewReader("body"))
 	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "denied") {
 		t.Fatalf("Upload=%v", err)
 	}

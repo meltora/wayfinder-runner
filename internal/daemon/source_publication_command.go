@@ -12,7 +12,7 @@ import (
 
 type sourcePublicationPublisher interface {
 	ReadyProviders() []string
-	Publish(context.Context, v1.SourcePublicationOperation) v1.SourcePublicationResultOutcome
+	Publish(context.Context, v1.SourcePublicationOperation, *v1.ProviderCredential) v1.SourcePublicationResultOutcome
 }
 
 // validateSourcePublicationCommandBoundary prevents a command from smuggling
@@ -44,8 +44,10 @@ func (d *Daemon) executeSourcePublication(
 	ctx context.Context,
 	commandMessageID string,
 	operation v1.SourcePublicationOperation,
+	providerCredential *v1.ProviderCredential,
 ) error {
-	if d.sourcePublicationPublisher == nil {
+	publisher := d.sourcePublicationServices().publisher
+	if publisher == nil {
 		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}
 	if commandMessageID == "" {
@@ -56,7 +58,7 @@ func (d *Daemon) executeSourcePublication(
 	}
 	publicationCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
 	defer cancel()
-	outcome := d.sourcePublicationPublisher.Publish(publicationCtx, operation)
+	outcome := publisher.Publish(publicationCtx, operation, providerCredential)
 	event := v1.SourcePublicationResultEvent{
 		Kind:                                v1.EventSourcePublicationResult,
 		SourcePublicationOperationAuthority: operation.SourcePublicationOperationAuthority,

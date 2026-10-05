@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -114,5 +116,68 @@ func TestVerifyDeliveryAuthorityReturnsTypedSafeClassification(t *testing.T) {
 		t.Fatal("incompatible provider accepted")
 	} else if kind, ok := DeliveryAuthorityFailureKindOf(err); !ok || kind != DeliveryAuthorityIncompatible {
 		t.Fatalf("incompatible authority classification = %q %v: %v", kind, ok, err)
+	}
+}
+
+type attestationVectorInput struct {
+	Scope struct {
+		Kind           string `json:"kind"`
+		OrganizationID string `json:"organizationId"`
+	} `json:"scope"`
+	PackKey              string          `json:"packKey"`
+	PackName             string          `json:"packName"`
+	Provider             string          `json:"provider"`
+	ProtocolVersion      int             `json:"protocolVersion"`
+	MinimumRunnerVersion string          `json:"minimumRunnerVersion"`
+	AgentPack            v1.AgentPackRef `json:"agentPack"`
+}
+
+type attestationVectorFile struct {
+	Format  int `json:"format"`
+	Vectors []struct {
+		Name           string                 `json:"name"`
+		Input          attestationVectorInput `json:"input"`
+		ExpectedDigest string                 `json:"expectedDigest"`
+	} `json:"vectors"`
+}
+
+func TestPublicationAttestationDigestReproducesSharedVectorCorpus(t *testing.T) {
+	raw, err := os.ReadFile("testdata/attestation-vectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file attestationVectorFile
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Format != 1 || len(file.Vectors) < 12 {
+		t.Fatalf("vector corpus has %d vectors", len(file.Vectors))
+	}
+	seen := map[string]bool{}
+	for _, vector := range file.Vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			input := vector.Input
+			authority := v1.SignedAgentPackAuthority{
+				Scope:   v1.AgentPackAuthorityScope{Kind: input.Scope.Kind, OrganizationID: input.Scope.OrganizationID},
+				PackKey: input.PackKey, PackName: input.PackName, Provider: input.Provider,
+				ProtocolVersion: input.ProtocolVersion, MinimumRunnerVersion: input.MinimumRunnerVersion, AgentPack: input.AgentPack,
+			}
+			digest, err := PublicationAttestationDigest(authority)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if digest != vector.ExpectedDigest {
+				t.Fatalf("digest = %s, want %s", digest, vector.ExpectedDigest)
+			}
+		})
+		if seen[vector.ExpectedDigest] {
+			t.Fatalf("vector %s duplicates another digest", vector.Name)
+		}
+		seen[vector.ExpectedDigest] = true
+	}
+	if file.Vectors[0].ExpectedDigest != goldenAttestationDigest {
+		t.Fatal("first vector must be the control-plane golden vector")
 	}
 }

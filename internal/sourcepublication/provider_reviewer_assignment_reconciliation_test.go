@@ -37,7 +37,7 @@ func reconcileThroughRegistry(t *testing.T, server *httptest.Server, provider st
 	installation := config.SourcePublicationInstallationConfig{Provider: provider, APIBaseURL: server.URL, TokenFile: token}
 	operation.ProviderInstanceKey = configuredProviderInstanceKey(provider, server.URL)
 	registry := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{"installation-1": installation}, httpClient: server.Client()}
-	return registry.ReconcileProviderReviewerAssignment(context.Background(), operation)
+	return registry.ReconcileProviderReviewerAssignment(context.Background(), operation, nil)
 }
 
 func TestGitHubReconciliationReadsStableRequestedAndReviewedIDsWithoutMutation(t *testing.T) {
@@ -342,18 +342,18 @@ func TestReconciliationRegistryFailsClosedBeforeNetworkForCrossInstallationAutho
 		t.Fatal(err)
 	}
 	op := reconciliationOperationForTest("gitlab")
-	out := registry.ReconcileProviderReviewerAssignment(context.Background(), op)
+	out := registry.ReconcileProviderReviewerAssignment(context.Background(), op, nil)
 	if out.Code != v1.ProviderReviewerAssignmentReconciliationInstallationPermissionDenied || calls != 0 {
 		t.Fatalf("out=%#v calls=%d", out, calls)
 	}
 	op = reconciliationOperationForTest("github")
 	op.ProviderInstanceKey = "github.enterprise.example"
-	out = registry.ReconcileProviderReviewerAssignment(context.Background(), op)
+	out = registry.ReconcileProviderReviewerAssignment(context.Background(), op, nil)
 	if out.Code != v1.ProviderReviewerAssignmentReconciliationUnsupportedProviderInstance || calls != 0 {
 		t.Fatalf("out=%#v calls=%d", out, calls)
 	}
 	op.InstallationID = "other-tenant-installation"
-	out = registry.ReconcileProviderReviewerAssignment(context.Background(), op)
+	out = registry.ReconcileProviderReviewerAssignment(context.Background(), op, nil)
 	if out.Code != v1.ProviderReviewerAssignmentReconciliationInstallationInactive || calls != 0 {
 		t.Fatalf("out=%#v calls=%d", out, calls)
 	}

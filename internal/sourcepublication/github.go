@@ -14,6 +14,7 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/redact"
 )
 
 const maxProviderResponseBytes = 1 << 20
@@ -21,9 +22,11 @@ const maxProviderResponseBytes = 1 << 20
 var githubRepositoryComponentPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$`)
 
 type githubPublisher struct {
-	baseURL *url.URL
-	token   string
-	client  *http.Client
+	baseURL             *url.URL
+	token               string
+	client              *http.Client
+	repositoryIDs       []string
+	credentialExpiresAt time.Time
 }
 
 type githubResponse struct {
@@ -64,6 +67,9 @@ func (publisher *githubPublisher) publish(
 	}
 	if response.status < 200 || response.status >= 300 {
 		return classifyGitHubFailure(response, v1.SourceControlRepositoryNotFound)
+	}
+	if failure := publisher.checkCredentialRepository(response.body); failure != nil {
+		return *failure
 	}
 
 	response, err = publisher.request(ctx, http.MethodGet, repositoryPath+"/git/ref/heads/"+command.HeadBranch, nil, nil)
@@ -158,6 +164,10 @@ func (publisher *githubPublisher) request(
 	query url.Values,
 	body []byte,
 ) (githubResponse, error) {
+	if !publisher.credentialExpiresAt.IsZero() &&
+		publisher.credentialExpiresAt.Sub(time.Now()) < v1.ProviderCredentialMinimumRemainingLifetime {
+		return githubResponse{}, errProviderCredentialExpiring
+	}
 	target := *publisher.baseURL
 	target.Path = strings.TrimSuffix(publisher.baseURL.Path, "/") + requestPath
 	target.RawQuery = query.Encode()
@@ -173,17 +183,43 @@ func (publisher *githubPublisher) request(
 	}
 	response, err := publisher.client.Do(request)
 	if err != nil {
-		return githubResponse{}, err
+		return githubResponse{}, redact.Error(err, publisher.token)
 	}
 	defer func() { _ = response.Body.Close() }()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxProviderResponseBytes+1))
 	if err != nil {
-		return githubResponse{}, err
+		return githubResponse{}, redact.Error(err, publisher.token)
 	}
 	if len(responseBody) > maxProviderResponseBytes {
 		return githubResponse{}, fmt.Errorf("%w: response exceeds limit", errInvalidProviderResponse)
 	}
 	return githubResponse{status: response.StatusCode, header: response.Header.Clone(), body: responseBody}, nil
+}
+
+func (publisher *githubPublisher) checkCredentialRepository(body []byte) *v1.SourcePublicationResultOutcome {
+	if publisher.repositoryIDs == nil {
+		return nil
+	}
+	var repository struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(body, &repository) != nil {
+		outcome := permanent(v1.SourceControlInvalidProviderResponse)
+		return &outcome
+	}
+	id, err := strconv.ParseUint(string(repository.ID), 10, 64)
+	if err != nil || id == 0 {
+		outcome := permanent(v1.SourceControlInvalidProviderResponse)
+		return &outcome
+	}
+	canonical := strconv.FormatUint(id, 10)
+	for _, allowed := range publisher.repositoryIDs {
+		if canonical == allowed {
+			return nil
+		}
+	}
+	outcome := permanent(v1.SourceControlPermissionDenied)
+	return &outcome
 }
 
 func githubRepository(value string) (string, string, bool) {

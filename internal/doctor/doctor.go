@@ -48,6 +48,11 @@ func (r Report) ExitCode() int {
 }
 
 type Options struct {
+	ConfigurationLoaded        bool
+	Provider                   string
+	ProviderBinary             string
+	RepositoryCount            int
+	TrustedAgentPackKeyCount   int
 	ControlPlaneURL            string
 	StateDir                   string
 	Isolation                  string
@@ -57,9 +62,18 @@ type Options struct {
 	EgressPolicyID             string
 	WorkIntakeProposalEnabled  bool
 	EgressPolicyVerifierSocket string
+	ProviderEnvironmentNames   map[string][]string
+	AwaitingAgentPackKeys      []AwaitingAgentPackKey
+	AcceptAgentPackKeysCommand string
+	AgentPackKeysNotEvaluated  string
 }
 
-func Run(ctx context.Context, opts Options) Report {
+type AwaitingAgentPackKey struct {
+	ID          string
+	Fingerprint string
+}
+
+func runSystemChecks(ctx context.Context, opts Options) Report {
 	var r Report
 	r.Checks = append(r.Checks, checkControlPlaneDNS(opts.ControlPlaneURL))
 	r.Checks = append(r.Checks, checkControlPlaneTCP(ctx, opts.ControlPlaneURL))

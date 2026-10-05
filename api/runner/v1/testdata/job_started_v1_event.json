@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "type": "event",
+  "id": "job-started-attempt-1",
+  "sent_at": "2026-08-26T09:00:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "kind": "job_started",
+    "manifest_kind": "build",
+    "lease_id": "lease-1",
+    "job_id": "job-1",
+    "attempt_id": "attempt-1",
+    "manifest_id": "manifest-1",
+    "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fencing_token": 7,
+    "observed_at": "2026-08-26T09:00:00Z",
+    "agent_run_authority": {
+      "schema_version": 1,
+      "agent_run_id": "agent-run-1",
+      "step_run_id": "step-run-1",
+      "step_sequence": 2
+    }
+  }
+}

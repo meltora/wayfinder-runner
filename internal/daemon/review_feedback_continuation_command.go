@@ -35,6 +35,7 @@ func (d *Daemon) startReviewFeedbackContinuation(
 	ctx context.Context,
 	job v1.JobSpec,
 	authority v1.ReviewFeedbackContinuationAuthority,
+	providerCredential *v1.ProviderCredential,
 ) error {
 	if err := validation.ReviewFeedbackContinuationCommand(job, authority); err != nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
@@ -43,5 +44,5 @@ func (d *Daemon) startReviewFeedbackContinuation(
 		return rejectCommand(v1.CommandAckReasonLeaseRejected, nil)
 	}
 	authorityCopy := authority
-	return d.startJobWithReviewFeedbackContinuation(ctx, job, &authorityCopy)
+	return d.startJobWithReviewFeedbackContinuation(ctx, job, &authorityCopy, providerCredential)
 }

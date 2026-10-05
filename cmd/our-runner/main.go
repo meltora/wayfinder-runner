@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/example/app-runner/internal/enroll"
 	"github.com/example/app-runner/internal/identity"
 	"github.com/example/app-runner/internal/mcpbridge"
+	"github.com/example/app-runner/internal/remoteconfig"
 	"github.com/example/app-runner/internal/repo"
 	"github.com/example/app-runner/internal/runlock"
 	"github.com/example/app-runner/internal/safeio"
@@ -28,6 +30,9 @@ import (
 )
 
 func main() {
+	if os.Getenv(repo.AskPassModeEnv) == "1" {
+		os.Exit(repo.RunAskPass(os.Args[1:], os.Getenv, os.Stdout))
+	}
 	os.Exit(runCLI(os.Args[1:]))
 }
 
@@ -43,6 +48,8 @@ func runCLI(args []string) int {
 		return 0
 	case "enroll":
 		err = cmdEnroll(args[1:])
+	case "configure":
+		err = cmdConfigure(args[1:])
 	case "doctor":
 		err = cmdDoctor(args[1:])
 	case "start":
@@ -60,7 +67,7 @@ func runCLI(args []string) int {
 	case "support-bundle":
 		err = cmdSupportBundle(args[1:])
 	case "version":
-		fmt.Println("our-runner", daemon.Version)
+		writeVersion(os.Stdout)
 	case "register-repository":
 		err = cmdRegisterRepo(args[1:])
 	case "scan-agent-config":
@@ -70,8 +77,7 @@ func runCLI(args []string) int {
 		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
+		return reportCommandError(os.Stderr, err)
 	}
 	return 0
 }
@@ -82,13 +88,22 @@ func usage() {
 usage: our-runner <command> [flags]
 
 setup:
+  enroll [--url URL] [--state-dir DIR]            one-time enrollment; asks for the code with a masked prompt;
+                                                    --url is required unless this build has a default control plane
   enroll --code-file FILE --url URL [--state-dir DIR]
-                                                    one-time enrollment; use FILE=- to read stdin
-  doctor --config FILE                             complete production preflight using the service configuration
+                                                    one-time enrollment from a private file; use FILE=- to read stdin
+  configure [--gateway URL] [--state-dir DIR] [--provider-env NAME=VALUE]... [--provider-binary PATH]
+            [--accept-pack-keys] [--acknowledge-direct] [--non-interactive]
+                                                    fetch this runner's configuration from the dashboard over
+                                                    its mTLS identity and ask only for local settings; without
+                                                    --gateway it uses the gateway address saved by enroll
+  doctor --state-dir DIR                           diagnostics with the fetched configuration
+  doctor --config FILE                             configuration and local setup diagnostics
   doctor --url URL [--state-dir DIR]               limited enrollment/network diagnostics
 
 operation:
-  start --config FILE                              start the daemon (outbound-only mTLS connection)
+  start [--state-dir DIR]                          fetch the configuration and start the daemon
+  start --config FILE                              start the daemon from a hand-written configuration file
   status [--state-dir DIR]                         show local runner state
   pause [--state-dir DIR]                          pause scheduling (jobs finish, nothing new starts)
   resume [--state-dir DIR]                         resume scheduling after a pause
@@ -103,12 +118,13 @@ job tooling:
 maintenance:
   updates are scheduled through the authenticated control plane after the daemon drains active work
   support-bundle [--state-dir DIR]                 redacted diagnostics tarball (no keys, certs, or repo data)
-  version                                          print version
+  version                                          print the version, release channel and default control plane
   help                                             show this help`)
 }
 
 type flags struct {
 	stateDir      string
+	stateDirSet   bool
 	url           string
 	code          string
 	codeFile      string
@@ -137,6 +153,7 @@ func parseFlags(args []string) (flags, error) {
 		switch name {
 		case "--state-dir":
 			f.stateDir = value
+			f.stateDirSet = true
 		case "--url":
 			f.url = value
 		case "--code":
@@ -152,10 +169,19 @@ func parseFlags(args []string) (flags, error) {
 	if f.stateDir == "" {
 		f.stateDir = config.Default().StateDir
 	}
+	absolute, err := filepath.Abs(f.stateDir)
+	if err != nil {
+		return f, fmt.Errorf("--state-dir could not be resolved to an absolute path: %w", err)
+	}
+	f.stateDir = absolute
 	return f, nil
 }
 
 func cmdEnroll(args []string) error {
+	return cmdEnrollWithTerminal(args, osEnrollmentTerminal())
+}
+
+func cmdEnrollWithTerminal(args []string, terminal enrollmentTerminal) error {
 	f, err := parseFlags(args)
 	if err != nil {
 		return err
@@ -163,10 +189,28 @@ func cmdEnroll(args []string) error {
 	if f.code != "" {
 		return fmt.Errorf("--code is disabled because command-line secrets are visible; use --code-file FILE or --code-file -")
 	}
-	if f.codeFile == "" || f.url == "" {
-		return fmt.Errorf("enroll requires --code-file and --url")
+	if f.url == "" {
+		if f.url, err = defaultEnrollmentURL(); err != nil {
+			return err
+		}
+		fmt.Println("Control plane:", f.url, "(this build's default; pass --url to use another)")
 	}
-	code, err := readEnrollmentCode(f.codeFile)
+	if f.codeFile == "" && !terminal.isTerminal {
+		return errEnrollmentNeedsTerminal
+	}
+	if recovered, err := recoverEnrollmentIdentity(f.stateDir, time.Now()); err != nil {
+		return err
+	} else if recovered {
+		fmt.Println("completed saved runner enrollment")
+		fmt.Println(gatewayNotProvidedMessage)
+		return nil
+	}
+	var code string
+	if f.codeFile != "" {
+		code, err = readEnrollmentCode(f.codeFile)
+	} else {
+		code, err = promptEnrollmentCode(terminal)
+	}
 	if err != nil {
 		return err
 	}
@@ -202,6 +246,7 @@ func cmdEnroll(args []string) error {
 		return err
 	}
 	fmt.Println("enrolled as runner", resp.RunnerID)
+	recordDiscoveredGateway(client, f.stateDir)
 	return nil
 }
 
@@ -227,39 +272,11 @@ func readEnrollmentCode(path string) (string, error) {
 }
 
 func cmdDoctor(args []string) error {
-	f, err := parseFlags(args)
-	if err != nil {
-		return err
-	}
-	opts := doctor.Options{ControlPlaneURL: f.url, StateDir: f.stateDir}
-	if f.config != "" {
-		if f.url != "" || f.stateDir != config.Default().StateDir {
-			return fmt.Errorf("doctor --config cannot be combined with --url or --state-dir")
-		}
-		cfg, err := config.Load(f.config)
-		if err != nil {
-			return err
-		}
-		opts = doctor.Options{
-			ControlPlaneURL:            cfg.ControlPlaneURL,
-			StateDir:                   cfg.StateDir,
-			Isolation:                  cfg.Isolation,
-			JobImage:                   cfg.JobImage,
-			JobNetwork:                 cfg.JobNetwork,
-			JobNetworkName:             cfg.JobNetworkName,
-			EgressPolicyID:             cfg.EgressPolicyID,
-			WorkIntakeProposalEnabled:  cfg.WorkIntakeProposal.Enabled,
-			EgressPolicyVerifierSocket: cfg.EgressPolicyVerifierSocket,
-		}
-	} else if f.url == "" {
-		return fmt.Errorf("doctor requires --config FILE or --url URL")
-	}
-	rep := doctor.Run(context.Background(), opts)
-	fmt.Print(doctor.Format(rep))
-	if rep.ExitCode() != 0 {
-		return fmt.Errorf("one or more checks failed")
-	}
-	return nil
+	return cmdDoctorWithDependencies(args, doctorCommandDependencies{load: config.Load, run: doctor.Run, output: os.Stdout,
+		loadStateDirAwaiting: func(stateDir string) (config.Config, []doctor.AwaitingAgentPackKey, string, error) {
+			return loadStateDirConfigurationForDoctor(context.Background(), stateDir, os.Stdout)
+		},
+	})
 }
 
 func cmdStart(args []string) error {
@@ -267,7 +284,18 @@ func cmdStart(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(f.config)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	var cfg config.Config
+	var reloader *remoteconfig.Reloader
+	switch {
+	case f.config != "" && f.stateDirSet:
+		return fmt.Errorf("start --config cannot be combined with --state-dir")
+	case f.config != "":
+		cfg, err = config.Load(f.config)
+	default:
+		cfg, reloader, err = loadStateDirConfigurationWithReloader(ctx, f.stateDir, os.Stderr)
+	}
 	if err != nil {
 		return err
 	}
@@ -275,8 +303,9 @@ func cmdStart(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	if reloader != nil {
+		d.SetConfigurationReloader(reloader)
+	}
 	return d.Run(ctx)
 }
 
@@ -285,12 +314,12 @@ func cmdStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	store := identity.NewStore(f.stateDir)
-	fmt.Println("state dir:", f.stateDir)
-	fmt.Println("enrolled:", store.Enrolled())
-	runnerID, err := daemon.ReadRunnerID(f.stateDir)
-	if err == nil {
-		fmt.Println("runner id:", runnerID)
+	lines, err := statusReport(f.stateDir, time.Now())
+	if err != nil {
+		return err
+	}
+	for _, line := range lines {
+		fmt.Println(line)
 	}
 	return nil
 }

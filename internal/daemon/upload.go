@@ -54,9 +54,9 @@ func deriveHTTPURL(wsURL string) string {
 	return u
 }
 
-func (u *artifactUploader) Upload(ctx context.Context, jobID, attemptID, name, digest string, fencing uint64, body io.Reader) error {
+func (u *artifactUploader) Upload(ctx context.Context, pending pendingArtifactUpload, body io.Reader) error {
 	endpoint := fmt.Sprintf("%s/v1/artifacts/%s/%s/%s", u.baseURL,
-		url.PathEscape(jobID), url.PathEscape(attemptID), url.PathEscape(name))
+		url.PathEscape(pending.Artifact.JobID), url.PathEscape(pending.Artifact.AttemptID), url.PathEscape(pending.Artifact.Name))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, body)
 	if err != nil {
 		return err
@@ -64,8 +64,11 @@ func (u *artifactUploader) Upload(ctx context.Context, jobID, attemptID, name, d
 	// The uploader owns the stream lifecycle. Prevent net/http from closing an
 	// *os.File supplied as io.Reader so the caller can verify and close it.
 	req.Body = io.NopCloser(body)
-	req.Header.Set("X-Artifact-Digest", digest)
-	req.Header.Set("X-Fencing-Token", strconv.FormatUint(fencing, 10))
+	req.ContentLength = pending.Artifact.SizeBytes
+	if pending.Artifact.SizeBytes == 0 {
+		req.Body = http.NoBody
+	}
+	setArtifactUploadHeaders(req, pending)
 	u.mu.RLock()
 	client := u.httpClient
 	u.mu.RUnlock()
@@ -78,7 +81,27 @@ func (u *artifactUploader) Upload(ctx context.Context, jobID, attemptID, name, d
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("artifact upload rejected: status %d: %s", resp.StatusCode, body)
 	}
-	return nil
+	return verifyArtifactUploadReceipt(resp.Body, pending)
+}
+
+func setArtifactUploadHeaders(req *http.Request, pending pendingArtifactUpload) {
+	req.Header.Set("Content-Type", pending.Artifact.ContentType)
+	req.Header.Set("X-Artifact-Upload-ID", pending.RecordID)
+	req.Header.Set("X-Artifact-Digest", pending.Artifact.DigestSHA256)
+	req.Header.Set("X-Fencing-Token", strconv.FormatUint(pending.Artifact.FencingToken, 10))
+	// Replay the immutable queued authority, including after the runtime lease
+	// has been released. The gateway independently verifies this stored graph.
+	req.Header.Set("X-Manifest-Kind", string(pending.Authority.Kind))
+	req.Header.Set("X-Manifest-ID", pending.Authority.ManifestID)
+	req.Header.Set("X-Manifest-Digest", pending.Authority.ManifestDigest)
+	req.Header.Set("X-Lease-ID", pending.Authority.LeaseID)
+	req.Header.Set("X-Workflow-Revision", strconv.Itoa(pending.Authority.WorkflowRevision))
+	if pending.AgentRunAuthority != nil {
+		req.Header.Set("X-Agent-Run-ID", pending.AgentRunAuthority.AgentRunID)
+		req.Header.Set("X-Step-Run-ID", pending.AgentRunAuthority.StepRunID)
+		req.Header.Set("X-Step-Sequence", strconv.FormatUint(pending.AgentRunAuthority.StepSequence, 10))
+		req.Header.Set("X-Agent-Run-Schema-Version", strconv.Itoa(pending.AgentRunAuthority.SchemaVersion))
+	}
 }
 
 type pendingArtifactUpload struct {
@@ -191,28 +214,15 @@ func (d *Daemon) processArtifactUpload(ctx context.Context, pending pendingArtif
 		_ = file.Close()
 		return permanentUpload(err)
 	}
-	if err := d.uploader.Upload(ctx, pending.Artifact.JobID, pending.Artifact.AttemptID,
-		pending.Artifact.Name, pending.Artifact.DigestSHA256, pending.Artifact.FencingToken, file); err != nil {
+	if err := d.uploader.Upload(ctx, pending, file); err != nil {
 		_ = file.Close()
 		return err
 	}
 	if err := file.Close(); err != nil {
 		return err
 	}
-	event := authorityBoundEvent(
-		pending.Authority, pending.Artifact.JobID, pending.Artifact.AttemptID,
-		pending.Artifact.FencingToken, "artifact_registered", map[string]any{
-			"name": pending.Artifact.Name, "content_type": pending.Artifact.ContentType,
-			"digest_sha256": pending.Artifact.DigestSHA256, "size_bytes": pending.Artifact.SizeBytes,
-		}, time.Now(),
-	)
-	if pending.AgentRunAuthority != nil {
-		authority := *pending.AgentRunAuthority
-		event["agent_run_authority"] = authority
-	}
-	if err := d.sendEventWithID(ctx, "artifact-event-"+pending.RecordID, event); err != nil {
-		return err
-	}
+	// The authenticated HTTP receipt already records durable content. A generic
+	// metadata event could outlive its active lease and must not be replayed.
 	if err := d.journal.Ack(ctx, pending.RecordID); err != nil {
 		return err
 	}

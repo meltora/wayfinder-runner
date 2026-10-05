@@ -39,7 +39,7 @@ func TestGitHubPublicationCreatesExactPullRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation())
+	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationSucceeded || outcome.Result == nil {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -72,7 +72,7 @@ func TestGitHubPublicationReusesExistingExactPullRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation())
+	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationSucceeded || outcome.Result == nil || outcome.Result.ExternalRequestID != "7" {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -92,7 +92,7 @@ func TestGitHubPublicationFailsClosedOnHeadMismatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation())
+	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlHeadMismatch {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -107,7 +107,7 @@ func TestGitHubPublicationClassifiesRateLimitWithoutLeakingProviderBody(t *testi
 	}))
 	defer server.Close()
 
-	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation())
+	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationRetryable || outcome.Code != v1.SourceControlRateLimited ||
 		outcome.RetryAfterMS == nil || *outcome.RetryAfterMS != 30000 {
 		t.Fatalf("outcome = %+v", outcome)
@@ -189,7 +189,7 @@ func TestGitHubPublicationRejectsExistingPullRequestAtDifferentHead(t *testing.T
 	}))
 	defer server.Close()
 
-	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation())
+	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlHeadMismatch {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -209,7 +209,7 @@ func TestGitHubPublicationRejectsOversizedProviderResponsePermanently(t *testing
 	}))
 	defer server.Close()
 
-	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation())
+	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlInvalidProviderResponse {
 		t.Fatalf("outcome = %+v", outcome)
 	}

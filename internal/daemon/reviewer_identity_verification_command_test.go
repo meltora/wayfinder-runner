@@ -10,8 +10,9 @@ import (
 )
 
 type fakeReviewerIdentityVerifier struct {
-	outcome v1.ReviewerIdentityVerificationResultOutcome
-	calls   int
+	outcome    v1.ReviewerIdentityVerificationResultOutcome
+	calls      int
+	credential *v1.ProviderCredential
 }
 
 type blockingReviewerIdentityVerifier struct {
@@ -29,6 +30,7 @@ func (verifier *blockingReviewerIdentityVerifier) ReadyReviewerIdentityInstallat
 func (verifier *blockingReviewerIdentityVerifier) VerifyReviewerIdentity(
 	ctx context.Context,
 	_ v1.ReviewerIdentityVerificationOperation,
+	_ *v1.ProviderCredential,
 ) v1.ReviewerIdentityVerificationResultOutcome {
 	close(verifier.started)
 	select {
@@ -51,8 +53,10 @@ func (verifier *fakeReviewerIdentityVerifier) ReadyReviewerIdentityInstallations
 func (verifier *fakeReviewerIdentityVerifier) VerifyReviewerIdentity(
 	_ context.Context,
 	_ v1.ReviewerIdentityVerificationOperation,
+	credential *v1.ProviderCredential,
 ) v1.ReviewerIdentityVerificationResultOutcome {
 	verifier.calls++
+	verifier.credential = credential
 	return verifier.outcome
 }
 

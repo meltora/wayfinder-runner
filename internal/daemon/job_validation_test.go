@@ -9,7 +9,9 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -293,6 +295,88 @@ func TestPrepareWorkspaceRejectsInvalidRepositoryTopologyBeforeGit(t *testing.T)
 				t.Fatal("invalid repository topology accepted")
 			}
 		})
+	}
+}
+
+func TestPlanWorkspaceUsesObservedCommitAfterCommandBranchMoves(t *testing.T) {
+	origin := t.TempDir()
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		command := exec.Command("git", args...)
+		command.Dir = dir
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	runGit(origin, "init", "-b", "main")
+	runGit(origin, "config", "user.email", "runner@example.test")
+	runGit(origin, "config", "user.name", "Runner Test")
+	if err := os.WriteFile(filepath.Join(origin, "README.md"), []byte("observed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(origin, "add", "README.md")
+	runGit(origin, "commit", "-m", "observed")
+	observedSHA := runGit(origin, "rev-parse", "HEAD")
+	repositories := []v1.JobRepository{{
+		RepositoryID: "repo-1", RepositoryHeadObservationID: "head-observation-1",
+		BaseBranch: "main", BaseSHA: observedSHA, Primary: true,
+	}}
+
+	stateDir := t.TempDir()
+	durableJournal, err := journal.Open(filepath.Join(stateDir, "journal.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = durableJournal.Close() })
+	jr := &jobRunner{
+		d: &Daemon{
+			cfg: config.Config{
+				StateDir: stateDir, AllowUnsafeDirect: true,
+				Repositories: map[string]config.RepositoryConfig{"repo-1": {URL: origin}},
+			},
+			journal: durableJournal, logger: slog.Default(),
+		},
+		job: v1.JobSpec{
+			JobID: "job-1", AttemptID: "attempt-1", ProjectID: "project-1", Kind: v1.JobKindPlan,
+			Repositories: repositories,
+		},
+		workDir: t.TempDir(), logger: slog.Default(),
+	}
+	if err := os.WriteFile(filepath.Join(origin, "moved.txt"), []byte("new branch head\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(origin, "add", "moved.txt")
+	runGit(origin, "commit", "-m", "branch moved after command")
+
+	primaryDir, cleanup, err := jr.prepareWorkspace(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+	if got := runGit(primaryDir, "rev-parse", "HEAD"); got != observedSHA {
+		t.Fatalf("planning checkout = %s, want observed %s", got, observedSHA)
+	}
+	if branch := runGit(primaryDir, "branch", "--show-current"); branch != "" {
+		t.Fatalf("planning checkout attached to mutable branch %q", branch)
+	}
+	if !slices.Equal(jr.verifiedPlanRepositories, repositories) {
+		t.Fatalf("verified repositories = %#v", jr.verifiedPlanRepositories)
+	}
+
+	unavailable := append([]v1.JobRepository(nil), repositories...)
+	unavailable[0].BaseSHA = strings.Repeat("f", 40)
+	rejected := &jobRunner{
+		d: jr.d,
+		job: v1.JobSpec{
+			JobID: "job-2", AttemptID: "attempt-2", ProjectID: "project-1", Kind: v1.JobKindPlan,
+			Repositories: unavailable,
+		},
+		workDir: t.TempDir(), logger: slog.Default(),
+	}
+	if _, _, err := rejected.prepareWorkspace(context.Background()); err == nil || !strings.Contains(err.Error(), "workspace repo-1") {
+		t.Fatalf("unavailable observed commit error = %v", err)
 	}
 }
 

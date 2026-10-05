@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "type": "event",
+  "id": "agent-config-scan-result-e6ed1ff18cd0dfef801337fa3cdb3f33c1a09f8dfabf83b0a6147336f5890a19",
+  "sent_at": "2026-09-12T12:01:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "kind": "agent_config_scan_result",
+    "authority_version": "agent-config-scan-v1",
+    "request_id": "12345678-1234-4234-8234-123456789abc",
+    "attempt_id": "attempt-1",
+    "project_id": "project-1",
+    "repository_id": "repository-1",
+    "branch_ref": "refs/heads/main",
+    "lease_id": "lease-1",
+    "fencing_token": 1,
+    "lease_expires_at": "2026-09-12T12:10:00Z",
+    "command_digest": "8970f461b89ee739f0ddbfa604153d37ad2373cd90423af04618c707424a142f",
+    "command_message_id": "agent-config-scan-command-12345678-1234-4234-8234-123456789abc",
+    "observed_at": "2026-09-12T12:01:00Z",
+    "outcome": {
+      "kind": "discovered",
+      "scan": {
+        "kind": "agent_config_discovery",
+        "scan_id": "scan-1",
+        "project_id": "project-1",
+        "repository_id": "repository-1",
+        "branch_ref": "refs/heads/main",
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "catalog_version": "catalog-v1",
+        "parser_version": "runner-scanner-v1",
+        "observed_at": "2026-09-12T12:01:00Z",
+        "items": []
+      }
+    }
+  }
+}

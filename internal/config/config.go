@@ -36,6 +36,7 @@ type Config struct {
 	AgentModel                     string                                         `yaml:"agent_model,omitempty"`
 	WorkIntakeProposal             WorkIntakeProposalConfig                       `yaml:"work_intake_proposal,omitempty"`
 	ProviderBinaries               map[string]string                              `yaml:"provider_binaries,omitempty"`
+	ProviderEnvironment            map[string]map[string]string                   `yaml:"provider_environment,omitempty"`
 	JobImage                       string                                         `yaml:"job_image,omitempty"`
 	JobMemoryMB                    int                                            `yaml:"job_memory_mb,omitempty"`
 	JobCPUs                        float64                                        `yaml:"job_cpus,omitempty"`
@@ -56,6 +57,8 @@ type Config struct {
 	PreviewObservationProfiles     map[string]PreviewObservationProfileConfig     `yaml:"preview_observation_profiles,omitempty"`
 	PreviewLifecycleControllers    map[string]PreviewLifecycleControllerConfig    `yaml:"preview_lifecycle_controllers,omitempty"`
 	Labels                         map[string]string                              `yaml:"labels,omitempty"`
+	RunnerConfigurationDigest      string                                         `yaml:"-"`
+	RevokedAgentPackDigests        []string                                       `yaml:"-"`
 }
 
 type WorkIntakeProposalConfig struct {
@@ -76,11 +79,12 @@ type CheckConfig struct {
 }
 
 // SourcePublicationInstallationConfig binds a control-plane installation ID
-// to credentials owned by this runner. Tokens never cross the runner protocol.
+// to credentials owned by this runner.
 type SourcePublicationInstallationConfig struct {
 	Provider   string `yaml:"provider"`
 	APIBaseURL string `yaml:"api_base_url,omitempty"`
-	TokenFile  string `yaml:"token_file"`
+	TokenFile  string `yaml:"token_file,omitempty"`
+	GitHost    string `yaml:"git_host,omitempty"`
 }
 
 func Default() Config {
@@ -154,6 +158,7 @@ func Normalize(in Config) Config {
 			out.ProviderBinaries[key] = value
 		}
 	}
+	out.ProviderEnvironment = normalizeProviderEnvironment(in.ProviderEnvironment)
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))
 		for key, value := range in.Labels {
@@ -165,6 +170,9 @@ func Normalize(in Config) Config {
 		for key, value := range in.AgentPackPublicKeys {
 			out.AgentPackPublicKeys[key] = value
 		}
+	}
+	if in.RevokedAgentPackDigests != nil {
+		out.RevokedAgentPackDigests = append([]string{}, in.RevokedAgentPackDigests...)
 	}
 	if in.Repositories != nil {
 		out.Repositories = make(map[string]RepositoryConfig, len(in.Repositories))
@@ -307,6 +315,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("provider binary for %s must be an absolute path", provider)
 		}
 	}
+	if err := validateProviderEnvironment(c.ProviderEnvironment); err != nil {
+		return err
+	}
 	if c.JobMemoryMB < 128 || c.JobCPUs <= 0 || c.JobPIDs < 16 {
 		return fmt.Errorf("job resource limits are invalid")
 	}
@@ -396,6 +407,13 @@ func (c Config) Validate() error {
 		}
 		if installation.Provider == "bitbucket" && apiBaseURL != "https://api.bitbucket.org/2.0" {
 			return fmt.Errorf("source publication installation %s must use the Bitbucket Cloud API base", id)
+		}
+		if installation.GitHost != "" &&
+			(installation.Provider != "github" || !gitHostPattern.MatchString(installation.GitHost)) {
+			return fmt.Errorf("source publication installation %s git_host must be a lowercase GitHub hostname without scheme or port", id)
+		}
+		if installation.TokenFile == "" && installation.Provider == "github" {
+			continue
 		}
 		if !filepath.IsAbs(installation.TokenFile) || filepath.Clean(installation.TokenFile) != installation.TokenFile ||
 			strings.ContainsRune(installation.TokenFile, '\x00') {
@@ -498,6 +516,7 @@ func validateServiceURL(raw, secureScheme, developmentScheme string, allowInsecu
 
 var immutableImagePattern = regexp.MustCompile(`^[^\s@]+@sha256:[a-fA-F0-9]{64}$`)
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var gitHostPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 var workIntakeProposalModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$`)
 
 func workIntakeProposalSupportedOS(goos string) bool { return goos == "linux" }

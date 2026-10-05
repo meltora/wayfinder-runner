@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "type": "event",
+  "id": "evt-agent-pack-composition-1",
+  "sent_at": "2026-10-01T12:00:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "kind": "agent_pack_composition",
+    "manifest_kind": "build",
+    "lease_id": "lease-1",
+    "job_id": "job-1",
+    "attempt_id": "attempt-1",
+    "manifest_id": "manifest-1",
+    "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fencing_token": 7,
+    "observed_at": "2026-10-01T12:00:00Z",
+    "schema_version": 1,
+    "phase": "after_exit",
+    "adapter": "claude",
+    "isolation": "direct",
+    "agent_pack": {
+      "version": "1.0.0",
+      "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "key_id": "platform-key-1",
+      "plugin_loaded": true
+    },
+    "pack_view": "verified",
+    "layers": [
+      {
+        "layer": "platform_safety",
+        "status": "applied",
+        "sources": [
+          {
+            "path": "claude-settings.json",
+            "source_type": "provider_configuration",
+            "digest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          {
+            "path": "claude-mcp.json",
+            "source_type": "mcp_declaration",
+            "digest_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ]
+      },
+      {
+        "layer": "agent_pack",
+        "status": "applied",
+        "sources": [
+          {
+            "path": ".claude-plugin/plugin.json",
+            "source_type": "provider_configuration",
+            "digest_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          {
+            "path": "skills/plan/SKILL.md",
+            "source_type": "skill",
+            "digest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          }
+        ]
+      },
+      {
+        "layer": "repository_instructions",
+        "status": "applied",
+        "sources": [
+          {
+            "repository_id": "repo-1",
+            "path": "CLAUDE.md",
+            "source_type": "repository_instructions",
+            "digest_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+          }
+        ]
+      },
+      {
+        "layer": "nested_instructions",
+        "status": "applied",
+        "sources": [
+          {
+            "repository_id": "repo-1",
+            "path": "services/api/CLAUDE.md",
+            "source_type": "repository_instructions",
+            "digest_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+          }
+        ]
+      },
+      {
+        "layer": "execution_manifest",
+        "status": "applied",
+        "sources": []
+      },
+      {
+        "layer": "ticket_context",
+        "status": "applied",
+        "sources": []
+      },
+      {
+        "layer": "host_user_configuration",
+        "status": "applied_unisolated",
+        "sources": [
+          {
+            "path": "host_home/.claude/settings.json",
+            "source_type": "provider_configuration"
+          }
+        ]
+      }
+    ],
+    "conflicts": [
+      {
+        "code": "repository_settings_excluded",
+        "layer": "repository_instructions",
+        "repository_id": "repo-1",
+        "path": ".claude/settings.json",
+        "winner": "platform_safety"
+      },
+      {
+        "code": "repository_mcp_excluded",
+        "layer": "repository_instructions",
+        "repository_id": "repo-1",
+        "path": ".mcp.json",
+        "winner": "platform_safety"
+      },
+      {
+        "code": "skill_name_collision",
+        "layer": "agent_pack",
+        "repository_id": "repo-1",
+        "path": ".claude/skills/plan",
+        "winner": "unresolved"
+      },
+      {
+        "code": "host_user_configuration_loaded",
+        "layer": "host_user_configuration",
+        "path": "host_home/.claude/settings.json",
+        "winner": "unresolved"
+      }
+    ],
+    "truncated": false
+  }
+}

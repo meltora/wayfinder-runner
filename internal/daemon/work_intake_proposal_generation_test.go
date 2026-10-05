@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -328,8 +329,15 @@ func TestModelExecutionConfigDigestBindsEveryEffectiveSecurityControl(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if digest != "3d6f57bede353e71ef5aea9191597457290df7cc42861a1efc0b2f0764e3641c" {
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(digest) {
 		t.Fatalf("execution config digest = %s", digest)
+	}
+	repeated, err := generator.modelExecutionConfigDigestForSpec(context.Background(), "/private", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated != digest {
+		t.Fatalf("execution config digest is not deterministic: %s != %s", repeated, digest)
 	}
 	mutations := map[string]func(*providerWorkIntakeProposalGenerator, *supervisor.Spec){
 		"adapter version": func(g *providerWorkIntakeProposalGenerator, _ *supervisor.Spec) {

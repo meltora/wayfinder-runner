@@ -47,6 +47,67 @@ func TestProviderReviewObservationSuccessWireIncludesFalseAndEmptyCollections(t 
 	}
 }
 
+func TestProviderReviewObservationCompletionSuccessWireIsExact(t *testing.T) {
+	mergedAt := time.Date(2030, 8, 21, 12, 0, 0, 0, time.UTC)
+	updatedAt := mergedAt.Add(time.Minute)
+	out := ProviderReviewObservationResultOutcome{
+		Kind: ProviderReviewObservationSucceeded, RequestState: ProviderReviewObservationRequestMerged,
+		ObservedHeadSHA: strings.Repeat("1", 40), SnapshotSemantics: "current_state", SnapshotComplete: true,
+		Collections: &ProviderReviewObservationCollections{}, MergeCommitSHA: strings.Repeat("2", 40),
+		TargetBranch: "main", TargetHeadSHA: strings.Repeat("3", 40), MergeCommitReachableFromTarget: false,
+		MergedAt: mergedAt, ProviderUpdatedAt: updatedAt, MergedByProviderAccountID: "42",
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, part := range []string{
+		`"merge_commit_sha":"` + strings.Repeat("2", 40) + `"`, `"target_branch":"main"`,
+		`"target_head_sha":"` + strings.Repeat("3", 40) + `"`, `"merge_commit_reachable_from_target":false`,
+		`"merged_at":"2030-08-21T12:00:00Z"`, `"provider_updated_at":"2030-08-21T12:01:00Z"`,
+		`"merged_by_provider_account_id":"42"`,
+	} {
+		if !strings.Contains(text, part) {
+			t.Fatalf("missing %s in %s", part, text)
+		}
+	}
+	for _, outcome := range []ProviderReviewObservationResultOutcome{
+		{Kind: ProviderReviewObservationRetryable, Code: ProviderReviewObservationProviderUnavailable, MergeCommitSHA: strings.Repeat("2", 40)},
+		{Kind: ProviderReviewObservationPermanent, Code: ProviderReviewObservationInvalidProviderResponse, MergeCommitSHA: strings.Repeat("2", 40)},
+	} {
+		raw, err := json.Marshal(outcome)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "merge_commit_sha") {
+			t.Fatalf("completion evidence leaked into failure: %s", raw)
+		}
+	}
+}
+
+func TestProviderReviewObservationAuthorityWireKeepsCompletionFenceOutOfV1(t *testing.T) {
+	legacy, err := json.Marshal(ProviderReviewObservationAuthority{SchemaVersion: ProviderReviewObservationAuthorityVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(legacy), "purpose") || strings.Contains(string(legacy), "expected_target_branch") {
+		t.Fatalf("completion authority leaked into v1: %s", legacy)
+	}
+	completion, err := json.Marshal(ProviderReviewObservationAuthority{
+		SchemaVersion: ProviderReviewObservationCompletionVersion,
+		Purpose:       ProviderReviewObservationCompletionRevalidation, ExpectedTargetBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range []string{`"schema_version":2`, `"purpose":"completion_revalidation"`, `"expected_target_branch":"main"`} {
+		if !strings.Contains(string(completion), part) {
+			t.Fatalf("missing %s in %s", part, completion)
+		}
+	}
+}
+
 func providerReviewObservationVectorSubjects() []ProviderReviewObservationSubject {
 	return []ProviderReviewObservationSubject{{ReviewerIdentityID: "reviewer-identity-a", UserID: "user-a", OrganizationMembershipID: "membership-a", IdentityStateRevision: 3, IdentityRevision: 2, ProviderAccountProofID: "provider-account-proof-a", ProviderAccountProofStateRevision: 4, ProviderAccountProofRevision: 2, ProviderAccountProofDigest: strings.Repeat("b", 64), ProviderAccountProofExpiresAt: time.Date(2030, 8, 21, 13, 0, 0, 0, time.UTC), IdentityVerificationID: "identity-verification-a", IdentityVerificationDigest: strings.Repeat("6", 64), IdentityVerificationExpiresAt: time.Date(2030, 8, 21, 12, 30, 0, 0, time.UTC), ProviderAccountID: "42"}, {ReviewerIdentityID: "reviewer-identity-b", UserID: "user-b", OrganizationMembershipID: "membership-b", IdentityStateRevision: 5, IdentityRevision: 4, ProviderAccountProofID: "provider-account-proof-b", ProviderAccountProofStateRevision: 6, ProviderAccountProofRevision: 4, ProviderAccountProofDigest: strings.Repeat("c", 64), ProviderAccountProofExpiresAt: time.Date(2030, 8, 21, 13, 0, 0, 0, time.UTC), IdentityVerificationID: "identity-verification-b", IdentityVerificationDigest: strings.Repeat("7", 64), IdentityVerificationExpiresAt: time.Date(2030, 8, 21, 12, 30, 0, 0, time.UTC), ProviderAccountID: "99"}}
 }

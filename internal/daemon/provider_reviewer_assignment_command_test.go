@@ -10,9 +10,10 @@ import (
 )
 
 type fakeProviderReviewerAssigner struct {
-	outcome v1.ProviderReviewerAssignmentResultOutcome
-	calls   int
-	delay   time.Duration
+	outcome    v1.ProviderReviewerAssignmentResultOutcome
+	calls      int
+	delay      time.Duration
+	credential *v1.ProviderCredential
 }
 
 func (assigner *fakeProviderReviewerAssigner) ReadyProviderReviewerAssignmentInstallations() []v1.ProviderReviewerAssignmentInstallationCapability {
@@ -24,8 +25,10 @@ func (assigner *fakeProviderReviewerAssigner) ReadyProviderReviewerAssignmentIns
 func (assigner *fakeProviderReviewerAssigner) AssignProviderReviewers(
 	_ context.Context,
 	_ v1.ProviderReviewerAssignmentOperation,
+	credential *v1.ProviderCredential,
 ) v1.ProviderReviewerAssignmentResultOutcome {
 	assigner.calls++
+	assigner.credential = credential
 	if assigner.delay != 0 {
 		time.Sleep(assigner.delay)
 	}

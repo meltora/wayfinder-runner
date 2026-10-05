@@ -10,16 +10,18 @@ import (
 )
 
 type fakeProviderReviewObserver struct {
-	calls   atomic.Int32
-	delay   time.Duration
-	outcome v1.ProviderReviewObservationResultOutcome
+	calls      atomic.Int32
+	delay      time.Duration
+	outcome    v1.ProviderReviewObservationResultOutcome
+	credential atomic.Pointer[v1.ProviderCredential]
 }
 
 func (f *fakeProviderReviewObserver) ReadyProviderReviewObservationInstallations() []v1.ProviderReviewObservationInstallationCapability {
 	return []v1.ProviderReviewObservationInstallationCapability{{InstallationID: "installation-1", Provider: "github", ProviderInstanceKey: "github.com"}}
 }
-func (f *fakeProviderReviewObserver) ObserveProviderReviews(context.Context, v1.ProviderReviewObservationOperation) v1.ProviderReviewObservationResultOutcome {
+func (f *fakeProviderReviewObserver) ObserveProviderReviews(_ context.Context, _ v1.ProviderReviewObservationOperation, credential *v1.ProviderCredential) v1.ProviderReviewObservationResultOutcome {
 	f.calls.Add(1)
+	f.credential.Store(credential)
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
@@ -56,6 +58,43 @@ func TestProviderReviewObservationSeparateCapabilityAndNormalizedEvent(t *testin
 	command.ProviderReviewerAssignment = &v1.ProviderReviewerAssignmentOperation{}
 	if reason := commandRejectionReason(jr.d.executeCommand(context.Background(), v1.Envelope{ID: id}, command)); reason != v1.CommandAckReasonInvalidCommand {
 		t.Fatalf("smuggling reason=%s", reason)
+	}
+}
+
+func TestProviderReviewObservationCompletionRevalidationEmitsExactMergeEvidence(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	command := validProviderReviewObservationCommand()
+	command.ProviderReviewObservation.SchemaVersion = v1.ProviderReviewObservationCompletionVersion
+	command.ProviderReviewObservation.Purpose = v1.ProviderReviewObservationCompletionRevalidation
+	command.ProviderReviewObservation.ExpectedTargetBranch = "main"
+	mergedAt := time.Now().UTC().Add(-2 * time.Minute)
+	updatedAt := mergedAt.Add(time.Minute)
+	fake := &fakeProviderReviewObserver{outcome: v1.ProviderReviewObservationResultOutcome{
+		Kind: v1.ProviderReviewObservationSucceeded, RequestState: v1.ProviderReviewObservationRequestMerged,
+		ObservedHeadSHA: command.ProviderReviewObservation.ExpectedHeadSHA, SnapshotSemantics: "current_state", SnapshotComplete: true,
+		Collections: &v1.ProviderReviewObservationCollections{
+			ReviewEvents: v1.ProviderReviewObservationCollectionCompleteness{Complete: true, PagesRead: 1},
+			Comments:     v1.ProviderReviewObservationCollectionCompleteness{Complete: true, PagesRead: 1},
+		},
+		MergeCommitSHA: strings.Repeat("a", 40), TargetBranch: "main", TargetHeadSHA: strings.Repeat("b", 40),
+		MergeCommitReachableFromTarget: true, MergedAt: mergedAt, ProviderUpdatedAt: updatedAt,
+		MergedByProviderAccountID: "42",
+	}}
+	jr.d.providerReviewObserver = fake
+	var event v1.ProviderReviewObservationResultEvent
+	jr.d.eventSink = func(_ context.Context, payload any) error {
+		event = payload.(v1.ProviderReviewObservationResultEvent)
+		return nil
+	}
+	id := "provider-review-observation-command-" + strings.Repeat("d", 64)
+	if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: id}, command); err != nil {
+		t.Fatal(err)
+	}
+	if event.SchemaVersion != v1.ProviderReviewObservationCompletionVersion ||
+		event.Purpose != v1.ProviderReviewObservationCompletionRevalidation ||
+		event.Outcome.MergeCommitSHA != strings.Repeat("a", 40) ||
+		!event.Outcome.MergeCommitReachableFromTarget || event.Outcome.MergedByProviderAccountID != "42" {
+		t.Fatalf("event=%#v", event)
 	}
 }
 func TestProviderReviewObservationLeaseCrossingBecomesRetryable(t *testing.T) {

@@ -21,6 +21,7 @@ func commandContentDigest(payload any) (string, error) {
 // for exact-redelivery conflict detection; this record retains only the
 // routing/fence fields needed to audit the paid-call fence and stable result.
 func durableCommandRecordPayload(envelope v1.Envelope, contentDigest string) ([]byte, error) {
+	envelope.ProviderCredential = nil
 	rawPayload, err := json.Marshal(envelope.Payload)
 	if err != nil {
 		return nil, err
@@ -68,6 +69,11 @@ func decodeCommandPayload(payload any) (v1.CommandPayload, error) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&command); err != nil {
 		return v1.CommandPayload{}, fmt.Errorf("decode command payload: %w", err)
+	}
+	if command.Command == v1.CmdAgentConfigScan {
+		if err := validateAgentConfigScanWireFields(raw); err != nil {
+			return v1.CommandPayload{}, err
+		}
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return v1.CommandPayload{}, fmt.Errorf("decode command payload: trailing JSON")

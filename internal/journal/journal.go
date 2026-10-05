@@ -159,6 +159,9 @@ func (j *Journal) migrate() error {
 	if err := j.ensureCommandReceiptSchema(); err != nil {
 		return err
 	}
+	if err := j.ensureEventRejectionSchema(); err != nil {
+		return err
+	}
 	return j.ensureActiveLeaseAuthorityColumns()
 }
 

@@ -275,3 +275,28 @@ func TestSignVerify(t *testing.T) {
 		t.Fatal("signature does not verify")
 	}
 }
+
+func TestCollectAdvertisesSignedAgentPackRevocationEviction(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	d := fakeDetector()
+	m := d.Collect(context.Background())
+	if m.AgentPackRevocationEvictionVersion != 1 {
+		t.Fatalf("AgentPackRevocationEvictionVersion = %d", m.AgentPackRevocationEvictionVersion)
+	}
+	if err := d.Sign(&m, key); err != nil {
+		t.Fatal(err)
+	}
+	sig, _ := base64.StdEncoding.DecodeString(m.Signature)
+	m.Signature = ""
+	payload, _ := json.Marshal(&m)
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil || fields["agent_pack_revocation_eviction_version"] != float64(1) {
+		t.Fatalf("signed payload field = %v err = %v", fields["agent_pack_revocation_eviction_version"], err)
+	}
+	m.AgentPackRevocationEvictionVersion = 0
+	stripped, _ := json.Marshal(&m)
+	digest := sha256.Sum256(stripped)
+	if ecdsa.VerifyASN1(&key.PublicKey, digest[:], sig) {
+		t.Fatal("the signature does not cover agent_pack_revocation_eviction_version")
+	}
+}

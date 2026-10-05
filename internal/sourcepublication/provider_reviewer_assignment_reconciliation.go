@@ -46,7 +46,7 @@ func reconciliationSucceeded(operation v1.ProviderReviewerAssignmentReconciliati
 	return v1.ProviderReviewerAssignmentReconciliationResultOutcome{Kind: v1.ProviderReviewerAssignmentReconciliationSucceeded, Conclusion: conclusion, RequestState: state, ObservedHeadSHA: head, IntendedReviewers: observed}
 }
 
-func (registry *Registry) ReconcileProviderReviewerAssignment(ctx context.Context, operation v1.ProviderReviewerAssignmentReconciliationOperation) v1.ProviderReviewerAssignmentReconciliationResultOutcome {
+func (registry *Registry) ReconcileProviderReviewerAssignment(ctx context.Context, operation v1.ProviderReviewerAssignmentReconciliationOperation, credential *v1.ProviderCredential) v1.ProviderReviewerAssignmentReconciliationResultOutcome {
 	installation, ok := registry.installations[operation.InstallationID]
 	if !ok {
 		return reconciliationPermanent(v1.ProviderReviewerAssignmentReconciliationInstallationInactive)
@@ -57,13 +57,19 @@ func (registry *Registry) ReconcileProviderReviewerAssignment(ctx context.Contex
 	if configuredProviderInstanceKey(installation.Provider, installation.APIBaseURL) != operation.ProviderInstanceKey {
 		return reconciliationPermanent(v1.ProviderReviewerAssignmentReconciliationUnsupportedProviderInstance)
 	}
-	token, err := readToken(installation.TokenFile)
-	if err != nil {
+	authority, access := resolveReviewAuthority(installation, credential, operation.ProviderRepositoryID)
+	switch access {
+	case reviewAccessCredentialUnavailable:
+		return reconciliationRetryable(v1.ProviderReviewerAssignmentReconciliationProviderUnavailable, nil)
+	case reviewAccessRepositoryDenied:
+		return reconciliationPermanent(v1.ProviderReviewerAssignmentReconciliationInstallationPermissionDenied)
+	case reviewAccessTokenFileInvalid:
 		return reconciliationPermanent(v1.ProviderReviewerAssignmentReconciliationInstallationInactive)
 	}
+	token := authority.token
 	switch installation.Provider {
 	case "github":
-		return newGitHubPublisher(installation.APIBaseURL, token, registry.httpClient).reconcileReviewerAssignment(ctx, operation)
+		return registry.newGitHubReviewPublisher(installation, authority).reconcileReviewerAssignment(ctx, operation)
 	case "gitlab":
 		return newGitLabPublisher(installation.APIBaseURL, token, registry.httpClient).reconcileReviewerAssignment(ctx, operation)
 	case "bitbucket":

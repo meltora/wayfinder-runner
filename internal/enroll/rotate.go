@@ -48,7 +48,7 @@ func (c *Client) Rotate(ctx context.Context, req RotateRequest) (*Response, erro
 		return nil, fmt.Errorf("rotate response exceeds size limit")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("rotate rejected: status %d: %s", resp.StatusCode, truncateResponse(respBody))
+		return nil, newRotateRejectedError(resp.StatusCode, respBody)
 	}
 	var out Response
 	decoder := json.NewDecoder(bytes.NewReader(respBody))
@@ -63,4 +63,32 @@ func (c *Client) Rotate(ctx context.Context, req RotateRequest) (*Response, erro
 		return nil, fmt.Errorf("rotate response missing fields")
 	}
 	return &out, nil
+}
+
+type RotateRejectedError struct {
+	Status int
+	Code   string
+	body   string
+}
+
+func newRotateRejectedError(status int, body []byte) *RotateRejectedError {
+	rejected := &RotateRejectedError{Status: status, body: strings.Map(dropControl, truncateResponse(body))}
+	var wire struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &wire) == nil && safeRejectionCode.MatchString(wire.Code) {
+		rejected.Code = wire.Code
+	}
+	return rejected
+}
+
+func (e *RotateRejectedError) KeyReused() bool { return e.Code == "rotation_key_reused" }
+
+func (e *RotateRejectedError) Transient() bool { return e.Status >= 500 }
+
+func (e *RotateRejectedError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("rotate rejected: status %d: code %s", e.Status, e.Code)
+	}
+	return fmt.Sprintf("rotate rejected: status %d: %s", e.Status, e.body)
 }

@@ -126,6 +126,11 @@ func (cache ArchiveCache) tryDigestLock(digest string) (bool, func()) {
 		_ = file.Close()
 		return false, func() {}
 	}
+	if current, err := os.Lstat(lockPath); err != nil || !os.SameFile(info, current) {
+		_ = unix.Flock(fd, unix.LOCK_UN)
+		_ = file.Close()
+		return false, func() {}
+	}
 	return true, func() {
 		_ = unix.Flock(fd, unix.LOCK_UN)
 		_ = file.Close()
@@ -152,25 +157,14 @@ func (cache ArchiveCache) Acquire(ctx context.Context, digest string, fetch Arch
 	}
 	defer func() { _ = root.Close() }()
 
-	lockPath := filepath.Join(cache.Root, digest+".lock")
-	lockFD, err := unix.Open(lockPath, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	lock, err := cache.lockDigest(ctx, digest)
 	if err != nil {
-		return "", fmt.Errorf("open Agent Pack cache lock: %w", err)
-	}
-	lock := os.NewFile(uintptr(lockFD), lockPath)
-	if lock == nil {
-		_ = unix.Close(lockFD)
-		return "", fmt.Errorf("open Agent Pack cache lock")
-	}
-	defer func() { _ = lock.Close() }()
-	lockInfo, err := lock.Stat()
-	if err != nil || !lockInfo.Mode().IsRegular() || lockInfo.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("Agent Pack cache lock must be a private regular file")
-	}
-	if err := acquireFileLock(ctx, lock); err != nil {
 		return "", err
 	}
-	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
+	defer func() {
+		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+		_ = lock.Close()
+	}()
 
 	finalName := digest + ".tgz"
 	if ok, err := verifyCachedArchive(root, finalName, digest, limit); err != nil {
@@ -229,6 +223,90 @@ func (cache ArchiveCache) Acquire(ctx context.Context, digest string, fetch Arch
 		_ = dir.Close()
 	}
 	return filepath.Join(cache.Root, finalName), nil
+}
+
+func (cache ArchiveCache) lockDigest(ctx context.Context, digest string) (*os.File, error) {
+	lockPath := filepath.Join(cache.Root, digest+".lock")
+	for {
+		lockFD, err := unix.Open(lockPath, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+		if err != nil {
+			return nil, fmt.Errorf("open Agent Pack cache lock: %w", err)
+		}
+		lock := os.NewFile(uintptr(lockFD), lockPath)
+		if lock == nil {
+			_ = unix.Close(lockFD)
+			return nil, fmt.Errorf("open Agent Pack cache lock")
+		}
+		lockInfo, err := lock.Stat()
+		if err != nil || !lockInfo.Mode().IsRegular() || lockInfo.Mode().Perm()&0o077 != 0 {
+			_ = lock.Close()
+			return nil, fmt.Errorf("Agent Pack cache lock must be a private regular file")
+		}
+		if err := acquireFileLock(ctx, lock); err != nil {
+			_ = lock.Close()
+			return nil, err
+		}
+		if current, err := os.Lstat(lockPath); err == nil && os.SameFile(lockInfo, current) {
+			return lock, nil
+		}
+		_ = unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+		_ = lock.Close()
+	}
+}
+
+func (cache ArchiveCache) Evict(digests []string) (evicted, skipped []string, err error) {
+	if _, err := os.Lstat(cache.Root); errors.Is(err, os.ErrNotExist) {
+		return nil, nil, nil
+	}
+	if err := ensurePrivateCacheRoot(cache.Root); err != nil {
+		return nil, nil, err
+	}
+	root, err := os.OpenRoot(cache.Root)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open Agent Pack cache: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	seen := make(map[string]bool, len(digests))
+	for _, digest := range digests {
+		if !validSHA256(digest) || seen[digest] {
+			continue
+		}
+		seen[digest] = true
+		archiveName, lockName := digest+".tgz", digest+".lock"
+		_, archiveErr := root.Lstat(archiveName)
+		_, lockErr := root.Lstat(lockName)
+		if errors.Is(archiveErr, os.ErrNotExist) && errors.Is(lockErr, os.ErrNotExist) {
+			continue
+		}
+		locked, release := cache.tryDigestLock(digest)
+		if !locked {
+			skipped = append(skipped, digest)
+			continue
+		}
+		removed, removeErr := removeCacheEntry(root, archiveName)
+		if removeErr == nil {
+			removeErr = removeStaleDigestTemps(cache.Root, digest)
+		}
+		if removeErr == nil {
+			_, removeErr = removeCacheEntry(root, lockName)
+		}
+		release()
+		if removeErr != nil {
+			return evicted, skipped, fmt.Errorf("evict revoked Agent Pack archive: %w", removeErr)
+		}
+		if removed {
+			evicted = append(evicted, digest)
+		}
+	}
+	return evicted, skipped, nil
+}
+
+func removeCacheEntry(root *os.Root, name string) (bool, error) {
+	err := root.Remove(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 type boundedArchiveWriter struct {

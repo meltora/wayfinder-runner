@@ -29,6 +29,8 @@ type Envelope struct {
 	RunnerID  string      `json:"runner_id,omitempty"`
 	InReplyTo string      `json:"in_reply_to,omitempty"`
 	Payload   any         `json:"payload,omitempty"`
+
+	ProviderCredential *ProviderCredential `json:"provider_credential,omitempty"`
 }
 
 type HelloPayload struct {

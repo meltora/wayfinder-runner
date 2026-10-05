@@ -19,7 +19,19 @@ var (
 const providerReviewObservationMaxEvidence = 1000
 
 func providerReviewObservationAuthority(v v1.ProviderReviewObservationAuthority) error {
-	if v.SchemaVersion != 1 || !providerReviewObservationOperationIDPattern.MatchString(v.ProviderReviewObservationOperationID) {
+	switch v.SchemaVersion {
+	case v1.ProviderReviewObservationAuthorityVersion:
+		if v.Purpose != "" || v.ExpectedTargetBranch != "" {
+			return fmt.Errorf("provider review observation authority is invalid")
+		}
+	case v1.ProviderReviewObservationCompletionVersion:
+		if v.Purpose != v1.ProviderReviewObservationCompletionRevalidation || GitRef("expected_target_branch", v.ExpectedTargetBranch) != nil {
+			return fmt.Errorf("provider review observation authority is invalid")
+		}
+	default:
+		return fmt.Errorf("provider review observation authority is invalid")
+	}
+	if !providerReviewObservationOperationIDPattern.MatchString(v.ProviderReviewObservationOperationID) {
 		return fmt.Errorf("provider review observation authority is invalid")
 	}
 	for field, id := range map[string]string{"organization_id": v.OrganizationID, "project_id": v.ProjectID, "workflow_run_id": v.WorkflowRunID, "assignment_delivery_id": v.AssignmentDeliveryID, "assignment_plan_id": v.AssignmentPlanID, "assignment_observation_id": v.AssignmentObservationID, "source_publication_observation_id": v.SourcePublicationObservationID, "repository_id": v.RepositoryID, "installation_id": v.InstallationID, "lease_id": v.LeaseID} {
@@ -196,16 +208,57 @@ func ProviderReviewObservationResultEvent(e v1.ProviderReviewObservationResultEv
 				return err
 			}
 		}
+		if e.SchemaVersion == v1.ProviderReviewObservationAuthorityVersion {
+			if providerReviewObservationHasCompletionEvidence(o) {
+				return fmt.Errorf("v1 success contains completion evidence")
+			}
+		} else if err := providerReviewObservationCompletionEvidence(e.ProviderReviewObservationAuthority, o, e.ObservedAt); err != nil {
+			return err
+		}
 	case v1.ProviderReviewObservationRetryable:
-		if o.RequestState != "" || o.ObservedHeadSHA != "" || o.SnapshotSemantics != "" || o.SnapshotComplete || o.Collections != nil || len(o.ReviewEvents) != 0 || len(o.Comments) != 0 || (o.Code != v1.ProviderReviewObservationProviderUnavailable && o.Code != v1.ProviderReviewObservationRateLimited) || o.RetryAfterMS != nil && *o.RetryAfterMS > maxSourceControlRetryAfterMS {
+		if o.RequestState != "" || o.ObservedHeadSHA != "" || o.SnapshotSemantics != "" || o.SnapshotComplete || o.Collections != nil || len(o.ReviewEvents) != 0 || len(o.Comments) != 0 || providerReviewObservationHasCompletionEvidence(o) || (o.Code != v1.ProviderReviewObservationProviderUnavailable && o.Code != v1.ProviderReviewObservationRateLimited) || o.RetryAfterMS != nil && *o.RetryAfterMS > maxSourceControlRetryAfterMS {
 			return fmt.Errorf("retryable outcome is invalid")
 		}
 	case v1.ProviderReviewObservationPermanent:
-		if o.RequestState != "" || o.ObservedHeadSHA != "" || o.SnapshotSemantics != "" || o.SnapshotComplete || o.Collections != nil || len(o.ReviewEvents) != 0 || len(o.Comments) != 0 || o.RetryAfterMS != nil || !reviewObservationPermanent(o.Code) {
+		if o.RequestState != "" || o.ObservedHeadSHA != "" || o.SnapshotSemantics != "" || o.SnapshotComplete || o.Collections != nil || len(o.ReviewEvents) != 0 || len(o.Comments) != 0 || providerReviewObservationHasCompletionEvidence(o) || o.RetryAfterMS != nil || !reviewObservationPermanent(o.Code) {
 			return fmt.Errorf("permanent outcome is invalid")
 		}
 	default:
 		return fmt.Errorf("outcome kind is invalid")
+	}
+	return nil
+}
+
+func providerReviewObservationHasCompletionEvidence(o v1.ProviderReviewObservationResultOutcome) bool {
+	return o.MergeCommitSHA != "" || o.TargetBranch != "" || o.TargetHeadSHA != "" ||
+		o.MergeCommitReachableFromTarget || !o.MergedAt.IsZero() || !o.ProviderUpdatedAt.IsZero() ||
+		o.MergedByProviderAccountID != ""
+}
+
+func providerReviewObservationCompletionEvidence(authority v1.ProviderReviewObservationAuthority, o v1.ProviderReviewObservationResultOutcome, observedAt time.Time) error {
+	if authority.Provider != "github" {
+		return fmt.Errorf("provider cannot supply exact completion evidence")
+	}
+	if o.RequestState != v1.ProviderReviewObservationRequestMerged {
+		return fmt.Errorf("completion revalidation request is not merged")
+	}
+	if err := GitCommitSHA("merge_commit_sha", o.MergeCommitSHA); err != nil {
+		return err
+	}
+	if err := GitRef("target_branch", o.TargetBranch); err != nil {
+		return err
+	}
+	if o.TargetBranch != authority.ExpectedTargetBranch {
+		return fmt.Errorf("observed target branch does not match completion authority")
+	}
+	if err := GitCommitSHA("target_head_sha", o.TargetHeadSHA); err != nil {
+		return err
+	}
+	if o.MergedAt.IsZero() || o.ProviderUpdatedAt.IsZero() || o.MergedAt.After(o.ProviderUpdatedAt) || o.ProviderUpdatedAt.After(observedAt) {
+		return fmt.Errorf("provider merge timestamps are invalid")
+	}
+	if err := reviewerProviderAccountID(authority.Provider, o.MergedByProviderAccountID); err != nil {
+		return fmt.Errorf("merged-by provider account ID is invalid")
 	}
 	return nil
 }

@@ -11,16 +11,18 @@ import (
 )
 
 type fakeProviderReviewerAssignmentReconciler struct {
-	outcome v1.ProviderReviewerAssignmentReconciliationResultOutcome
-	calls   atomic.Int32
-	delay   time.Duration
+	outcome    v1.ProviderReviewerAssignmentReconciliationResultOutcome
+	calls      atomic.Int32
+	delay      time.Duration
+	credential atomic.Pointer[v1.ProviderCredential]
 }
 
 func (f *fakeProviderReviewerAssignmentReconciler) ReadyProviderReviewerAssignmentReconciliationInstallations() []v1.ProviderReviewerAssignmentReconciliationInstallationCapability {
 	return []v1.ProviderReviewerAssignmentReconciliationInstallationCapability{{InstallationID: "installation-1", Provider: "github", ProviderInstanceKey: "github.com"}}
 }
-func (f *fakeProviderReviewerAssignmentReconciler) ReconcileProviderReviewerAssignment(context.Context, v1.ProviderReviewerAssignmentReconciliationOperation) v1.ProviderReviewerAssignmentReconciliationResultOutcome {
+func (f *fakeProviderReviewerAssignmentReconciler) ReconcileProviderReviewerAssignment(_ context.Context, _ v1.ProviderReviewerAssignmentReconciliationOperation, credential *v1.ProviderCredential) v1.ProviderReviewerAssignmentReconciliationResultOutcome {
 	f.calls.Add(1)
+	f.credential.Store(credential)
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}

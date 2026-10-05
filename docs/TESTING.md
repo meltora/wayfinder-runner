@@ -12,15 +12,19 @@ go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 ./...
-sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh
+sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh
 sh packaging/tests/systemd_test.sh
-mkdir -p .release
-sed 's|__OUR_RUNNER_RELEASE_REPOSITORY__|example/app-runner|g' packaging/bootstrap.sh > .release/install.sh
-docker run --rm -v "$PWD:/work" -w /work goreleaser/goreleaser:v2.17.1 check
-docker run --rm -v "$PWD:/work" -w /work goreleaser/goreleaser:v2.17.1 release --snapshot --clean --skip=publish,sign,sbom
+sh packaging/tests/prepare_release_test.sh
+docker run --rm -v "$PWD:/work" -w /work \
+  -e OUR_RUNNER_RELEASE_REPOSITORY=example/app-runner -e OUR_RUNNER_CHANNEL=develop -e OUR_RUNNER_CONTROL_PLANE_URL=https://control.example.test \
+  goreleaser/goreleaser:v2.17.1 check
+docker run --rm -v "$PWD:/work" -w /work \
+  -e OUR_RUNNER_RELEASE_REPOSITORY=example/app-runner -e OUR_RUNNER_CHANNEL=develop -e OUR_RUNNER_CONTROL_PLANE_URL=https://control.example.test \
+  goreleaser/goreleaser:v2.17.1 release --snapshot --clean --skip=publish,sign,sbom
 sh packaging/tests/release_artifacts_test.sh
+./dist/our-runner-darwin-development_darwin_arm64_v8.0/our-runner version
 ```
 
 Integration tests use a mock control plane and fake provider process. They cover

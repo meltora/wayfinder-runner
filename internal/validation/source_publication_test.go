@@ -131,6 +131,9 @@ func TestSourcePublicationResultEventAllowsOnlyNormalizedOutcomes(t *testing.T) 
 		"permanent retry hint": func(value *v1.SourcePublicationResultEvent) {
 			value.Outcome = v1.SourcePublicationResultOutcome{Kind: v1.SourcePublicationPermanent, Code: v1.SourceControlPermissionDenied, RetryAfterMS: &retryAfter}
 		},
+		"unknown credential code": func(value *v1.SourcePublicationResultEvent) {
+			value.Outcome = v1.SourcePublicationResultOutcome{Kind: v1.SourcePublicationRetryable, Code: "provider_credential_unavailable"}
+		},
 		"raw error code": func(value *v1.SourcePublicationResultEvent) {
 			value.Outcome = v1.SourcePublicationResultOutcome{Kind: v1.SourcePublicationRetryable, Code: "access_token=secret"}
 		},

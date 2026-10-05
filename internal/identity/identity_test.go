@@ -291,3 +291,238 @@ func TestSaveIdentityRejectsMismatchedKeypair(t *testing.T) {
 		t.Fatal("mismatched identity saved")
 	}
 }
+
+type pathSnapshot struct {
+	mode    os.FileMode
+	modTime time.Time
+	size    int64
+}
+
+func snapshotTree(t *testing.T, root string) map[string]pathSnapshot {
+	t.Helper()
+	out := map[string]pathSnapshot{}
+	info, err := os.Lstat(root)
+	if os.IsNotExist(err) {
+		return out
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	out["."] = pathSnapshot{info.Mode(), info.ModTime(), info.Size()}
+	if !info.IsDir() {
+		return out
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		entryInfo, err := os.Lstat(filepath.Join(root, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[entry.Name()] = pathSnapshot{entryInfo.Mode(), entryInfo.ModTime(), entryInfo.Size()}
+	}
+	return out
+}
+
+func requireSameTree(t *testing.T, label string, before, after map[string]pathSnapshot) {
+	t.Helper()
+	if len(before) != len(after) {
+		t.Fatalf("%s: entries changed from %v to %v", label, before, after)
+	}
+	for name, want := range before {
+		got, ok := after[name]
+		if !ok || got.mode != want.mode || !got.modTime.Equal(want.modTime) || got.size != want.size {
+			t.Fatalf("%s: %s changed from %+v to %+v", label, name, want, got)
+		}
+	}
+}
+
+func writeTestBundle(t *testing.T, dir string) {
+	t.Helper()
+	ca, err := mockcp.NewTestCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, err := NewCSR(key, "runner-ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := ca.SignCSR(csr, "runner-ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewStore(dir).SaveIdentity(key, cert, ca.CertPEM); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type enrolledCase struct {
+	want    bool
+	prepare func(t *testing.T) (storeDir, watched string)
+}
+
+func enrolledCases() map[string]enrolledCase {
+	stateDir := func(t *testing.T) string {
+		t.Helper()
+		dir := filepath.Join(t.TempDir(), "state")
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+		return dir
+	}
+	setMode := func(t *testing.T, dir string, mode os.FileMode) {
+		t.Helper()
+		if err := os.Chmod(dir, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBundle := func(raw string) func(t *testing.T) (string, string) {
+		return func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			if err := os.WriteFile(filepath.Join(dir, bundleFileName), []byte(raw), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return dir, dir
+		}
+	}
+	return map[string]enrolledCase{
+		"enrolled bundle at 0755": {true, func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			writeTestBundle(t, dir)
+			setMode(t, dir, 0o755)
+			return dir, dir
+		}},
+		"enrolled legacy at 0750": {true, func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			if err := NewStore(dir).SaveCert([]byte("cert"), []byte("ca")); err != nil {
+				t.Fatal(err)
+			}
+			setMode(t, dir, 0o750)
+			return dir, dir
+		}},
+		"enrolled bundle at 0700": {true, func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			writeTestBundle(t, dir)
+			return dir, dir
+		}},
+		"enrolled legacy at 0700": {true, func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			if err := NewStore(dir).SaveCert([]byte("cert"), []byte("ca")); err != nil {
+				t.Fatal(err)
+			}
+			return dir, dir
+		}},
+		"missing directory": {false, func(t *testing.T) (string, string) {
+			dir := filepath.Join(t.TempDir(), "state")
+			return dir, dir
+		}},
+		"symlinked directory": {false, func(t *testing.T) (string, string) {
+			target := stateDir(t)
+			writeTestBundle(t, target)
+			setMode(t, target, 0o755)
+			link := filepath.Join(t.TempDir(), "link")
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			return link, target
+		}},
+		"not a directory": {false, func(t *testing.T) (string, string) {
+			path := filepath.Join(t.TempDir(), "state")
+			if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return path, path
+		}},
+		"relative enrolled directory": {false, func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			writeTestBundle(t, dir)
+			t.Chdir(filepath.Dir(dir))
+			return filepath.Base(dir), dir
+		}},
+		"identity file at 0644": {false, func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			writeTestBundle(t, dir)
+			if err := os.Chmod(filepath.Join(dir, bundleFileName), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return dir, dir
+		}},
+		"legacy certificate at 0644": {false, func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			if err := NewStore(dir).SaveCert([]byte("cert"), []byte("ca")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(dir, certFileName), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return dir, dir
+		}},
+		"legacy without ca": {false, func(t *testing.T) (string, string) {
+			dir := stateDir(t)
+			if err := os.WriteFile(filepath.Join(dir, certFileName), []byte("cert"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return dir, dir
+		}},
+		"empty bundle":       {false, writeBundle("")},
+		"malformed bundle":   {false, writeBundle(`{`)},
+		"incomplete bundle":  {false, writeBundle(`{"private_key_pem":"k","certificate_pem":"","ca_certificate_pem":"ca"}`)},
+		"unknown field":      {false, writeBundle(`{"private_key_pem":"k","certificate_pem":"c","ca_certificate_pem":"ca","extra":true}`)},
+		"bundle and trailer": {false, writeBundle(`{"private_key_pem":"k","certificate_pem":"c","ca_certificate_pem":"ca"} {}`)},
+	}
+}
+
+func TestEnrolledReadOnlyChangesNothing(t *testing.T) {
+	for name, tc := range enrolledCases() {
+		t.Run(name, func(t *testing.T) {
+			dir, watched := tc.prepare(t)
+			before := snapshotTree(t, watched)
+			if got := NewStore(dir).EnrolledReadOnly(); got != tc.want {
+				t.Fatalf("EnrolledReadOnly = %v, want %v", got, tc.want)
+			}
+			requireSameTree(t, "EnrolledReadOnly", before, snapshotTree(t, watched))
+		})
+	}
+}
+
+func TestEnrolledReadOnlyMatchesEnrolled(t *testing.T) {
+	for name, tc := range enrolledCases() {
+		t.Run(name, func(t *testing.T) {
+			readOnlyDir, _ := tc.prepare(t)
+			repairDir, _ := tc.prepare(t)
+			readOnly := NewStore(readOnlyDir).EnrolledReadOnly()
+			repaired := NewStore(repairDir).Enrolled()
+			if readOnly != repaired || repaired != tc.want {
+				t.Fatalf("EnrolledReadOnly = %v, Enrolled = %v, want %v", readOnly, repaired, tc.want)
+			}
+		})
+	}
+}
+
+func TestEnrolledStillTightensBroadDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestBundle(t, dir)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !NewStore(dir).Enrolled() {
+		t.Fatal("Enrolled = false for an enrolled 0755 directory")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("Enrolled left the directory at %o, want 700", info.Mode().Perm())
+	}
+}

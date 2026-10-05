@@ -3,9 +3,6 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -14,6 +11,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/agentpack"
@@ -22,16 +20,12 @@ import (
 
 func authenticatedArchiveFixture(t *testing.T) ([]byte, v1.AgentPackRef) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := t.TempDir()
-	if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte("# workflow"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	var archive bytes.Buffer
-	if _, err := agentpack.PackDir(source, "2.1.0", "codex", &archive, key); err != nil {
+	content := agentpack.ArchiveContent{
+		PackKey: "workflow-pack", Provider: "codex", Version: "2.1.0",
+		Files: map[string][]byte{"SKILL.md": []byte("# workflow")},
+	}
+	if _, err := agentpack.WriteCanonicalArchive(&archive, content); err != nil {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(archive.Bytes())
@@ -138,6 +132,97 @@ func TestMaterializeAgentPackClassifiesControlledFailureEvidence(t *testing.T) {
 				t.Fatalf("failed materialization created job view: %v", err)
 			}
 		})
+	}
+}
+
+func TestMaterializeAgentPackRefusesFormatOneArchiveBeforeCreatingJobView(t *testing.T) {
+	for _, name := range []string{"unsupported_format_v1_layout.tgz", "unsupported_format_v1_signature.tgz"} {
+		t.Run(name, func(t *testing.T) {
+			archive, err := os.ReadFile(filepath.Join("..", "agentpack", "testdata", "conformance", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				_, _ = writer.Write(archive)
+			}))
+			defer server.Close()
+			sum := sha256.Sum256(archive)
+			reference := v1.AgentPackRef{Version: "1.0.0", Digest: hex.EncodeToString(sum[:]), KeyID: "pack-key-1", URL: server.URL + "/pack.tgz"}
+			runner := &jobRunner{
+				d: &Daemon{
+					cfg:         config.Config{StateDir: t.TempDir(), Provider: "codex", ControlPlaneHTTPURL: server.URL, AllowedArtifactOrigins: []string{server.URL}},
+					controlHTTP: server.Client(),
+				},
+				ctx: context.Background(),
+			}
+			destination := filepath.Join(t.TempDir(), "job-view")
+			writableCleanupJobView(t, destination)
+			err = runner.materializeAgentPack(&reference, destination)
+			category, retryable, ok := agentPackMaterializationEvidence(err)
+			if !ok || category != v1.AgentPackFailureArchiveInvalid || retryable {
+				t.Fatalf("classification = %q %v %v: %v", category, retryable, ok, err)
+			}
+			if reason, ok := agentpack.ArchiveRejectionReasonOf(err); !ok || reason != agentpack.RejectUnsupportedFormat {
+				t.Fatalf("reason = %q %v: %v", reason, ok, err)
+			}
+			if _, err := os.Stat(destination); !os.IsNotExist(err) {
+				t.Fatalf("format 1 archive created a job view: %v", err)
+			}
+		})
+	}
+}
+
+func TestMaterializeAgentPackRefusesCachedArchiveThatDiffersFromTheSignedDigest(t *testing.T) {
+	archive, reference := authenticatedArchiveFixture(t)
+	var substitute bytes.Buffer
+	if _, err := agentpack.WriteCanonicalArchive(&substitute, agentpack.ArchiveContent{
+		PackKey: "workflow-pack", Provider: "codex", Version: reference.Version,
+		Files: map[string][]byte{"SKILL.md": []byte("# substituted")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := t.TempDir()
+	cacheRoot := filepath.Join(stateDir, "agent-pack-cache", "archives")
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write(archive)
+		writer.(http.Flusher).Flush()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			temporaries, _ := filepath.Glob(filepath.Join(cacheRoot, "."+reference.Digest+"-*.tmp"))
+			if len(temporaries) == 1 {
+				if info, err := os.Stat(temporaries[0]); err == nil && info.Size() == int64(len(archive)) {
+					if err := os.WriteFile(temporaries[0], substitute.Bytes(), 0o600); err != nil {
+						t.Errorf("substitute cached archive: %v", err)
+					}
+					return
+				}
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Error("cache temporary never received the archive")
+	}))
+	defer server.Close()
+	reference.URL = server.URL + "/pack.tgz"
+	runner := &jobRunner{
+		d: &Daemon{
+			cfg:         config.Config{StateDir: stateDir, Provider: "codex", ControlPlaneHTTPURL: server.URL, AllowedArtifactOrigins: []string{server.URL}},
+			controlHTTP: server.Client(),
+		},
+		ctx: context.Background(),
+	}
+	destination := filepath.Join(t.TempDir(), "job-view")
+	writableCleanupJobView(t, destination)
+	err := runner.materializeAgentPack(&reference, destination)
+	cached, readErr := os.ReadFile(filepath.Join(cacheRoot, reference.Digest+".tgz"))
+	if readErr != nil || !bytes.Equal(cached, substitute.Bytes()) {
+		t.Fatalf("cache does not hold the substituted archive: %v", readErr)
+	}
+	category, retryable, ok := agentPackMaterializationEvidence(err)
+	if !ok || category != v1.AgentPackFailureDigestMismatch || retryable {
+		t.Fatalf("classification = %q %v %v: %v", category, retryable, ok, err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("archive that differs from the signed digest created a job view: %v", err)
 	}
 }
 

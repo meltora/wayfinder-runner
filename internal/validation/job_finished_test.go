@@ -84,6 +84,13 @@ func TestJobFinishedEventRejectsInvalidAuthorityAndFailureCombinations(t *testin
 			event.State, event.FailureCode = v1.JobFinishedFailed, v1.JobFailureAgentExit
 			event.FailureCategory, event.Retryable = v1.AgentPackFailureDownloadUnavailable, boolPointer(true)
 		},
+		"unknown credential failure code": func(event *v1.JobFinishedEvent) {
+			event.State, event.FailureCode = v1.JobFinishedFailed, "provider_credential_unavailable"
+		},
+		"retryable build finalization": func(event *v1.JobFinishedEvent) {
+			event.State, event.FailureCode = v1.JobFinishedFailed, v1.JobFailureBuildFinalization
+			event.Retryable = boolPointer(true)
+		},
 		"message": func(event *v1.JobFinishedEvent) {
 			event.State, event.FailureCode, event.FailureMessage = v1.JobFinishedFailed, v1.JobFailureAgentExit, strings.Repeat("x", 513)
 		},

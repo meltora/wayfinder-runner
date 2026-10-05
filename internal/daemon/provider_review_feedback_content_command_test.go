@@ -11,16 +11,18 @@ import (
 )
 
 type fakeProviderReviewFeedbackContentReader struct {
-	calls   atomic.Int32
-	delay   time.Duration
-	outcome v1.ProviderReviewFeedbackContentResultOutcome
+	calls      atomic.Int32
+	delay      time.Duration
+	outcome    v1.ProviderReviewFeedbackContentResultOutcome
+	credential atomic.Pointer[v1.ProviderCredential]
 }
 
 func (f *fakeProviderReviewFeedbackContentReader) ReadyProviderReviewFeedbackContentInstallations() []v1.ProviderReviewFeedbackContentInstallationCapability {
 	return []v1.ProviderReviewFeedbackContentInstallationCapability{{InstallationID: "installation-1", Provider: "github", ProviderInstanceKey: "github.com"}}
 }
-func (f *fakeProviderReviewFeedbackContentReader) FetchProviderReviewFeedbackContent(context.Context, v1.ProviderReviewFeedbackContentOperation) v1.ProviderReviewFeedbackContentResultOutcome {
+func (f *fakeProviderReviewFeedbackContentReader) FetchProviderReviewFeedbackContent(_ context.Context, _ v1.ProviderReviewFeedbackContentOperation, credential *v1.ProviderCredential) v1.ProviderReviewFeedbackContentResultOutcome {
 	f.calls.Add(1)
+	f.credential.Store(credential)
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}

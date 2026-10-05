@@ -1,0 +1,926 @@
+{
+  "format": 1,
+  "cases": [
+    {
+      "name": "golden",
+      "file": "golden.tgz",
+      "description": "golden archive built from testdata/conformance/source",
+      "valid": true,
+      "digest": "a0941e4ea443cb83a16ac465891ae2f9292196fc7d17fa32964828dc8ea46970",
+      "packKey": "fixture",
+      "provider": "claude-code",
+      "version": "1.0.0",
+      "files": {
+        ".claude-plugin/plugin.json": "9f0365a05779e7b06e745ebfd485975949c9bff4f114d4decad3b954a790ae2d",
+        "WORKFLOW.md": "4decf55aace4120a171126cd9c9d4f6fe0be3bdfc08a9cd39043d0b671867643",
+        "data/block.txt": "8ef07fe5c953799f35273a89e2d043fb035743740af5d903ebff19a82547f4d6",
+        "reference/conformance-fixture-long-path-segment-one/conformance-fixture-long-path-segment-two/nested-file-name.md": "06e45549ab4f73d94d80df02a701f40a4f1438c4b915707406a95ec3e4ce8822",
+        "skills/job-context/SKILL.md": "eee0db06d7719efbe124a1ece100566ce5fefa16543a4fcb8303597508838eec"
+      }
+    },
+    {
+      "name": "valid_xfl_fastest",
+      "file": "valid_xfl_fastest.tgz",
+      "description": "same tar stream compressed at the fastest level (XFL=4)",
+      "valid": true,
+      "digest": "393c0599ca91edeb68b7a34e1e416decf893bc60fed8ffe380a961655ea227b5",
+      "packKey": "fixture",
+      "provider": "claude-code",
+      "version": "1.0.0",
+      "files": {
+        ".claude-plugin/plugin.json": "9f0365a05779e7b06e745ebfd485975949c9bff4f114d4decad3b954a790ae2d",
+        "WORKFLOW.md": "4decf55aace4120a171126cd9c9d4f6fe0be3bdfc08a9cd39043d0b671867643",
+        "data/block.txt": "8ef07fe5c953799f35273a89e2d043fb035743740af5d903ebff19a82547f4d6",
+        "reference/conformance-fixture-long-path-segment-one/conformance-fixture-long-path-segment-two/nested-file-name.md": "06e45549ab4f73d94d80df02a701f40a4f1438c4b915707406a95ec3e4ce8822",
+        "skills/job-context/SKILL.md": "eee0db06d7719efbe124a1ece100566ce5fefa16543a4fcb8303597508838eec"
+      }
+    },
+    {
+      "name": "valid_xfl_default",
+      "file": "valid_xfl_default.tgz",
+      "description": "same tar stream compressed at the default level (XFL=0)",
+      "valid": true,
+      "digest": "e4443ac212fbe8d396b8e04af55267f3f743092746e438095fd4a5cdb67a8e86",
+      "packKey": "fixture",
+      "provider": "claude-code",
+      "version": "1.0.0",
+      "files": {
+        ".claude-plugin/plugin.json": "9f0365a05779e7b06e745ebfd485975949c9bff4f114d4decad3b954a790ae2d",
+        "WORKFLOW.md": "4decf55aace4120a171126cd9c9d4f6fe0be3bdfc08a9cd39043d0b671867643",
+        "data/block.txt": "8ef07fe5c953799f35273a89e2d043fb035743740af5d903ebff19a82547f4d6",
+        "reference/conformance-fixture-long-path-segment-one/conformance-fixture-long-path-segment-two/nested-file-name.md": "06e45549ab4f73d94d80df02a701f40a4f1438c4b915707406a95ec3e4ce8822",
+        "skills/job-context/SKILL.md": "eee0db06d7719efbe124a1ece100566ce5fefa16543a4fcb8303597508838eec"
+      }
+    },
+    {
+      "name": "valid_os_unix",
+      "file": "valid_os_unix.tgz",
+      "description": "golden archive with gzip OS=3",
+      "valid": true,
+      "digest": "579ab866a955197977239dbf01b3d1487061f0a4c577e19fc1562001b529755a",
+      "packKey": "fixture",
+      "provider": "claude-code",
+      "version": "1.0.0",
+      "files": {
+        ".claude-plugin/plugin.json": "9f0365a05779e7b06e745ebfd485975949c9bff4f114d4decad3b954a790ae2d",
+        "WORKFLOW.md": "4decf55aace4120a171126cd9c9d4f6fe0be3bdfc08a9cd39043d0b671867643",
+        "data/block.txt": "8ef07fe5c953799f35273a89e2d043fb035743740af5d903ebff19a82547f4d6",
+        "reference/conformance-fixture-long-path-segment-one/conformance-fixture-long-path-segment-two/nested-file-name.md": "06e45549ab4f73d94d80df02a701f40a4f1438c4b915707406a95ec3e4ce8822",
+        "skills/job-context/SKILL.md": "eee0db06d7719efbe124a1ece100566ce5fefa16543a4fcb8303597508838eec"
+      }
+    },
+    {
+      "name": "valid_path_constructor",
+      "file": "valid_path_constructor.tgz",
+      "description": "object member names as file names",
+      "valid": true,
+      "digest": "a2750b2d13c2c0a1ab1ae6b0f3396672573c2840711ee1b1c442afde463e51f8",
+      "packKey": "fixture",
+      "provider": "claude-code",
+      "version": "1.0.0",
+      "files": {
+        ".claude-plugin/plugin.json": "9f0365a05779e7b06e745ebfd485975949c9bff4f114d4decad3b954a790ae2d",
+        "WORKFLOW.md": "4decf55aace4120a171126cd9c9d4f6fe0be3bdfc08a9cd39043d0b671867643",
+        "constructor": "a3a5e715f0cc574a73c3f9bebb6bc24f32ffd5b67b387244c2c909da779a1478",
+        "data/block.txt": "8ef07fe5c953799f35273a89e2d043fb035743740af5d903ebff19a82547f4d6",
+        "hasOwnProperty": "91ee5e9f42ba3d34e414443b36a27b797a56a47aad6bb1e4c1769e69c77ce0ca",
+        "reference/conformance-fixture-long-path-segment-one/conformance-fixture-long-path-segment-two/nested-file-name.md": "06e45549ab4f73d94d80df02a701f40a4f1438c4b915707406a95ec3e4ce8822",
+        "skills/job-context/SKILL.md": "eee0db06d7719efbe124a1ece100566ce5fefa16543a4fcb8303597508838eec",
+        "toString": "fe8edeeb98cc6d3b93cf2d57000254b84bd9eba34b4df7ce4b87db8b937b7703"
+      }
+    },
+    {
+      "name": "valid_path_prototype",
+      "file": "valid_path_prototype.tgz",
+      "description": "prototype and constructor as directory and nested names",
+      "valid": true,
+      "digest": "b104b6dcf57a5d99f9bcfe5faaf23a0880347d63890bd3577bfe9ba00ad18deb",
+      "packKey": "fixture",
+      "provider": "claude-code",
+      "version": "1.0.0",
+      "files": {
+        ".claude-plugin/plugin.json": "9f0365a05779e7b06e745ebfd485975949c9bff4f114d4decad3b954a790ae2d",
+        "WORKFLOW.md": "4decf55aace4120a171126cd9c9d4f6fe0be3bdfc08a9cd39043d0b671867643",
+        "data/block.txt": "8ef07fe5c953799f35273a89e2d043fb035743740af5d903ebff19a82547f4d6",
+        "prototype/constructor.md": "fd6641673e7f3bf6e80e4bc5401fcb2821a1e117206c8e1c65cef23a58dc37ff",
+        "reference/conformance-fixture-long-path-segment-one/conformance-fixture-long-path-segment-two/nested-file-name.md": "06e45549ab4f73d94d80df02a701f40a4f1438c4b915707406a95ec3e4ce8822",
+        "skills/job-context/SKILL.md": "eee0db06d7719efbe124a1ece100566ce5fefa16543a4fcb8303597508838eec",
+        "skills/valueOf/__proto__x.md": "73324e1ab1db72ee9eb4fdf1c90a586d67e00ab58330d1cbfea26ecd0a77fa4d"
+      }
+    },
+    {
+      "name": "valid_path_resembles_reserved",
+      "file": "valid_path_resembles_reserved.tgz",
+      "description": "names that only resemble reserved ones after ASCII case folding",
+      "valid": true,
+      "digest": "cdf818f6ee706de5c70c0acf3313df5e7c0d15cff614284b014760a2b57c57b6",
+      "packKey": "fixture",
+      "provider": "claude-code",
+      "version": "1.0.0",
+      "files": {
+        ".GITIGNORE": "768c71d785bf6bbbf8c4d6af6582041f2659027140a962cd0c55b11eddfd5e3d",
+        ".claude-plugin/plugin.json": "9f0365a05779e7b06e745ebfd485975949c9bff4f114d4decad3b954a790ae2d",
+        ".github/workflow.yml": "cf945b5236e101dbe0471d5200f28b1ae64f21c1f35bf55fcf40cd0fe42cd8e7",
+        "AGENT-PACK.JSON.md": "01a60e35df88d8b49546cb3f8f4ba4f406870f9b8e1f394c9d48ab73548d748d",
+        "WORKFLOW.md": "4decf55aace4120a171126cd9c9d4f6fe0be3bdfc08a9cd39043d0b671867643",
+        "__PROTO__x.md": "fd6641673e7f3bf6e80e4bc5401fcb2821a1e117206c8e1c65cef23a58dc37ff",
+        "a.DS_Store": "8d74beec1be996322ad76813bafb92d40839895d6dd7ee808b17ca201eac98be",
+        "data/block.txt": "8ef07fe5c953799f35273a89e2d043fb035743740af5d903ebff19a82547f4d6",
+        "reference/conformance-fixture-long-path-segment-one/conformance-fixture-long-path-segment-two/nested-file-name.md": "06e45549ab4f73d94d80df02a701f40a4f1438c4b915707406a95ec3e4ce8822",
+        "skills/job-context/SKILL.md": "eee0db06d7719efbe124a1ece100566ce5fefa16543a4fcb8303597508838eec",
+        "x._y": "73cb3858a687a8494ca3323053016282f3dad39d42cf62ca4e79dda2aac7d9ac"
+      }
+    },
+    {
+      "name": "gzip_header_magic",
+      "file": "gzip_header_magic.tgz",
+      "description": "ID1 is not 0x1f",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_header_method",
+      "file": "gzip_header_method.tgz",
+      "description": "CM is not deflate",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_header_flags_name",
+      "file": "gzip_header_flags_name.tgz",
+      "description": "FLG has FNAME with a stored name",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_header_flags_text",
+      "file": "gzip_header_flags_text.tgz",
+      "description": "FLG has FTEXT",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_header_mtime",
+      "file": "gzip_header_mtime.tgz",
+      "description": "MTIME is not zero",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_header_xfl",
+      "file": "gzip_header_xfl.tgz",
+      "description": "XFL is not 0, 2 or 4",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_header_truncated",
+      "file": "gzip_header_truncated.tgz",
+      "description": "fewer than 10 bytes",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_deflate_reserved_block",
+      "file": "gzip_deflate_reserved_block.tgz",
+      "description": "deflate block type 3",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_deflate_truncated",
+      "file": "gzip_deflate_truncated.tgz",
+      "description": "deflate stream cut in the middle",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_crc_mismatch",
+      "file": "gzip_crc_mismatch.tgz",
+      "description": "CRC32 does not match",
+      "valid": false,
+      "reason": "gzip_trailing"
+    },
+    {
+      "name": "gzip_isize_mismatch",
+      "file": "gzip_isize_mismatch.tgz",
+      "description": "ISIZE does not match",
+      "valid": false,
+      "reason": "gzip_trailing"
+    },
+    {
+      "name": "gzip_trailer_truncated",
+      "file": "gzip_trailer_truncated.tgz",
+      "description": "trailer shorter than 8 bytes",
+      "valid": false,
+      "reason": "gzip_trailing"
+    },
+    {
+      "name": "gzip_trailing_garbage",
+      "file": "gzip_trailing_garbage.tgz",
+      "description": "bytes after the trailer",
+      "valid": false,
+      "reason": "gzip_trailing"
+    },
+    {
+      "name": "gzip_trailing_zero_padding",
+      "file": "gzip_trailing_zero_padding.tgz",
+      "description": "zero padding after the trailer",
+      "valid": false,
+      "reason": "gzip_trailing"
+    },
+    {
+      "name": "gzip_header_deflate_error_at_cap",
+      "file": "gzip_header_deflate_error_at_cap.tgz",
+      "description": "reserved deflate block after exactly the decompressed cap",
+      "valid": false,
+      "reason": "gzip_header"
+    },
+    {
+      "name": "gzip_members_two",
+      "file": "gzip_members_two.tgz",
+      "description": "a second gzip member follows",
+      "valid": false,
+      "reason": "gzip_members"
+    },
+    {
+      "name": "gzip_members_empty_first",
+      "file": "gzip_members_empty_first.tgz",
+      "description": "an empty first member precedes the archive",
+      "valid": false,
+      "reason": "gzip_members"
+    },
+    {
+      "name": "tar_header_checksum",
+      "file": "tar_header_checksum.tgz",
+      "description": "header checksum is wrong",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_magic_gnu",
+      "file": "tar_header_magic_gnu.tgz",
+      "description": "GNU magic",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_magic_v7",
+      "file": "tar_header_magic_v7.tgz",
+      "description": "no magic (v7 header)",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_version",
+      "file": "tar_header_version.tgz",
+      "description": "USTAR version is not 00",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_mode_0644",
+      "file": "tar_header_mode_0644.tgz",
+      "description": "mode is 0644",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_mode_setuid",
+      "file": "tar_header_mode_setuid.tgz",
+      "description": "mode has set-user-ID",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_uid",
+      "file": "tar_header_uid.tgz",
+      "description": "uid is not zero",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_gid",
+      "file": "tar_header_gid.tgz",
+      "description": "gid is not zero",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_mtime",
+      "file": "tar_header_mtime.tgz",
+      "description": "mtime is not zero",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_uname",
+      "file": "tar_header_uname.tgz",
+      "description": "uname is set",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_gname",
+      "file": "tar_header_gname.tgz",
+      "description": "gname is set",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_devmajor",
+      "file": "tar_header_devmajor.tgz",
+      "description": "devmajor is not zero",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_linkname",
+      "file": "tar_header_linkname.tgz",
+      "description": "linkname is set",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_name_garbage",
+      "file": "tar_header_name_garbage.tgz",
+      "description": "bytes after the name terminator",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_pad_garbage",
+      "file": "tar_header_pad_garbage.tgz",
+      "description": "header padding bytes are set",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_size_spaces",
+      "file": "tar_header_size_spaces.tgz",
+      "description": "size field padded with spaces",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_split_noncanonical",
+      "file": "tar_header_split_noncanonical.tgz",
+      "description": "short path stored with a prefix",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_header_data_padding",
+      "file": "tar_header_data_padding.tgz",
+      "description": "entry data padding is not zero",
+      "valid": false,
+      "reason": "tar_header"
+    },
+    {
+      "name": "tar_type_rega",
+      "file": "tar_type_rega.tgz",
+      "description": "typeflag NUL (old regular file)",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_type_hardlink",
+      "file": "tar_type_hardlink.tgz",
+      "description": "typeflag 1",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_type_symlink",
+      "file": "tar_type_symlink.tgz",
+      "description": "typeflag 2",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_type_directory",
+      "file": "tar_type_directory.tgz",
+      "description": "typeflag 5",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_type_fifo",
+      "file": "tar_type_fifo.tgz",
+      "description": "typeflag 6",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_type_pax",
+      "file": "tar_type_pax.tgz",
+      "description": "PAX extended header",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_type_pax_global",
+      "file": "tar_type_pax_global.tgz",
+      "description": "PAX global header",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_type_gnu_longname",
+      "file": "tar_type_gnu_longname.tgz",
+      "description": "GNU long name",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_type_manifest",
+      "file": "tar_type_manifest.tgz",
+      "description": "manifest entry is a directory",
+      "valid": false,
+      "reason": "tar_type"
+    },
+    {
+      "name": "tar_path_absolute",
+      "file": "tar_path_absolute.tgz",
+      "description": "leading slash",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_dotdot",
+      "file": "tar_path_dotdot.tgz",
+      "description": "parent segment",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_dot",
+      "file": "tar_path_dot.tgz",
+      "description": "current-directory segment",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_empty_segment",
+      "file": "tar_path_empty_segment.tgz",
+      "description": "empty segment",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_trailing_slash",
+      "file": "tar_path_trailing_slash.tgz",
+      "description": "trailing slash",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_space",
+      "file": "tar_path_space.tgz",
+      "description": "space outside the charset",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_non_ascii",
+      "file": "tar_path_non_ascii.tgz",
+      "description": "non-ASCII byte",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_backslash",
+      "file": "tar_path_backslash.tgz",
+      "description": "backslash",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_depth",
+      "file": "tar_path_depth.tgz",
+      "description": "16 slashes",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_reserved_signature",
+      "file": "tar_path_reserved_signature.tgz",
+      "description": "legacy signature as a file",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_reserved_manifest",
+      "file": "tar_path_reserved_manifest.tgz",
+      "description": "a second manifest entry",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_proto_file",
+      "file": "tar_path_proto_file.tgz",
+      "description": "a listed file named __proto__",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_proto_dir",
+      "file": "tar_path_proto_dir.tgz",
+      "description": "a listed file under a __proto__ directory",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_nested_manifest",
+      "file": "tar_path_nested_manifest.tgz",
+      "description": "a listed nested agent-pack.json",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_folded_nested_manifest",
+      "file": "tar_path_folded_nested_manifest.tgz",
+      "description": "a listed sub/AGENT-PACK.JSON (ASCII case fold)",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_folded_root_manifest",
+      "file": "tar_path_folded_root_manifest.tgz",
+      "description": "a listed root AGENT-PACK.JSON (ASCII case fold)",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_folded_proto_file",
+      "file": "tar_path_folded_proto_file.tgz",
+      "description": "a listed file named __PROTO__ (ASCII case fold)",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_folded_proto_dir",
+      "file": "tar_path_folded_proto_dir.tgz",
+      "description": "a listed file under a __Proto__ directory (ASCII case fold)",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_git_dir",
+      "file": "tar_path_git_dir.tgz",
+      "description": "a listed file under a .git directory",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_folded_git_dir",
+      "file": "tar_path_folded_git_dir.tgz",
+      "description": "a listed file under a .GIT directory (ASCII case fold)",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_os_metadata_ds_store",
+      "file": "tar_path_os_metadata_ds_store.tgz",
+      "description": "a listed .DS_Store",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_folded_os_metadata_ds_store",
+      "file": "tar_path_folded_os_metadata_ds_store.tgz",
+      "description": "a listed .ds_store (ASCII case fold)",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_folded_os_metadata_thumbs",
+      "file": "tar_path_folded_os_metadata_thumbs.tgz",
+      "description": "a listed THUMBS.DB (ASCII case fold)",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_path_os_metadata_apple_double",
+      "file": "tar_path_os_metadata_apple_double.tgz",
+      "description": "a listed ._ AppleDouble file",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_order_manifest_not_first",
+      "file": "tar_order_manifest_not_first.tgz",
+      "description": "a file precedes the manifest",
+      "valid": false,
+      "reason": "tar_order"
+    },
+    {
+      "name": "tar_order_descending",
+      "file": "tar_order_descending.tgz",
+      "description": "files are not ascending",
+      "valid": false,
+      "reason": "tar_order"
+    },
+    {
+      "name": "tar_order_duplicate",
+      "file": "tar_order_duplicate.tgz",
+      "description": "a file appears twice",
+      "valid": false,
+      "reason": "tar_order"
+    },
+    {
+      "name": "tar_order_empty",
+      "file": "tar_order_empty.tgz",
+      "description": "only the end-of-archive blocks",
+      "valid": false,
+      "reason": "tar_order"
+    },
+    {
+      "name": "tar_collision_case",
+      "file": "tar_collision_case.tgz",
+      "description": "two paths differ only in case",
+      "valid": false,
+      "reason": "tar_collision"
+    },
+    {
+      "name": "tar_collision_file_directory",
+      "file": "tar_collision_file_directory.tgz",
+      "description": "a path is both a file and a directory",
+      "valid": false,
+      "reason": "tar_collision"
+    },
+    {
+      "name": "tar_collision_manifest_case",
+      "file": "tar_collision_manifest_case.tgz",
+      "description": "a file folds onto the manifest name, a reserved name under ASCII case folding",
+      "valid": false,
+      "reason": "tar_path"
+    },
+    {
+      "name": "tar_end_missing",
+      "file": "tar_end_missing.tgz",
+      "description": "no end-of-archive blocks",
+      "valid": false,
+      "reason": "tar_end"
+    },
+    {
+      "name": "tar_end_one_block",
+      "file": "tar_end_one_block.tgz",
+      "description": "one end-of-archive block",
+      "valid": false,
+      "reason": "tar_end"
+    },
+    {
+      "name": "tar_end_three_blocks",
+      "file": "tar_end_three_blocks.tgz",
+      "description": "three end-of-archive blocks",
+      "valid": false,
+      "reason": "tar_end"
+    },
+    {
+      "name": "tar_end_trailing_data",
+      "file": "tar_end_trailing_data.tgz",
+      "description": "data after the end-of-archive blocks",
+      "valid": false,
+      "reason": "tar_end"
+    },
+    {
+      "name": "tar_end_truncated_header",
+      "file": "tar_end_truncated_header.tgz",
+      "description": "stream ends inside a header",
+      "valid": false,
+      "reason": "tar_end"
+    },
+    {
+      "name": "tar_end_truncated_data",
+      "file": "tar_end_truncated_data.tgz",
+      "description": "stream ends inside entry data",
+      "valid": false,
+      "reason": "tar_end"
+    },
+    {
+      "name": "unsupported_format_v1_layout",
+      "file": "unsupported_format_v1_layout.tgz",
+      "description": "format 1 layout with pack.yaml first",
+      "valid": false,
+      "reason": "unsupported_format"
+    },
+    {
+      "name": "unsupported_format_v1_signature",
+      "file": "unsupported_format_v1_signature.tgz",
+      "description": "format 1 layout with signature first",
+      "valid": false,
+      "reason": "unsupported_format"
+    },
+    {
+      "name": "unsupported_format_manifest_3",
+      "file": "unsupported_format_manifest_3.tgz",
+      "description": "manifest format 3",
+      "valid": false,
+      "reason": "unsupported_format"
+    },
+    {
+      "name": "manifest_nesting_deep_format3",
+      "file": "manifest_nesting_deep_format3.tgz",
+      "description": "format 3 with nesting deeper than the JSON decoder limit",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_nesting_over_bound",
+      "file": "manifest_nesting_over_bound.tgz",
+      "description": "nesting one level over the manifest bound",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_whitespace",
+      "file": "manifest_whitespace.tgz",
+      "description": "space after a colon",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_trailing_newline",
+      "file": "manifest_trailing_newline.tgz",
+      "description": "trailing newline",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_bom",
+      "file": "manifest_bom.tgz",
+      "description": "UTF-8 byte order mark",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_key_order",
+      "file": "manifest_key_order.tgz",
+      "description": "keys not sorted",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_file_order",
+      "file": "manifest_file_order.tgz",
+      "description": "file keys not sorted",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_unknown_key",
+      "file": "manifest_unknown_key.tgz",
+      "description": "unknown key",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_duplicate_key",
+      "file": "manifest_duplicate_key.tgz",
+      "description": "duplicate key",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_escaped_key",
+      "file": "manifest_escaped_key.tgz",
+      "description": "escaped key spelling",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_uppercase_hex",
+      "file": "manifest_uppercase_hex.tgz",
+      "description": "uppercase digest hex",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_provider_unknown",
+      "file": "manifest_provider_unknown.tgz",
+      "description": "provider outside the reader set",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_version_prerelease",
+      "file": "manifest_version_prerelease.tgz",
+      "description": "prerelease version",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_pack_key_invalid",
+      "file": "manifest_pack_key_invalid.tgz",
+      "description": "pack key is not kebab-case",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_format_string",
+      "file": "manifest_format_string.tgz",
+      "description": "format is a string",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_format_missing",
+      "file": "manifest_format_missing.tgz",
+      "description": "format key missing",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_empty_files",
+      "file": "manifest_empty_files.tgz",
+      "description": "files object is empty",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_not_json",
+      "file": "manifest_not_json.tgz",
+      "description": "manifest is not JSON",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_invalid_utf8",
+      "file": "manifest_invalid_utf8.tgz",
+      "description": "manifest has invalid UTF-8",
+      "valid": false,
+      "reason": "manifest_noncanonical"
+    },
+    {
+      "name": "manifest_missing_file",
+      "file": "manifest_missing_file.tgz",
+      "description": "manifest lists a file the archive lacks",
+      "valid": false,
+      "reason": "manifest_mismatch"
+    },
+    {
+      "name": "manifest_extra_file",
+      "file": "manifest_extra_file.tgz",
+      "description": "archive holds an unlisted file",
+      "valid": false,
+      "reason": "manifest_mismatch"
+    },
+    {
+      "name": "manifest_digest_mismatch",
+      "file": "manifest_digest_mismatch.tgz",
+      "description": "file bytes differ from the listed digest",
+      "valid": false,
+      "reason": "manifest_mismatch"
+    },
+    {
+      "name": "limits_decompression_bomb",
+      "file": "limits_decompression_bomb.tgz",
+      "description": "inflates beyond the decompressed cap",
+      "valid": false,
+      "reason": "limits"
+    },
+    {
+      "name": "limits_deflate_error_after_cap",
+      "file": "limits_deflate_error_after_cap.tgz",
+      "description": "reserved deflate block one byte after the decompressed cap",
+      "valid": false,
+      "reason": "limits"
+    },
+    {
+      "name": "limits_deflate_error_within_chunk",
+      "file": "limits_deflate_error_within_chunk.tgz",
+      "description": "reserved deflate block 4096 bytes after the decompressed cap",
+      "valid": false,
+      "reason": "limits"
+    },
+    {
+      "name": "limits_file_size",
+      "file": "limits_file_size.tgz",
+      "description": "entry larger than 1 MiB",
+      "valid": false,
+      "reason": "limits"
+    },
+    {
+      "name": "limits_manifest_size",
+      "file": "limits_manifest_size.tgz",
+      "description": "manifest larger than 1 MiB",
+      "valid": false,
+      "reason": "limits"
+    },
+    {
+      "name": "limits_file_count",
+      "file": "limits_file_count.tgz",
+      "description": "1025 files",
+      "valid": false,
+      "reason": "limits"
+    },
+    {
+      "name": "limits_total_size",
+      "file": "limits_total_size.tgz",
+      "description": "files total more than 64 MiB",
+      "valid": false,
+      "reason": "limits"
+    }
+  ]
+}

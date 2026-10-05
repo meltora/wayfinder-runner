@@ -253,7 +253,7 @@ func TestJobContextContainsOnlyRunnerDerivedAuthorityAndSafeBoundaries(t *testin
 
 func TestPlanAndRevisionFlow(t *testing.T) {
 	jr, cap := testJobRunner(t)
-	jr.job.Kind = v1.JobKindPlan
+	configurePlanPublicationRepositories(t, jr)
 	args := planPublicationArgs(t, "plan-1", "Initial reviewed plan", "Initial behavior", "")
 	res, err := call(t, jr, "platform_publish_plan", args)
 	if err != nil {
@@ -306,7 +306,7 @@ func TestPlanAndRevisionFlow(t *testing.T) {
 
 func TestPlanRevisionMustUseReviewedBaseRevisionIdentity(t *testing.T) {
 	jr, cap := testJobRunner(t)
-	jr.job.Kind = v1.JobKindPlan
+	configurePlanPublicationRepositories(t, jr)
 	jr.job.PlanRevisionContext = validDaemonRevisionContext()
 
 	if _, err := call(t, jr, "platform_publish_plan", planPublicationArgs(t, "initial-invalid", "initial", "Changed", "")); err == nil {
@@ -339,13 +339,15 @@ func TestPendingPlanPublicationRecoversAcrossEveryCrashWindow(t *testing.T) {
 	for _, publishBeforeCrash := range []bool{false, true} {
 		t.Run(fmt.Sprintf("event_published_%v", publishBeforeCrash), func(t *testing.T) {
 			jr, captured := testJobRunner(t)
-			jr.job.Kind = v1.JobKindPlan
+			configurePlanPublicationRepositories(t, jr)
+			authority := planAgentRunAuthority("agent-run-recovery")
+			jr.job.AgentRunAuthority = &authority
 			args := planPublicationArgs(t, "plan-crash", "Crash-safe plan", "Recovered behavior", "")
 			raw := map[string]any{}
 			if err := json.Unmarshal([]byte(args), &raw); err != nil {
 				t.Fatal(err)
 			}
-			claim, err := jr.preparePlanPublicationClaim(publishPlanTool, "plan-crash", raw)
+			claim, err := jr.preparePlanPublicationClaim(context.Background(), publishPlanTool, "plan-crash", raw)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -372,6 +374,8 @@ func TestPendingPlanPublicationRecoversAcrossEveryCrashWindow(t *testing.T) {
 			}
 			if events := captured.byKind("plan_published"); len(events) != 1 {
 				t.Fatalf("logical plan events = %d, want 1", len(events))
+			} else if events[0]["agent_run_authority"] != authority {
+				t.Fatalf("recovered plan authority = %#v", events[0]["agent_run_authority"])
 			}
 		})
 	}
@@ -379,7 +383,7 @@ func TestPendingPlanPublicationRecoversAcrossEveryCrashWindow(t *testing.T) {
 
 func TestPlanPublicationFailsClosedOnStableEventRecordCollision(t *testing.T) {
 	jr, _ := testJobRunner(t)
-	jr.job.Kind = v1.JobKindPlan
+	configurePlanPublicationRepositories(t, jr)
 	key := "plan-collision"
 	eventID := planPublicationEventID(jr.job.AttemptID, jr.job.ManifestDigest, publishPlanTool, key)
 	if err := jr.d.journal.Append(context.Background(), journal.Record{
@@ -394,7 +398,7 @@ func TestPlanPublicationFailsClosedOnStableEventRecordCollision(t *testing.T) {
 
 func TestPlanPublicationPreservesFencingTokenAboveFloatPrecision(t *testing.T) {
 	jr, captured := testJobRunner(t)
-	jr.job.Kind = v1.JobKindPlan
+	configurePlanPublicationRepositories(t, jr)
 	jr.job.FencingToken = (1 << 53) + 1
 	jr.d.leases.Release(jr.job.AttemptID)
 	if err := jr.d.leases.Acquire(lease.Lease{

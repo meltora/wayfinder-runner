@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/journal"
+	"github.com/example/app-runner/internal/repo"
 	"github.com/example/app-runner/internal/validation"
 )
 
@@ -37,18 +40,20 @@ type planPublicationIntent struct {
 }
 
 type planPublishedEvent struct {
-	Kind           string         `json:"kind"`
-	ManifestKind   v1.JobKind     `json:"manifest_kind"`
-	LeaseID        string         `json:"lease_id"`
-	JobID          string         `json:"job_id"`
-	AttemptID      string         `json:"attempt_id"`
-	ManifestID     string         `json:"manifest_id"`
-	ManifestDigest string         `json:"manifest_digest"`
-	FencingToken   uint64         `json:"fencing_token"`
-	ObservedAt     time.Time      `json:"observed_at"`
-	BaseRevisionID string         `json:"base_revision_id,omitempty"`
-	Plan           v1.PlanContent `json:"plan"`
-	ChangeSummary  string         `json:"change_summary"`
+	Kind              string                       `json:"kind"`
+	ManifestKind      v1.JobKind                   `json:"manifest_kind"`
+	LeaseID           string                       `json:"lease_id"`
+	JobID             string                       `json:"job_id"`
+	AttemptID         string                       `json:"attempt_id"`
+	ManifestID        string                       `json:"manifest_id"`
+	ManifestDigest    string                       `json:"manifest_digest"`
+	FencingToken      uint64                       `json:"fencing_token"`
+	ObservedAt        time.Time                    `json:"observed_at"`
+	AgentRunAuthority *v1.AgentRunAuthority        `json:"agent_run_authority,omitempty"`
+	Repositories      []v1.PlanRepositoryAuthority `json:"repositories"`
+	BaseRevisionID    string                       `json:"base_revision_id,omitempty"`
+	Plan              v1.PlanContent               `json:"plan"`
+	ChangeSummary     string                       `json:"change_summary"`
 }
 
 type planPublicationRecoveryEnvelope struct {
@@ -71,7 +76,7 @@ func planPublicationEventID(attemptID, manifestDigest, tool, key string) string 
 }
 
 func (jr *jobRunner) handlePlanPublication(ctx context.Context, tool, key string, raw map[string]any) (any, []byte, error) {
-	claim, err := jr.preparePlanPublicationClaim(tool, key, raw)
+	claim, err := jr.preparePlanPublicationClaim(ctx, tool, key, raw)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -113,7 +118,7 @@ func (jr *jobRunner) handlePlanPublication(ctx context.Context, tool, key string
 	return result, encoded, nil
 }
 
-func (jr *jobRunner) preparePlanPublicationClaim(tool, key string, raw map[string]any) (journal.PlanPublicationClaim, error) {
+func (jr *jobRunner) preparePlanPublicationClaim(ctx context.Context, tool, key string, raw map[string]any) (journal.PlanPublicationClaim, error) {
 	if jr.job.Kind != v1.JobKindPlan {
 		return journal.PlanPublicationClaim{}, fmt.Errorf("plan publication is available to plan jobs only")
 	}
@@ -162,12 +167,18 @@ func (jr *jobRunner) preparePlanPublicationClaim(tool, key string, raw map[strin
 		return journal.PlanPublicationClaim{}, err
 	}
 	intentDigest := sha256.Sum256(intentRaw)
+	repositories, err := jr.verifyPlanRepositoryAuthority(ctx)
+	if err != nil {
+		return journal.PlanPublicationClaim{}, err
+	}
 	event := planPublishedEvent{
 		Kind: "plan_published", ManifestKind: v1.JobKindPlan,
 		LeaseID: jr.job.LeaseID, JobID: jr.job.JobID, AttemptID: jr.job.AttemptID,
 		ManifestID: jr.job.ManifestID, ManifestDigest: jr.job.ManifestDigest,
 		FencingToken: jr.job.FencingToken, ObservedAt: time.Now().UTC(),
-		BaseRevisionID: arguments.BaseRevisionID, Plan: arguments.Plan,
+		AgentRunAuthority: copyPlanAgentRunAuthority(jr.job.AgentRunAuthority),
+		Repositories:      repositories,
+		BaseRevisionID:    arguments.BaseRevisionID, Plan: arguments.Plan,
 		ChangeSummary: arguments.ChangeSummary,
 	}
 	payload, err := json.Marshal(event)
@@ -214,6 +225,13 @@ func (jr *jobRunner) validatePlanPublicationPayload(raw []byte, tool string) (pl
 		event.ManifestDigest != jr.job.ManifestDigest || event.FencingToken != jr.job.FencingToken ||
 		event.ObservedAt.IsZero() {
 		return planPublishedEvent{}, fmt.Errorf("plan publication authority does not match this attempt")
+	}
+	if !planAgentRunAuthorityMatches(event.AgentRunAuthority, jr.job.AgentRunAuthority) {
+		return planPublishedEvent{}, fmt.Errorf("plan publication agent run authority does not match this attempt")
+	}
+	if !planRepositoryAuthorityMatches(event.Repositories, jr.verifiedPlanRepositories) ||
+		!slices.Equal(jr.verifiedPlanRepositories, jr.job.Repositories) {
+		return planPublishedEvent{}, fmt.Errorf("plan publication repository authority does not match this attempt")
 	}
 	if err := validatePlanChangeSummary(event.ChangeSummary); err != nil {
 		return planPublishedEvent{}, err
@@ -271,10 +289,76 @@ func (event planPublishedEvent) asMap() map[string]any {
 		"lease_id": event.LeaseID, "job_id": event.JobID, "attempt_id": event.AttemptID,
 		"manifest_id": event.ManifestID, "manifest_digest": event.ManifestDigest,
 		"fencing_token": event.FencingToken, "observed_at": event.ObservedAt.UTC().Format(time.RFC3339Nano),
-		"plan": event.Plan, "change_summary": event.ChangeSummary,
+		"repositories": append([]v1.PlanRepositoryAuthority(nil), event.Repositories...),
+		"plan":         event.Plan, "change_summary": event.ChangeSummary,
 	}
 	if event.BaseRevisionID != "" {
 		payload["base_revision_id"] = event.BaseRevisionID
 	}
+	if event.AgentRunAuthority != nil {
+		payload["agent_run_authority"] = *event.AgentRunAuthority
+	}
 	return payload
+}
+
+func copyPlanAgentRunAuthority(authority *v1.AgentRunAuthority) *v1.AgentRunAuthority {
+	if authority == nil {
+		return nil
+	}
+	copyValue := *authority
+	return &copyValue
+}
+
+func planAgentRunAuthorityMatches(event, job *v1.AgentRunAuthority) bool {
+	if event == nil || job == nil {
+		return event == nil && job == nil
+	}
+	return validation.AgentRunAuthority(*event) == nil && *event == *job
+}
+
+func (jr *jobRunner) verifyPlanRepositoryAuthority(ctx context.Context) ([]v1.PlanRepositoryAuthority, error) {
+	if !slices.Equal(jr.verifiedPlanRepositories, jr.job.Repositories) ||
+		len(jr.repositories) != len(jr.verifiedPlanRepositories) {
+		return nil, fmt.Errorf("plan repository authority is not the verified command set")
+	}
+	manager := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
+	for index, authority := range jr.verifiedPlanRepositories {
+		repository := jr.repositories[index]
+		if repository.ID != authority.RepositoryID || repository.Base != authority.BaseBranch ||
+			repository.Primary != authority.Primary || repository.Branch != "" {
+			return nil, fmt.Errorf("plan repository checkout identity does not match command authority")
+		}
+		head, err := manager.HeadSHA(ctx, repository.WorkDir)
+		if err != nil || head != authority.BaseSHA {
+			return nil, fmt.Errorf("plan repository checkout mismatch for %s", authority.RepositoryID)
+		}
+		status, err := manager.Git(ctx, repository.WorkDir, "status", "--porcelain=v1", "--untracked-files=all")
+		if err != nil || status != "" {
+			return nil, fmt.Errorf("plan repository checkout mismatch for %s", authority.RepositoryID)
+		}
+	}
+	result := make([]v1.PlanRepositoryAuthority, len(jr.verifiedPlanRepositories))
+	for index, authority := range jr.verifiedPlanRepositories {
+		result[index] = v1.PlanRepositoryAuthority{
+			RepositoryID: authority.RepositoryID, RepositoryHeadObservationID: authority.RepositoryHeadObservationID,
+			BaseBranch: authority.BaseBranch, BaseSHA: authority.BaseSHA, Primary: authority.Primary,
+		}
+	}
+	return result, nil
+}
+
+func planRepositoryAuthorityMatches(event []v1.PlanRepositoryAuthority, command []v1.JobRepository) bool {
+	if len(event) != len(command) {
+		return false
+	}
+	for index, authority := range event {
+		repository := command[index]
+		if authority.RepositoryID != repository.RepositoryID ||
+			authority.RepositoryHeadObservationID != repository.RepositoryHeadObservationID ||
+			authority.BaseBranch != repository.BaseBranch || authority.BaseSHA != repository.BaseSHA ||
+			authority.Primary != repository.Primary {
+			return false
+		}
+	}
+	return true
 }

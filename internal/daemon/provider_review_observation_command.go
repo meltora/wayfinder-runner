@@ -11,7 +11,7 @@ import (
 
 type providerReviewObserver interface {
 	ReadyProviderReviewObservationInstallations() []v1.ProviderReviewObservationInstallationCapability
-	ObserveProviderReviews(context.Context, v1.ProviderReviewObservationOperation) v1.ProviderReviewObservationResultOutcome
+	ObserveProviderReviews(context.Context, v1.ProviderReviewObservationOperation, *v1.ProviderCredential) v1.ProviderReviewObservationResultOutcome
 }
 
 func validateProviderReviewObservationCommandBoundary(c v1.CommandPayload) error {
@@ -29,8 +29,9 @@ func validateProviderReviewObservationCommandBoundary(c v1.CommandPayload) error
 	}
 	return nil
 }
-func (d *Daemon) executeProviderReviewObservation(ctx context.Context, id string, op v1.ProviderReviewObservationOperation) error {
-	if d.providerReviewObserver == nil {
+func (d *Daemon) executeProviderReviewObservation(ctx context.Context, id string, op v1.ProviderReviewObservationOperation, providerCredential *v1.ProviderCredential) error {
+	observer := d.sourcePublicationServices().providerReviewObserver
+	if observer == nil {
 		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}
 	if err := validation.ProviderReviewObservationCommandMessageID(id); err != nil {
@@ -46,7 +47,7 @@ func (d *Daemon) executeProviderReviewObservation(ctx context.Context, id string
 	if code := expiredReviewObservationSubject(op, now); code != "" {
 		outcome = v1.ProviderReviewObservationResultOutcome{Kind: v1.ProviderReviewObservationPermanent, Code: code}
 	} else {
-		outcome = d.providerReviewObserver.ObserveProviderReviews(observeCtx, op)
+		outcome = observer.ObserveProviderReviews(observeCtx, op, providerCredential)
 	}
 	observed := time.Now().UTC()
 	if observed.After(op.LeaseExpiresAt) {

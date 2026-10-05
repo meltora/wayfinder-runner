@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "type": "command",
+  "id": "agent-config-scan-command-12345678-1234-4234-8234-123456789abc",
+  "sent_at": "2026-09-12T12:00:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "command": "agent_config_scan",
+    "agent_config_scan": {
+      "authority_version": "agent-config-scan-v1",
+      "request_id": "12345678-1234-4234-8234-123456789abc",
+      "attempt_id": "attempt-1",
+      "project_id": "project-1",
+      "repository_id": "repository-1",
+      "branch_ref": "refs/heads/main",
+      "lease_id": "lease-1",
+      "fencing_token": 1,
+      "lease_expires_at": "2026-09-12T12:10:00Z",
+      "command_digest": "8970f461b89ee739f0ddbfa604153d37ad2373cd90423af04618c707424a142f"
+    }
+  }
+}

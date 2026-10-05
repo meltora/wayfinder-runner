@@ -11,6 +11,9 @@ import (
 )
 
 func (p *bitbucketPublisher) observeProviderReviews(ctx context.Context, op v1.ProviderReviewObservationOperation) v1.ProviderReviewObservationResultOutcome {
+	if providerReviewCompletionRequested(op) {
+		return reviewObservationPermanent(v1.ProviderReviewObservationUnsupportedProviderInstance)
+	}
 	workspace, name, ok := bitbucketRepository(op.ProviderRepositoryPath)
 	if !ok || !bitbucketUUIDPattern.MatchString(op.ProviderRepositoryID) {
 		return reviewObservationPermanent(v1.ProviderReviewObservationRepositoryMismatch)

@@ -12,7 +12,7 @@ import (
 
 type providerReviewerAssigner interface {
 	ReadyProviderReviewerAssignmentInstallations() []v1.ProviderReviewerAssignmentInstallationCapability
-	AssignProviderReviewers(context.Context, v1.ProviderReviewerAssignmentOperation) v1.ProviderReviewerAssignmentResultOutcome
+	AssignProviderReviewers(context.Context, v1.ProviderReviewerAssignmentOperation, *v1.ProviderCredential) v1.ProviderReviewerAssignmentResultOutcome
 }
 
 func validateProviderReviewerAssignmentCommandBoundary(command v1.CommandPayload) error {
@@ -40,8 +40,10 @@ func (d *Daemon) executeProviderReviewerAssignment(
 	ctx context.Context,
 	commandMessageID string,
 	operation v1.ProviderReviewerAssignmentOperation,
+	providerCredential *v1.ProviderCredential,
 ) error {
-	if d.providerReviewerAssigner == nil {
+	assigner := d.sourcePublicationServices().providerReviewerAssigner
+	if assigner == nil {
 		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}
 	if err := validation.ProviderReviewerAssignmentCommandMessageID(commandMessageID); err != nil {
@@ -58,7 +60,7 @@ func (d *Daemon) executeProviderReviewerAssignment(
 		Code: v1.ProviderReviewerAssignmentReviewerIdentityExpired,
 	}
 	if !providerReviewerAssignmentIdentityExpired(operation, now) {
-		outcome = d.providerReviewerAssigner.AssignProviderReviewers(assignCtx, operation)
+		outcome = assigner.AssignProviderReviewers(assignCtx, operation, providerCredential)
 	}
 	observedAt := time.Now().UTC()
 	if observedAt.After(operation.LeaseExpiresAt) {

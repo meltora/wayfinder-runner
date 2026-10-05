@@ -51,6 +51,34 @@ func TestJobSpecPreservesExplicitLegacyReviewCommentPresenceAtTheBoundary(t *tes
 	}
 }
 
+func TestReviewFeedbackContinuationCommandPreservesNestedAgentRunAuthority(t *testing.T) {
+	authority := AgentRunAuthority{
+		SchemaVersion: 1,
+		AgentRunID:    "review-continuation-agent-1",
+		StepRunID:     "review-continuation-step-1",
+		StepSequence:  4,
+	}
+	command := CommandPayload{
+		Command: CmdReviewFeedbackContinuation,
+		Job: &JobSpec{
+			JobID: "workflow-1", AgentRunAuthority: &authority,
+		},
+		ReviewFeedbackContinuation: &ReviewFeedbackContinuationAuthority{},
+	}
+	raw, err := json.Marshal(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded CommandPayload
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Job == nil || decoded.Job.AgentRunAuthority == nil ||
+		*decoded.Job.AgentRunAuthority != authority {
+		t.Fatalf("decoded AgentRun authority = %+v, want %+v", decoded.Job, authority)
+	}
+}
+
 func TestReviewFeedbackContinuationAuthorityAndCommandMatchControlPlaneVectors(t *testing.T) {
 	job := JobSpec{
 		JobID: "workflow-1", AttemptID: "review-feedback-continuation-attempt-1",

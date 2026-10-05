@@ -42,7 +42,7 @@ func TestGitLabPublicationCreatesExactMergeRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation())
+	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationSucceeded || outcome.Result == nil {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -76,7 +76,7 @@ func TestGitLabPublicationReusesExistingExactMergeRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation())
+	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationSucceeded || outcome.Result == nil || outcome.Result.ExternalRequestID != "7" {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -108,7 +108,7 @@ func TestGitLabPublicationReconcilesCreateConflict(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation())
+	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationSucceeded || outcome.Result == nil || outcome.Result.ExternalRequestID != "9" {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -124,7 +124,7 @@ func TestGitLabPublicationFailsClosedOnHeadMismatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation())
+	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlHeadMismatch {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -138,7 +138,7 @@ func TestGitLabPublicationClassifiesRateLimitWithoutLeakingProviderBody(t *testi
 	}))
 	defer server.Close()
 
-	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation())
+	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationRetryable || outcome.Code != v1.SourceControlRateLimited ||
 		outcome.RetryAfterMS == nil || *outcome.RetryAfterMS != 30000 {
 		t.Fatalf("outcome = %+v", outcome)
@@ -188,7 +188,7 @@ func TestGitLabPublicationRefusesRedirectWithoutForwardingToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation())
+	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlInvalidProviderResponse {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -203,7 +203,7 @@ func TestGitLabPublicationRejectsOversizedProviderResponsePermanently(t *testing
 	}))
 	defer server.Close()
 
-	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation())
+	outcome := testGitLabRegistryForServer(t, server).Publish(t.Context(), testGitLabOperation(), nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlInvalidProviderResponse {
 		t.Fatalf("outcome = %+v", outcome)
 	}

@@ -44,6 +44,7 @@ var Version = "0.1.0"
 const capabilityRefreshInterval = 5 * time.Minute
 
 type Daemon struct {
+	agentConfigScanState
 	cfg      config.Config
 	store    *identity.Store
 	runnerID string
@@ -70,6 +71,10 @@ type Daemon struct {
 	updateExpiredAtStartup                                *pendingUpdate
 	controlReady                                          atomic.Bool
 	rotationMu                                            sync.Mutex
+	now                                                   func() time.Time
+	rotationFault                                         func(point string) error
+	promotedTLS                                           atomic.Pointer[tls.Config]
+	rotationCommands                                      sync.WaitGroup
 	commandMu                                             sync.Mutex
 	commandOwner                                          string
 	sourcePublicationPublisher                            sourcePublicationPublisher
@@ -112,9 +117,34 @@ type Daemon struct {
 	eventSink   func(ctx context.Context, payload any) error
 	httpMu      sync.RWMutex
 	controlHTTP *http.Client
+
+	hotMu                       sync.RWMutex
+	sourcePublicationHTTPClient *http.Client
+	configurationReloader       ConfigurationReloader
+	configurationReloadWait     func(failures int) time.Duration
+	configurationReloadFailing  bool
+	configurationApplyFailing   bool
+	configurationRestartDigest  string
+	pendingAgentPackEvictions   []string
+}
+
+// ExternalOperationDependencies narrows test transport injection to external
+// provider operations and preview observation. Production callers use New,
+// which keeps the hardened default HTTP client, resolver, and dialer.
+type ExternalOperationDependencies struct {
+	SourcePublicationHTTPClient *http.Client
+	PreviewObserver             previewobserver.Dependencies
 }
 
 func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
+	return NewWithExternalOperationDependencies(cfg, logger, ExternalOperationDependencies{})
+}
+
+func NewWithExternalOperationDependencies(
+	cfg config.Config,
+	logger *slog.Logger,
+	dependencies ExternalOperationDependencies,
+) (*Daemon, error) {
 	cfg = config.Normalize(cfg)
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid runner configuration: %w", err)
@@ -126,7 +156,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	var reviewObserver providerReviewObserver
 	var feedbackContentReader providerReviewFeedbackContentReader
 	if len(cfg.SourcePublicationInstallations) != 0 {
-		registry, err := sourcepublication.NewRegistry(cfg.SourcePublicationInstallations, nil)
+		registry, err := sourcepublication.NewRegistry(cfg.SourcePublicationInstallations, dependencies.SourcePublicationHTTPClient)
 		if err != nil {
 			return nil, fmt.Errorf("initialize source publication credentials: %w", err)
 		}
@@ -139,7 +169,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	}
 	var localPreviewObserver previewObserver
 	if len(cfg.PreviewObservationProfiles) != 0 {
-		registry, err := previewobserver.NewRegistry(cfg.PreviewObservationProfiles, previewobserver.Dependencies{})
+		registry, err := previewobserver.NewRegistry(cfg.PreviewObservationProfiles, dependencies.PreviewObserver)
 		if err != nil {
 			return nil, fmt.Errorf("initialize preview observer: %w", err)
 		}
@@ -180,10 +210,9 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		return nil, err
 	}
 	j.SetMaxBytes(int64(cfg.JournalMaxMB) << 20)
-	httpURL := cfg.ControlPlaneHTTPURL
-	if httpURL == "" {
-		httpURL = deriveHTTPURL(cfg.ControlPlaneURL)
-	}
+	// Artifact receipts are authenticated by the runner gateway. A separate
+	// control-plane HTTP endpoint may serve Agent Packs without owning intake.
+	httpURL := deriveHTTPURL(cfg.ControlPlaneURL)
 	leaseManager := lease.NewManager()
 	recoveredLease := false
 	persistedLease, err := j.LoadLease(context.Background())
@@ -261,6 +290,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 	d := &Daemon{
 		cfg: cfg, store: store, runnerID: runnerID, journal: j, runLock: lock, logger: logger,
 		commandOwner:                         "process-" + newEventID(),
+		now:                                  time.Now,
 		leases:                               leaseManager,
 		collectors:                           collector.NewStore(cfg.StateDir),
 		uploader:                             newArtifactUploader(httpURL),
@@ -268,6 +298,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Daemon, error) {
 		updateWake:                           make(chan struct{}, 1),
 		updateIPC:                            updateClient,
 		sourcePublicationPublisher:           publicationPublisher,
+		sourcePublicationHTTPClient:          dependencies.SourcePublicationHTTPClient,
 		previewObserver:                      localPreviewObserver,
 		previewLifecycleController:           localPreviewLifecycleController,
 		reviewerIdentityVerifier:             identityVerifier,
@@ -353,6 +384,8 @@ func selectSupervisor(cfg config.Config, logger *slog.Logger) (supervisor.Superv
 
 func (d *Daemon) Run(ctx context.Context) error {
 	defer func() {
+		d.stopAgentConfigScan(context.Canceled)
+		d.agentConfigScanCommands.Wait()
 		d.sourcePublicationCommands.Wait()
 		d.previewObservationCommands.Wait()
 		d.previewLifecycleCommands.Wait()
@@ -362,34 +395,20 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.providerReviewObservationCommands.Wait()
 		d.providerReviewFeedbackContentCommands.Wait()
 		d.workIntakeProposalCommands.Wait()
+		d.rotationCommands.Wait()
 		_ = d.journal.Close()
 		_ = d.runLock.Close()
 	}()
 
-	if shouldRotate, err := d.store.ShouldRotate(time.Now()); err == nil && shouldRotate {
-		rotateCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		err = d.rotateCert(rotateCtx)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("startup certificate rotation: %w", err)
-		}
+	d.applyAgentPackRevocations()
+	if err := d.startupRotation(ctx); err != nil {
+		return err
 	}
-	certPEM, caPEM, err := d.store.LoadCert()
+	tlsCfg, err := d.currentTLSConfig()
 	if err != nil {
 		return err
 	}
-	key, err := d.store.LoadKey()
-	if err != nil {
-		return err
-	}
-	keyDER, err := marshalKey(key)
-	if err != nil {
-		return err
-	}
-	tlsCfg, err := transport.TLSConfigFromPEM(certPEM, keyDER, caPEM)
-	if err != nil {
-		return err
-	}
+	d.resumePromotedIdentity(tlsCfg)
 	d.setControlTLS(tlsCfg)
 
 	d.client = transport.NewClient(d.cfg.ControlPlaneURL, d.runnerID, Version, tlsCfg, d)
@@ -405,6 +424,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.rotationLoop(spoolCtx)
 	go d.updateLoop(spoolCtx)
 	go d.capabilityRefreshLoop(spoolCtx, capabilityRefreshInterval)
+	if d.configurationReloader != nil {
+		go d.configurationReloadLoop(spoolCtx)
+	}
 
 	d.logger.Info("starting daemon", "runner_id", d.runnerID, "control_plane", d.cfg.ControlPlaneURL)
 	return d.client.Run(ctx)
@@ -467,6 +489,7 @@ func (d *Daemon) drainHookSpool(ctx context.Context) {
 func (d *Daemon) OnConnected(ctx context.Context) {
 	d.controlReady.Store(true)
 	d.logger.Info("connected to control plane")
+	d.confirmRotatedIdentity()
 	if err := d.publishCapability(ctx); err != nil {
 		d.logger.Error("publish capability manifest", "err", err)
 	}
@@ -505,7 +528,18 @@ func (d *Daemon) OnConnected(ctx context.Context) {
 }
 
 func (d *Daemon) publishCapability(ctx context.Context) error {
-	det := capability.New(d.runnerID, Version, d.cfg.Labels, d.cfg.AgentPackPublicKeys)
+	d.hotMu.RLock()
+	hot := hotConfiguration{
+		repositories: d.cfg.Repositories, agentPackPublicKeys: d.cfg.AgentPackPublicKeys,
+		labels: d.cfg.Labels, digest: d.cfg.RunnerConfigurationDigest,
+	}
+	services := d.sourcePublicationServicesLocked()
+	d.hotMu.RUnlock()
+	det := capability.New(d.runnerID, Version, hot.labels, hot.agentPackPublicKeys).
+		WithProviderBinaries(d.cfg.ProviderBinaries).
+		WithProviderEnvironment(d.cfg.ProviderEnvironment)
+	det.AgentConfigScanRepositoryIDs = d.agentConfigScanRepositoriesFrom(hot.repositories)
+	det.RunnerConfigurationDigest = hot.digest
 	if d.cfg.WorkIntakeProposal.Enabled && d.cfg.Isolation == "docker" && d.cfg.JobNetwork == "restricted" {
 		det.WorkIntakeProposalHardened = true
 		det.WorkIntakeProposalRestrictedEgress = true
@@ -522,8 +556,8 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 			}
 		}
 	}
-	if d.sourcePublicationPublisher != nil {
-		det.SourcePublicationProviders = d.sourcePublicationPublisher.ReadyProviders()
+	if services.publisher != nil {
+		det.SourcePublicationProviders = services.publisher.ReadyProviders()
 	}
 	if d.previewObserver != nil {
 		det.PreviewObservationProfiles = d.previewObserver.ReadyProfiles()
@@ -531,20 +565,20 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	if d.previewLifecycleController != nil {
 		det.PreviewLifecycleProfiles = d.previewLifecycleController.ReadyProfiles()
 	}
-	if d.reviewerIdentityVerifier != nil {
-		det.ReviewerIdentityVerificationInstallations = d.reviewerIdentityVerifier.ReadyReviewerIdentityInstallations()
+	if services.reviewerIdentityVerifier != nil {
+		det.ReviewerIdentityVerificationInstallations = services.reviewerIdentityVerifier.ReadyReviewerIdentityInstallations()
 	}
-	if d.providerReviewerAssigner != nil {
-		det.ProviderReviewerAssignmentInstallations = d.providerReviewerAssigner.ReadyProviderReviewerAssignmentInstallations()
+	if services.providerReviewerAssigner != nil {
+		det.ProviderReviewerAssignmentInstallations = services.providerReviewerAssigner.ReadyProviderReviewerAssignmentInstallations()
 	}
-	if d.providerReviewerAssignmentReconciler != nil {
-		det.ProviderReviewerAssignmentReconciliationInstallations = d.providerReviewerAssignmentReconciler.ReadyProviderReviewerAssignmentReconciliationInstallations()
+	if services.providerReviewerAssignmentReconciler != nil {
+		det.ProviderReviewerAssignmentReconciliationInstallations = services.providerReviewerAssignmentReconciler.ReadyProviderReviewerAssignmentReconciliationInstallations()
 	}
-	if d.providerReviewObserver != nil {
-		det.ProviderReviewObservationInstallations = d.providerReviewObserver.ReadyProviderReviewObservationInstallations()
+	if services.providerReviewObserver != nil {
+		det.ProviderReviewObservationInstallations = services.providerReviewObserver.ReadyProviderReviewObservationInstallations()
 	}
-	if d.providerReviewFeedbackContentReader != nil {
-		det.ProviderReviewFeedbackContentInstallations = d.providerReviewFeedbackContentReader.ReadyProviderReviewFeedbackContentInstallations()
+	if services.providerReviewFeedbackContentReader != nil {
+		det.ProviderReviewFeedbackContentInstallations = services.providerReviewFeedbackContentReader.ReadyProviderReviewFeedbackContentInstallations()
 	}
 	m := det.Collect(ctx)
 	key, err := d.store.LoadKey()
@@ -589,6 +623,21 @@ func (d *Daemon) OnEventAck(ctx context.Context, eventID string) {
 	if err := d.journal.AckKind(ctx, eventID, journal.KindEvent); err != nil {
 		d.logger.Debug("event ack", "id", eventID, "err", err)
 	}
+}
+
+func (d *Daemon) OnEventRejected(ctx context.Context, eventID, code string) error {
+	if err := validation.ID("event_id", eventID); err != nil {
+		return err
+	}
+	code = journal.NormalizeRejectionCode(code)
+	d.logger.Debug("event rejected by control plane", "id", eventID, "code", code)
+	return d.journal.RecordEventRejection(ctx, eventID, code, time.Now())
+}
+
+func (d *Daemon) OnSessionRejected(ctx context.Context, code string) error {
+	code = journal.NormalizeRejectionCode(code)
+	d.logger.Debug("session rejected by control plane", "code", code)
+	return d.journal.RecordSessionRejection(ctx, code, time.Now())
 }
 
 func (d *Daemon) sendEvent(ctx context.Context, payload any) error {
@@ -664,6 +713,7 @@ func (d *Daemon) sendEventWithStableID(ctx context.Context, eventID string, payl
 func (d *Daemon) OnDisconnected(err error) {
 	d.controlReady.Store(false)
 	d.logger.Warn("disconnected", "err", err)
+	d.fallBackFromRejectedRotation(err)
 }
 
 func (d *Daemon) heartbeatPayload(ctx context.Context) v1.HeartbeatPayload {
@@ -767,6 +817,10 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 	}
 	effectMayHaveRun := receipt.State == journal.CommandProcessing
 	cmd, decodeErr := decodeCommandPayload(env.Payload)
+	asyncAgentConfigScan := decodeErr == nil && cmd.Command == v1.CmdAgentConfigScan
+	if asyncAgentConfigScan && d.agentConfigScanCommandIsActive(env.ID) {
+		return nil
+	}
 	asyncSourcePublication :=
 		decodeErr == nil && cmd.Command == v1.CmdSourcePublication
 	asyncPreviewObservation :=
@@ -817,6 +871,28 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		if commandReceiptTerminal(receipt) {
 			d.sendDurableCommandAck(ctx, receipt)
 		}
+		return nil
+	}
+	if err := validateCommandProviderCredential(env); err != nil {
+		if effectMayHaveRun {
+			d.logger.Warn("dropping unusable provider credential from recovered command", "id", env.ID, "err", err)
+			env.ProviderCredential = nil
+		} else {
+			d.logger.Warn("command envelope rejected", "id", env.ID, "err", err)
+			rejected, completeErr := d.journal.CompleteCommand(
+				ctx, env.ID, claimOwner, string(v1.CommandAckRejected), v1.CommandAckReasonInvalidCommand,
+			)
+			if completeErr != nil {
+				d.logger.Error("persist command outcome", "id", env.ID, "err", completeErr)
+				return fmt.Errorf("persist command outcome %s: %w", env.ID, completeErr)
+			}
+			d.sendDurableCommandAck(ctx, rejected)
+			return nil
+		}
+	}
+	if asyncAgentConfigScan {
+		d.agentConfigScanCommandStart(env.ID)
+		go d.completeAgentConfigScanCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
 		return nil
 	}
 	if asyncSourcePublication {
@@ -995,6 +1071,9 @@ func (d *Daemon) sourcePublicationCommandFinish(commandID string) {
 }
 
 func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.CommandPayload) error {
+	if err := validateAgentConfigScanCommandBoundary(cmd); err != nil {
+		return err
+	}
 	if err := validateJobControlCommandBoundary(cmd, time.Now()); err != nil {
 		return err
 	}
@@ -1037,7 +1116,7 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 		if cmd.Job == nil {
 			return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
 		}
-		return d.startJob(ctx, *cmd.Job)
+		return d.startJobWithProviderCredential(ctx, *cmd.Job, env.ProviderCredential)
 	case v1.CmdReviewComment:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
@@ -1050,12 +1129,12 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 				cmd.Job.ResumeSessionID = cp.ProviderSessionID
 			}
 		}
-		return d.startJob(ctx, *cmd.Job)
+		return d.startJobWithProviderCredential(ctx, *cmd.Job, env.ProviderCredential)
 	case v1.CmdReviewFeedbackContinuation:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
-		return d.startReviewFeedbackContinuation(ctx, *cmd.Job, *cmd.ReviewFeedbackContinuation)
+		return d.startReviewFeedbackContinuation(ctx, *cmd.Job, *cmd.ReviewFeedbackContinuation, env.ProviderCredential)
 	case v1.CmdCancelJob:
 		return d.cancelJob(ctx, cmd.AttemptID, cmd.Reason)
 	case v1.CmdControlJob:
@@ -1082,6 +1161,7 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	case v1.CmdDecisionResponse:
 		return d.executeDecisionResponse(cmd)
 	case v1.CmdEmergencyStop:
+		d.stopAgentConfigScan(errAgentConfigScanStopped)
 		if err := d.Pause(); err != nil {
 			return err
 		}
@@ -1097,39 +1177,35 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 		d.logger.Info("runner resumed by control plane")
 		return nil
 	case v1.CmdRotateCert:
-		rotateCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		defer cancel()
-		if err := d.rotateCert(rotateCtx); err != nil {
-			return fmt.Errorf("rotation: %w", err)
-		}
-		return d.sendEvent(ctx, map[string]any{"kind": "cert_rotated"})
+		d.startRequestedRotation(ctx)
+		return nil
 	case v1.CmdUpdate:
 		return d.beginUpdateDrain(env.ID, cmd, time.Now())
 	case v1.CmdSourcePublication:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
-		return d.executeSourcePublication(ctx, env.ID, *cmd.SourcePublication)
+		return d.executeSourcePublication(ctx, env.ID, *cmd.SourcePublication, env.ProviderCredential)
 	case v1.CmdProviderReviewerAssignment:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
-		return d.executeProviderReviewerAssignment(ctx, env.ID, *cmd.ProviderReviewerAssignment)
+		return d.executeProviderReviewerAssignment(ctx, env.ID, *cmd.ProviderReviewerAssignment, env.ProviderCredential)
 	case v1.CmdProviderReviewerAssignmentReconciliation:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
-		return d.executeProviderReviewerAssignmentReconciliation(ctx, env.ID, *cmd.ProviderReviewerAssignmentReconciliation)
+		return d.executeProviderReviewerAssignmentReconciliation(ctx, env.ID, *cmd.ProviderReviewerAssignmentReconciliation, env.ProviderCredential)
 	case v1.CmdProviderReviewObservation:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
-		return d.executeProviderReviewObservation(ctx, env.ID, *cmd.ProviderReviewObservation)
+		return d.executeProviderReviewObservation(ctx, env.ID, *cmd.ProviderReviewObservation, env.ProviderCredential)
 	case v1.CmdProviderReviewFeedbackContent:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
-		return d.executeProviderReviewFeedbackContent(ctx, env.ID, *cmd.ProviderReviewFeedbackContent)
+		return d.executeProviderReviewFeedbackContent(ctx, env.ID, *cmd.ProviderReviewFeedbackContent, env.ProviderCredential)
 	case v1.CmdPreviewObservation:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
@@ -1144,7 +1220,7 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
-		return d.executeReviewerIdentityVerification(ctx, env.ID, *cmd.ReviewerIdentityVerification)
+		return d.executeReviewerIdentityVerification(ctx, env.ID, *cmd.ReviewerIdentityVerification, env.ProviderCredential)
 	case v1.CmdWorkIntakeProposal:
 		return d.executeWorkIntakeProposal(ctx, env.ID, *cmd.WorkIntakeProposal)
 	}
@@ -1166,6 +1242,16 @@ func (d *Daemon) validateCommandEnvelope(env v1.Envelope) error {
 	}
 	if env.InReplyTo != "" {
 		return fmt.Errorf("command cannot reply to another message")
+	}
+	return nil
+}
+
+func validateCommandProviderCredential(env v1.Envelope) error {
+	if env.ProviderCredential == nil {
+		return nil
+	}
+	if err := env.ProviderCredential.Validate(time.Now()); err != nil {
+		return v1.ErrInvalidProviderCredential
 	}
 	return nil
 }
@@ -1195,6 +1281,7 @@ func (d *Daemon) Pause() error {
 		return err
 	}
 	d.paused.Store(true)
+	d.stopAgentConfigScan(errAgentConfigScanStopped)
 	return nil
 }
 
@@ -1220,6 +1307,9 @@ func (d *Daemon) pauseStateLoop(ctx context.Context) {
 				continue
 			}
 			d.paused.Store(paused)
+			if paused {
+				d.stopAgentConfigScan(errAgentConfigScanStopped)
+			}
 		}
 	}
 }

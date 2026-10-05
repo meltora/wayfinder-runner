@@ -87,9 +87,27 @@ func JobSpec(job v1.JobSpec) error {
 	}
 	seenRepositories := map[string]bool{}
 	primaryCount := 0
-	for _, repository := range job.Repositories {
+	for index, repository := range job.Repositories {
 		if err := ID("repository_id", repository.RepositoryID); err != nil {
 			return err
+		}
+		if repository.RepositoryHeadObservationID != "" {
+			if err := ID("repository_head_observation_id", repository.RepositoryHeadObservationID); err != nil {
+				return err
+			}
+		}
+		if repository.BaseSHA != "" {
+			if err := GitCommitSHA("base_sha", repository.BaseSHA); err != nil {
+				return err
+			}
+		}
+		if job.Kind == v1.JobKindPlan {
+			if repository.RepositoryHeadObservationID == "" || repository.BaseSHA == "" || repository.BaseBranch == "" {
+				return fmt.Errorf("plan repository authority requires repository_head_observation_id, base_branch, and base_sha")
+			}
+			if index == 0 && !repository.Primary {
+				return fmt.Errorf("the first plan repository must be primary")
+			}
 		}
 		if seenRepositories[repository.RepositoryID] {
 			return fmt.Errorf("repository %q appears more than once", repository.RepositoryID)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -146,5 +147,104 @@ func TestArchiveCacheRejectsOversizeMismatchAndCancellationWithoutPublishing(t *
 				t.Fatalf("final cache artifact exists: %v", err)
 			}
 		})
+	}
+}
+
+func acquireTestArchive(t *testing.T, cache ArchiveCache, body []byte) (string, string) {
+	t.Helper()
+	sum := sha256.Sum256(body)
+	digest := hex.EncodeToString(sum[:])
+	path, err := cache.Acquire(context.Background(), digest, func(_ context.Context, writer io.Writer) error {
+		_, err := writer.Write(body)
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest, path
+}
+
+func TestArchiveCacheEvictRemovesRevokedArchivesAndTheirLocks(t *testing.T) {
+	cache := ArchiveCache{Root: filepath.Join(t.TempDir(), "cache"), MaxArchiveBytes: 1 << 20}
+	revoked, revokedPath := acquireTestArchive(t, cache, []byte("revoked"))
+	kept, keptPath := acquireTestArchive(t, cache, []byte("kept"))
+	absentSum := sha256.Sum256([]byte("absent"))
+	absent := hex.EncodeToString(absentSum[:])
+
+	evicted, skipped, err := cache.Evict([]string{absent, revoked})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evicted) != 1 || evicted[0] != revoked || len(skipped) != 0 {
+		t.Fatalf("evicted=%v skipped=%v", evicted, skipped)
+	}
+	for _, path := range []string{revokedPath, filepath.Join(cache.Root, revoked+".lock"), filepath.Join(cache.Root, absent+".lock"), filepath.Join(cache.Root, absent+".tgz")} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s remains after eviction: %v", filepath.Base(path), err)
+		}
+	}
+	for _, path := range []string{keptPath, filepath.Join(cache.Root, kept+".lock")} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("unrevoked %s removed: %v", filepath.Base(path), err)
+		}
+	}
+}
+
+func TestArchiveCacheEvictSkipsADigestWhoseLockIsHeld(t *testing.T) {
+	cache := ArchiveCache{Root: filepath.Join(t.TempDir(), "cache"), MaxArchiveBytes: 1 << 20}
+	digest, path := acquireTestArchive(t, cache, []byte("in use"))
+	locked, release := cache.tryDigestLock(digest)
+	if !locked {
+		t.Fatal("could not hold the digest lock")
+	}
+	evicted, skipped, err := cache.Evict([]string{digest})
+	release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evicted) != 0 || len(skipped) != 1 || skipped[0] != digest {
+		t.Fatalf("evicted=%v skipped=%v", evicted, skipped)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("locked archive removed: %v", err)
+	}
+	evicted, skipped, err = cache.Evict([]string{digest})
+	if err != nil || len(evicted) != 1 || len(skipped) != 0 {
+		t.Fatalf("evicted=%v skipped=%v err=%v", evicted, skipped, err)
+	}
+}
+
+func TestArchiveCacheEvictIgnoresInvalidDigestsAndNeverFollowsSymlinks(t *testing.T) {
+	base := t.TempDir()
+	cache := ArchiveCache{Root: filepath.Join(base, "cache"), MaxArchiveBytes: 1 << 20}
+	digest, _ := acquireTestArchive(t, cache, []byte("linked"))
+	outside := filepath.Join(base, "outside")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(outside, "target")
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkedSum := sha256.Sum256([]byte("symlinked"))
+	linked := hex.EncodeToString(linkedSum[:])
+	if err := os.Symlink(target, filepath.Join(cache.Root, linked+".tgz")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(cache.Root, linked+".lock")); err != nil {
+		t.Fatal(err)
+	}
+	evicted, skipped, err := cache.Evict([]string{"../outside/target", strings.ToUpper(digest), "", linked})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evicted) != 0 || len(skipped) != 1 || skipped[0] != linked {
+		t.Fatalf("evicted=%v skipped=%v", evicted, skipped)
+	}
+	if contents, err := os.ReadFile(target); err != nil || string(contents) != "keep" {
+		t.Fatalf("symlink target changed: %q %v", contents, err)
+	}
+	if _, err := os.Lstat(filepath.Join(cache.Root, digest+".tgz")); err != nil {
+		t.Fatalf("an invalid digest evicted a cached archive: %v", err)
 	}
 }

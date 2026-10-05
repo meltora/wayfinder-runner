@@ -10,6 +10,24 @@ import (
 	"time"
 )
 
+type githubReviewObservationRequest struct {
+	Number         int64     `json:"number"`
+	State          string    `json:"state"`
+	Merged         bool      `json:"merged"`
+	MergeCommitSHA string    `json:"merge_commit_sha"`
+	MergedAt       time.Time `json:"merged_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Head           struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+	MergedBy *struct {
+		ID uint64 `json:"id"`
+	} `json:"merged_by"`
+}
+
 func (p *githubPublisher) observeProviderReviews(ctx context.Context, op v1.ProviderReviewObservationOperation) v1.ProviderReviewObservationResultOutcome {
 	repoID, err := strconv.ParseUint(op.ProviderRepositoryID, 10, 64)
 	if err != nil || repoID == 0 || strconv.FormatUint(repoID, 10) != op.ProviderRepositoryID {
@@ -45,14 +63,7 @@ func (p *githubPublisher) observeProviderReviews(ctx context.Context, op v1.Prov
 	if response.status < 200 || response.status >= 300 {
 		return classifyGitHubReviewObservationFailure(response, v1.ProviderReviewObservationRequestNotFound)
 	}
-	var request struct {
-		Number int64  `json:"number"`
-		State  string `json:"state"`
-		Merged bool   `json:"merged"`
-		Head   struct {
-			SHA string `json:"sha"`
-		} `json:"head"`
-	}
+	var request githubReviewObservationRequest
 	if !reviewObservationDecode(response.body, &request) || request.Number != number || request.Head.SHA == "" {
 		return reviewObservationPermanent(v1.ProviderReviewObservationInvalidProviderResponse)
 	}
@@ -66,6 +77,17 @@ func (p *githubPublisher) observeProviderReviews(ctx context.Context, op v1.Prov
 	} else {
 		return reviewObservationPermanent(v1.ProviderReviewObservationInvalidProviderResponse)
 	}
+	var completion *providerReviewCompletionEvidence
+	if providerReviewCompletionRequested(op) {
+		if state != v1.ProviderReviewObservationRequestMerged {
+			return reviewObservationPermanent(v1.ProviderReviewObservationIncomplete)
+		}
+		evidence, failure := p.githubReviewCompletionEvidence(ctx, "/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name), op.ExpectedTargetBranch, request)
+		if failure != nil {
+			return *failure
+		}
+		completion = &evidence
+	}
 	reviews, reviewPages, failure := p.githubReviewEvents(ctx, requestPath)
 	if failure != nil {
 		return *failure
@@ -74,7 +96,103 @@ func (p *githubPublisher) observeProviderReviews(ctx context.Context, op v1.Prov
 	if failure != nil {
 		return *failure
 	}
+	if completion != nil {
+		return reviewObservationCompletionSuccess(op, request.Head.SHA, reviewPages, commentPages, reviews, comments, *completion)
+	}
 	return reviewObservationSuccess(op, state, request.Head.SHA, reviewPages, commentPages, reviews, comments)
+}
+
+func (p *githubPublisher) githubReviewCompletionEvidence(ctx context.Context, repositoryPath, expectedTargetBranch string, request githubReviewObservationRequest) (providerReviewCompletionEvidence, *v1.ProviderReviewObservationResultOutcome) {
+	invalid := func() (providerReviewCompletionEvidence, *v1.ProviderReviewObservationResultOutcome) {
+		outcome := reviewObservationPermanent(v1.ProviderReviewObservationInvalidProviderResponse)
+		return providerReviewCompletionEvidence{}, &outcome
+	}
+	if !request.Merged || !validProviderReviewCommitSHA(request.MergeCommitSHA) ||
+		!validProviderReviewTargetBranch(request.Base.Ref) || !validProviderReviewTargetBranch(expectedTargetBranch) || request.MergedAt.IsZero() ||
+		request.UpdatedAt.IsZero() || request.MergedBy == nil || request.MergedBy.ID == 0 {
+		return invalid()
+	}
+	if request.Base.Ref != expectedTargetBranch {
+		outcome := reviewObservationPermanent(v1.ProviderReviewObservationIncomplete)
+		return providerReviewCompletionEvidence{}, &outcome
+	}
+	response, err := p.request(ctx, http.MethodGet, repositoryPath+"/git/ref/heads/"+request.Base.Ref, nil, nil)
+	if err != nil {
+		outcome := reviewObservationRequestFailure(err)
+		return providerReviewCompletionEvidence{}, &outcome
+	}
+	if response.status < 200 || response.status >= 300 {
+		outcome := classifyGitHubReviewObservationFailure(response, v1.ProviderReviewObservationIncomplete)
+		return providerReviewCompletionEvidence{}, &outcome
+	}
+	var target struct {
+		Ref    string `json:"ref"`
+		Object struct {
+			Type string `json:"type"`
+			SHA  string `json:"sha"`
+		} `json:"object"`
+	}
+	if !reviewObservationDecode(response.body, &target) || target.Ref != "refs/heads/"+request.Base.Ref ||
+		target.Object.Type != "commit" || !validProviderReviewCommitSHA(target.Object.SHA) {
+		return invalid()
+	}
+	reachable, failure := p.githubMergeCommitReachableFromTarget(ctx, repositoryPath, request.MergeCommitSHA, target.Object.SHA)
+	if failure != nil {
+		return providerReviewCompletionEvidence{}, failure
+	}
+	evidence := providerReviewCompletionEvidence{
+		mergeCommitSHA: request.MergeCommitSHA, targetBranch: request.Base.Ref, targetHeadSHA: target.Object.SHA,
+		mergeCommitReachableFromTarget: reachable, mergedAt: request.MergedAt, providerUpdatedAt: request.UpdatedAt,
+		mergedByProviderAccountID: strconv.FormatUint(request.MergedBy.ID, 10),
+	}
+	if !validProviderReviewCompletionEvidence(evidence, time.Now().UTC()) {
+		return invalid()
+	}
+	return evidence, nil
+}
+
+func (p *githubPublisher) githubMergeCommitReachableFromTarget(ctx context.Context, repositoryPath, mergeCommitSHA, targetHeadSHA string) (bool, *v1.ProviderReviewObservationResultOutcome) {
+	if !validProviderReviewCommitSHA(mergeCommitSHA) || !validProviderReviewCommitSHA(targetHeadSHA) {
+		outcome := reviewObservationPermanent(v1.ProviderReviewObservationInvalidProviderResponse)
+		return false, &outcome
+	}
+	response, err := p.request(ctx, http.MethodGet, repositoryPath+"/compare/"+mergeCommitSHA+"..."+targetHeadSHA, nil, nil)
+	if err != nil {
+		outcome := reviewObservationRequestFailure(err)
+		return false, &outcome
+	}
+	if response.status < 200 || response.status >= 300 {
+		outcome := classifyGitHubReviewObservationFailure(response, v1.ProviderReviewObservationIncomplete)
+		return false, &outcome
+	}
+	var comparison struct {
+		Status     string `json:"status"`
+		BaseCommit struct {
+			SHA string `json:"sha"`
+		} `json:"base_commit"`
+		MergeBaseCommit struct {
+			SHA string `json:"sha"`
+		} `json:"merge_base_commit"`
+	}
+	if !reviewObservationDecode(response.body, &comparison) || comparison.BaseCommit.SHA != mergeCommitSHA {
+		outcome := reviewObservationPermanent(v1.ProviderReviewObservationInvalidProviderResponse)
+		return false, &outcome
+	}
+	reachable := comparison.MergeBaseCommit.SHA == mergeCommitSHA
+	valid := false
+	switch comparison.Status {
+	case "identical":
+		valid = reachable && mergeCommitSHA == targetHeadSHA
+	case "ahead":
+		valid = reachable && mergeCommitSHA != targetHeadSHA
+	case "behind", "diverged":
+		valid = !reachable
+	}
+	if !valid {
+		outcome := reviewObservationPermanent(v1.ProviderReviewObservationInvalidProviderResponse)
+		return false, &outcome
+	}
+	return reachable, nil
 }
 
 func (p *githubPublisher) githubReviewEvents(ctx context.Context, path string) ([]v1.ProviderReviewObservationReviewEvent, int, *v1.ProviderReviewObservationResultOutcome) {

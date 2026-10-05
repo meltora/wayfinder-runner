@@ -26,7 +26,7 @@ func TestRegistryAssignProviderReviewersFailsClosedForInstallationDrift(t *testi
 	}
 	operation := assignmentOperationForTest("github")
 	operation.ProviderInstanceKey = "github.enterprise.invalid"
-	outcome := registry.AssignProviderReviewers(context.Background(), operation)
+	outcome := registry.AssignProviderReviewers(context.Background(), operation, nil)
 	if outcome.Kind != v1.ProviderReviewerAssignmentPermanent ||
 		outcome.Code != v1.ProviderReviewerAssignmentUnsupportedProviderInstance {
 		t.Fatalf("unexpected outcome: %#v", outcome)

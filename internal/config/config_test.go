@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -407,6 +408,36 @@ func TestSourcePublicationInstallationsValidateStrictLocalAuthority(t *testing.T
 			candidate.TokenFile = "/run/secrets/../token"
 			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
 		},
+		"git_host with scheme": func(cfg *Config) {
+			candidate := valid
+			candidate.GitHost = "https://ghe.example.com"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+		"git_host with port": func(cfg *Config) {
+			candidate := valid
+			candidate.GitHost = "ghe.example.com:8443"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+		"git_host with path": func(cfg *Config) {
+			candidate := valid
+			candidate.GitHost = "ghe.example.com/octo"
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-1": candidate}
+		},
+		"git_host on GitLab": func(cfg *Config) {
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{
+				"installation-1": {Provider: "gitlab", TokenFile: "/run/secrets/gitlab", GitHost: "gitlab.example.com"},
+			}
+		},
+		"GitLab without token file": func(cfg *Config) {
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{
+				"installation-1": {Provider: "gitlab"},
+			}
+		},
+		"Bitbucket without token file": func(cfg *Config) {
+			cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{
+				"installation-1": {Provider: "bitbucket"},
+			}
+		},
 	} {
 		name, mutate := name, mutate
 		t.Run(name, func(t *testing.T) {
@@ -424,6 +455,18 @@ func TestSourcePublicationInstallationsValidateStrictLocalAuthority(t *testing.T
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid source publication installation rejected: %v", err)
 	}
+	enterprise := SourcePublicationInstallationConfig{
+		Provider: "github", APIBaseURL: "https://ghe.example.com/api/v3", GitHost: "ghe.example.com",
+	}
+	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-5": enterprise}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("GitHub Enterprise git_host rejected: %v", err)
+	}
+	credentialOnly := SourcePublicationInstallationConfig{Provider: "github", APIBaseURL: "https://api.github.com"}
+	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-4": credentialOnly}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("GitHub installation without a token file rejected: %v", err)
+	}
 	gitLab := SourcePublicationInstallationConfig{Provider: "gitlab", TokenFile: "/run/secrets/gitlab-main"}
 	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-2": gitLab}
 	if err := cfg.Validate(); err != nil {
@@ -433,5 +476,17 @@ func TestSourcePublicationInstallationsValidateStrictLocalAuthority(t *testing.T
 	cfg.SourcePublicationInstallations = map[string]SourcePublicationInstallationConfig{"installation-3": bitbucket}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid Bitbucket source publication installation rejected: %v", err)
+	}
+}
+
+func TestNormalizeCopiesRevokedAgentPackDigests(t *testing.T) {
+	in := Config{RevokedAgentPackDigests: []string{strings.Repeat("a", 64)}}
+	out := Normalize(in)
+	out.RevokedAgentPackDigests[0] = "changed"
+	if in.RevokedAgentPackDigests[0] != strings.Repeat("a", 64) {
+		t.Fatal("Normalize shares the revoked Agent Pack digests")
+	}
+	if Normalize(Config{}).RevokedAgentPackDigests != nil {
+		t.Fatal("Normalize invented a revoked Agent Pack digest list")
 	}
 }

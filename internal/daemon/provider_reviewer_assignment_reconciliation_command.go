@@ -12,7 +12,7 @@ import (
 
 type providerReviewerAssignmentReconciler interface {
 	ReadyProviderReviewerAssignmentReconciliationInstallations() []v1.ProviderReviewerAssignmentReconciliationInstallationCapability
-	ReconcileProviderReviewerAssignment(context.Context, v1.ProviderReviewerAssignmentReconciliationOperation) v1.ProviderReviewerAssignmentReconciliationResultOutcome
+	ReconcileProviderReviewerAssignment(context.Context, v1.ProviderReviewerAssignmentReconciliationOperation, *v1.ProviderCredential) v1.ProviderReviewerAssignmentReconciliationResultOutcome
 }
 
 func validateProviderReviewerAssignmentReconciliationCommandBoundary(command v1.CommandPayload) error {
@@ -31,8 +31,9 @@ func validateProviderReviewerAssignmentReconciliationCommandBoundary(command v1.
 	return nil
 }
 
-func (d *Daemon) executeProviderReviewerAssignmentReconciliation(ctx context.Context, commandMessageID string, operation v1.ProviderReviewerAssignmentReconciliationOperation) error {
-	if d.providerReviewerAssignmentReconciler == nil {
+func (d *Daemon) executeProviderReviewerAssignmentReconciliation(ctx context.Context, commandMessageID string, operation v1.ProviderReviewerAssignmentReconciliationOperation, providerCredential *v1.ProviderCredential) error {
+	reconciler := d.sourcePublicationServices().providerReviewerAssignmentReconciler
+	if reconciler == nil {
 		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}
 	if err := validation.ProviderReviewerAssignmentReconciliationCommandMessageID(commandMessageID); err != nil {
@@ -43,7 +44,7 @@ func (d *Daemon) executeProviderReviewerAssignmentReconciliation(ctx context.Con
 	}
 	reconcileCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
 	defer cancel()
-	outcome := d.providerReviewerAssignmentReconciler.ReconcileProviderReviewerAssignment(reconcileCtx, operation)
+	outcome := reconciler.ReconcileProviderReviewerAssignment(reconcileCtx, operation, providerCredential)
 	observedAt := time.Now().UTC()
 	if observedAt.After(operation.LeaseExpiresAt) {
 		observedAt = operation.LeaseExpiresAt

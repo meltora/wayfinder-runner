@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -55,6 +56,28 @@ func agentPackMaterializationEvidence(
 }
 
 func (d *Daemon) verifyJobAgentPackAuthority(job v1.JobSpec) error {
+	configuration := d.hotConfiguration()
+	if err := refuseRevokedAgentPack(job, configuration.revokedAgentPackDigests); err != nil {
+		return err
+	}
+	return d.verifyAgentPackAuthority(job, configuration.agentPackPublicKeys)
+}
+
+func refuseRevokedAgentPack(job v1.JobSpec, revokedDigests []string) error {
+	if job.AgentPack != nil && slices.Contains(revokedDigests, job.AgentPack.Digest) {
+		return rejectCommand(v1.CommandAckReasonAgentPackAuthorityInvalid, errors.New("the Agent Pack version is revoked"))
+	}
+	return nil
+}
+
+func (d *Daemon) agentPackArchiveCache() agentpack.ArchiveCache {
+	return agentpack.ArchiveCache{
+		Root:            filepath.Join(d.cfg.StateDir, "agent-pack-cache", "archives"),
+		MaxArchiveBytes: agentpack.DefaultMaxArchiveBytes,
+	}
+}
+
+func (d *Daemon) verifyAgentPackAuthority(job v1.JobSpec, trustedKeys map[string]string) error {
 	if job.AgentPack == nil && job.AgentPackAuthority == nil {
 		return nil
 	}
@@ -62,7 +85,7 @@ func (d *Daemon) verifyJobAgentPackAuthority(job v1.JobSpec) error {
 		return rejectCommand(v1.CommandAckReasonAgentPackAuthorityInvalid, nil)
 	}
 	keyID := job.AgentPack.KeyID
-	trustedKey, ok := d.cfg.AgentPackPublicKeys[keyID]
+	trustedKey, ok := trustedKeys[keyID]
 	if !ok || trustedKey == "" {
 		return rejectCommand(v1.CommandAckReasonAgentPackKeyUntrusted, nil)
 	}
@@ -92,10 +115,7 @@ func (jr *jobRunner) materializeAgentPack(reference *v1.AgentPackRef, destinatio
 	if err := jr.d.validateArtifactURL(reference.URL); err != nil {
 		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, err)
 	}
-	cache := agentpack.ArchiveCache{
-		Root:            filepath.Join(jr.d.cfg.StateDir, "agent-pack-cache", "archives"),
-		MaxArchiveBytes: agentpack.DefaultMaxArchiveBytes,
-	}
+	cache := jr.d.agentPackArchiveCache()
 	archivePath, err := cache.Acquire(jr.ctx, reference.Digest, func(ctx context.Context, writer io.Writer) error {
 		return jr.d.downloadAgentPack(ctx, reference.URL, writer)
 	})
@@ -126,16 +146,25 @@ func (jr *jobRunner) materializeAgentPack(reference *v1.AgentPackRef, destinatio
 		return newAgentPackMaterializationError(v1.AgentPackFailureStorageUnavailable, true, err)
 	}
 	defer func() { _ = archive.Close() }()
-	_, err = agentpack.MountAuthenticatedArchiveWithPolicy(
+	mounted, err := agentpack.MountAuthenticatedArchiveWithPolicy(
 		&contextReader{ctx: jr.ctx, reader: archive},
 		destination,
-		agentpack.MountPolicy{Version: reference.Version, Provider: jr.d.cfg.Provider},
+		agentpack.MountPolicy{Digest: reference.Digest, Version: reference.Version, Provider: jr.d.cfg.Provider},
 	)
+	if errors.Is(err, agentpack.ErrArchiveDigestMismatch) {
+		return newAgentPackMaterializationError(v1.AgentPackFailureDigestMismatch, false, err)
+	}
 	if err != nil {
 		return newAgentPackMaterializationError(v1.AgentPackFailureArchiveInvalid, false, err)
 	}
+	jr.packFiles = mounted.Manifest.Files
 	if err := cache.Prune(agentpack.DefaultMaxCacheEntries, agentpack.DefaultMaxCacheBytes, reference.Digest); err != nil && jr.logger != nil {
 		jr.logger.Warn("prune Agent Pack cache", "err", err)
+	}
+	if slices.Contains(jr.d.hotConfiguration().revokedAgentPackDigests, reference.Digest) {
+		if _, _, err := cache.Evict([]string{reference.Digest}); err != nil && jr.logger != nil {
+			jr.logger.Warn("evict revoked Agent Pack archive after materialization", "digest", reference.Digest)
+		}
 	}
 	return nil
 }

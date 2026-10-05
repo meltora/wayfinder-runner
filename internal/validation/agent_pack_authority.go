@@ -58,7 +58,7 @@ func SignedAgentPackAuthority(authority v1.SignedAgentPackAuthority) error {
 	if err := boundedText("agent_pack_authority.pack_name", authority.PackName, 256, true); err != nil {
 		return err
 	}
-	if strings.TrimSpace(authority.PackName) == "" {
+	if IsECMAScriptBlank(authority.PackName) {
 		return fmt.Errorf("agent_pack_authority.pack_name must contain visible text")
 	}
 	if err := ID("agent_pack_authority.provider", authority.Provider); err != nil {

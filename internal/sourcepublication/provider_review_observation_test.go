@@ -20,7 +20,7 @@ func observeThroughRegistry(t *testing.T, server *httptest.Server, provider stri
 	t.Helper()
 	operation.ProviderInstanceKey = configuredProviderInstanceKey(provider, server.URL)
 	registry := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{"installation-1": {Provider: provider, APIBaseURL: server.URL, TokenFile: writeToken(t, 0o600)}}, httpClient: server.Client()}
-	return registry.ObserveProviderReviews(context.Background(), operation)
+	return registry.ObserveProviderReviews(context.Background(), operation, nil)
 }
 
 func reviewObservationOperationForTest(provider string) v1.ProviderReviewObservationOperation {
@@ -36,6 +36,250 @@ func reviewObservationOperationForTest(provider string) v1.ProviderReviewObserva
 	}
 	subjects := []v1.ProviderReviewObservationSubject{{ReviewerIdentityID: "identity-1", UserID: "user-1", OrganizationMembershipID: "membership-1", IdentityStateRevision: 1, IdentityRevision: 1, ProviderAccountProofID: "proof-1", ProviderAccountProofStateRevision: 1, ProviderAccountProofRevision: 1, ProviderAccountProofDigest: strings.Repeat("1", 64), ProviderAccountProofExpiresAt: time.Now().Add(2 * time.Hour), IdentityVerificationID: "verification-1", IdentityVerificationDigest: strings.Repeat("2", 64), IdentityVerificationExpiresAt: time.Now().Add(time.Hour), ProviderAccountID: account}}
 	return v1.ProviderReviewObservationOperation{ProviderReviewObservationAuthority: v1.ProviderReviewObservationAuthority{SchemaVersion: 1, ProviderReviewObservationOperationID: "provider-review-observation-operation-" + strings.Repeat("a", 64), OrganizationID: "organization-1", ProjectID: "project-1", WorkflowRunID: "run-1", AssignmentDeliveryID: "delivery-1", AssignmentDeliveryStateRevision: 1, AssignmentPlanID: "plan-1", AssignmentPlanDigest: strings.Repeat("3", 64), AssignmentObservationID: "observation-1", AssignmentResultPayloadChecksum: strings.Repeat("4", 64), SourcePublicationObservationID: "source-observation-1", RepositoryID: "repository-1", ProviderRepositoryID: repoID, ProviderRepositoryPath: path, ExternalRequestID: "7", ExpectedHeadSHA: "0123456789abcdef0123456789abcdef01234567", InstallationID: "installation-1", InstallationStateRevision: 1, InstallationAuthorityRevision: 1, InstallationAuthorityDigest: strings.Repeat("5", 64), Provider: provider, ProviderInstanceKey: instance, IdempotencyKey: "provider-review-observation-" + strings.Repeat("6", 64), SubjectIdentitySetDigest: v1.ProviderReviewObservationSubjectIdentitySetDigest(subjects), MaxCollectionPages: 10, CollectionPageSize: 100, OperationDigest: strings.Repeat("7", 64), CommandDigest: strings.Repeat("8", 64), LeaseID: "lease-1", FencingToken: 1, LeaseExpiresAt: time.Now().Add(30 * time.Minute)}, Subjects: subjects}
+}
+
+func completionReviewObservationOperationForTest(provider string) v1.ProviderReviewObservationOperation {
+	op := reviewObservationOperationForTest(provider)
+	op.SchemaVersion = v1.ProviderReviewObservationCompletionVersion
+	op.Purpose = v1.ProviderReviewObservationCompletionRevalidation
+	op.ExpectedTargetBranch = "main"
+	return op
+}
+
+func TestGitHubCompletionRevalidationProvesExactMergeAndTargetReachability(t *testing.T) {
+	mergeSHA := strings.Repeat("a", 40)
+	targetSHA := strings.Repeat("b", 40)
+	seen := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.Method+" "+r.URL.Path]++
+		if r.Method != http.MethodGet {
+			t.Fatalf("mutation %s", r.Method)
+		}
+		switch r.URL.Path {
+		case "/repositories/123":
+			io.WriteString(w, `{"id":123,"full_name":"acme/repo"}`)
+		case "/repos/acme/repo/pulls/7":
+			io.WriteString(w, `{"number":7,"state":"closed","merged":true,"head":{"sha":"0123456789abcdef0123456789abcdef01234567"},"base":{"ref":"main"},"merge_commit_sha":"`+mergeSHA+`","merged_at":"2026-08-21T12:00:00Z","updated_at":"2026-08-21T12:01:00Z","merged_by":{"id":42,"type":"User"}}`)
+		case "/repos/acme/repo/git/ref/heads/main":
+			io.WriteString(w, `{"ref":"refs/heads/main","object":{"type":"commit","sha":"`+targetSHA+`"}}`)
+		case "/repos/acme/repo/compare/" + mergeSHA + "..." + targetSHA:
+			io.WriteString(w, `{"status":"ahead","base_commit":{"sha":"`+mergeSHA+`"},"merge_base_commit":{"sha":"`+mergeSHA+`"}}`)
+		case "/repos/acme/repo/pulls/7/reviews", "/repos/acme/repo/issues/7/comments", "/repos/acme/repo/pulls/7/comments":
+			io.WriteString(w, `[]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	out := newGitHubPublisher(server.URL, "secret", server.Client()).observeProviderReviews(context.Background(), completionReviewObservationOperationForTest("github"))
+	if out.Kind != v1.ProviderReviewObservationSucceeded || out.RequestState != v1.ProviderReviewObservationRequestMerged ||
+		out.MergeCommitSHA != mergeSHA || out.TargetBranch != "main" || out.TargetHeadSHA != targetSHA ||
+		!out.MergeCommitReachableFromTarget || out.MergedByProviderAccountID != "42" ||
+		!out.MergedAt.Equal(time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)) ||
+		!out.ProviderUpdatedAt.Equal(time.Date(2026, 8, 21, 12, 1, 0, 0, time.UTC)) {
+		t.Fatalf("out=%#v", out)
+	}
+	if seen["GET /repos/acme/repo/compare/"+mergeSHA+"..."+targetSHA] != 1 {
+		t.Fatalf("exact commit comparison not observed: %#v", seen)
+	}
+}
+
+func TestGitHubCompletionRevalidationEmitsExactNegativeReachability(t *testing.T) {
+	mergeSHA := strings.Repeat("a", 40)
+	targetSHA := strings.Repeat("b", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repositories/123":
+			io.WriteString(w, `{"id":123,"full_name":"acme/repo"}`)
+		case "/repos/acme/repo/pulls/7":
+			io.WriteString(w, `{"number":7,"state":"closed","merged":true,"head":{"sha":"0123456789abcdef0123456789abcdef01234567"},"base":{"ref":"main"},"merge_commit_sha":"`+mergeSHA+`","merged_at":"2026-08-21T12:00:00Z","updated_at":"2026-08-21T12:01:00Z","merged_by":{"id":42,"type":"User"}}`)
+		case "/repos/acme/repo/git/ref/heads/main":
+			io.WriteString(w, `{"ref":"refs/heads/main","object":{"type":"commit","sha":"`+targetSHA+`"}}`)
+		case "/repos/acme/repo/compare/" + mergeSHA + "..." + targetSHA:
+			io.WriteString(w, `{"status":"diverged","base_commit":{"sha":"`+mergeSHA+`"},"merge_base_commit":{"sha":"`+strings.Repeat("c", 40)+`"}}`)
+		case "/repos/acme/repo/pulls/7/reviews", "/repos/acme/repo/issues/7/comments", "/repos/acme/repo/pulls/7/comments":
+			io.WriteString(w, `[]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	out := newGitHubPublisher(server.URL, "secret", server.Client()).observeProviderReviews(context.Background(), completionReviewObservationOperationForTest("github"))
+	if out.Kind != v1.ProviderReviewObservationSucceeded || out.MergeCommitReachableFromTarget {
+		t.Fatalf("out=%#v", out)
+	}
+}
+
+func TestGitHubCompletionReachabilityProofIsClosed(t *testing.T) {
+	mergeSHA := strings.Repeat("a", 40)
+	targetSHA := strings.Repeat("b", 40)
+	for name, test := range map[string]struct {
+		status        int
+		body          string
+		target        string
+		wantReachable bool
+		wantCode      v1.ProviderReviewObservationErrorCode
+	}{
+		"identical":    {status: http.StatusOK, body: `{"status":"identical","base_commit":{"sha":"` + mergeSHA + `"},"merge_base_commit":{"sha":"` + mergeSHA + `"}}`, target: mergeSHA, wantReachable: true},
+		"behind":       {status: http.StatusOK, body: `{"status":"behind","base_commit":{"sha":"` + mergeSHA + `"},"merge_base_commit":{"sha":"` + targetSHA + `"}}`, target: targetSHA},
+		"inconsistent": {status: http.StatusOK, body: `{"status":"ahead","base_commit":{"sha":"` + mergeSHA + `"},"merge_base_commit":{"sha":"` + targetSHA + `"}}`, target: targetSHA, wantCode: v1.ProviderReviewObservationInvalidProviderResponse},
+		"unavailable":  {status: http.StatusServiceUnavailable, body: `{}`, target: targetSHA, wantCode: v1.ProviderReviewObservationProviderUnavailable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+				io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			publisher := newGitHubPublisher(server.URL, "secret", server.Client())
+			reachable, failure := publisher.githubMergeCommitReachableFromTarget(context.Background(), "", mergeSHA, test.target)
+			if test.wantCode == "" {
+				if failure != nil || reachable != test.wantReachable {
+					t.Fatalf("reachable=%t failure=%#v", reachable, failure)
+				}
+			} else if failure == nil || failure.Code != test.wantCode {
+				t.Fatalf("reachable=%t failure=%#v", reachable, failure)
+			}
+		})
+	}
+}
+
+func TestGitHubCompletionEvidenceRejectsUnprovableTargetFacts(t *testing.T) {
+	mergeSHA := strings.Repeat("a", 40)
+	targetSHA := strings.Repeat("b", 40)
+	request := githubReviewObservationRequest{
+		Number: 7, State: "closed", Merged: true, MergeCommitSHA: mergeSHA,
+		MergedAt: time.Now().UTC().Add(-2 * time.Minute), UpdatedAt: time.Now().UTC().Add(-time.Minute),
+	}
+	request.Head.SHA = strings.Repeat("1", 40)
+	request.Base.Ref = "main"
+	request.MergedBy = &struct {
+		ID uint64 `json:"id"`
+	}{ID: 42}
+	for name, handler := range map[string]http.HandlerFunc{
+		"target unavailable": func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) },
+		"target malformed": func(w http.ResponseWriter, _ *http.Request) {
+			io.WriteString(w, `{"ref":"refs/heads/other","object":{"type":"commit","sha":"`+targetSHA+`"}}`)
+		},
+		"comparison unavailable": func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "/git/ref/") {
+				io.WriteString(w, `{"ref":"refs/heads/main","object":{"type":"commit","sha":"`+targetSHA+`"}}`)
+				return
+			}
+			w.WriteHeader(http.StatusServiceUnavailable)
+		},
+		"invalid target SHA": func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "/git/ref/") {
+				io.WriteString(w, `{"ref":"refs/heads/main","object":{"type":"commit","sha":"short"}}`)
+				return
+			}
+			io.WriteString(w, `{"status":"ahead","base_commit":{"sha":"`+mergeSHA+`"},"merge_base_commit":{"sha":"`+mergeSHA+`"}}`)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			_, failure := newGitHubPublisher(server.URL, "secret", server.Client()).githubReviewCompletionEvidence(context.Background(), "", "main", request)
+			if failure == nil || failure.Kind == v1.ProviderReviewObservationSucceeded {
+				t.Fatalf("failure=%#v", failure)
+			}
+		})
+	}
+}
+
+func TestGitHubCompletionRejectsMalformedProviderPathFactsBeforeDependentRequest(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	defer server.Close()
+	publisher := newGitHubPublisher(server.URL, "secret", server.Client())
+	request := githubReviewObservationRequest{
+		Number: 7, State: "closed", Merged: true, MergeCommitSHA: "../../repos/other",
+		MergedAt: time.Now().UTC().Add(-2 * time.Minute), UpdatedAt: time.Now().UTC().Add(-time.Minute),
+	}
+	request.Head.SHA = strings.Repeat("1", 40)
+	request.Base.Ref = "main"
+	request.MergedBy = &struct {
+		ID uint64 `json:"id"`
+	}{ID: 42}
+	if _, failure := publisher.githubReviewCompletionEvidence(context.Background(), "", "main", request); failure == nil || failure.Code != v1.ProviderReviewObservationInvalidProviderResponse {
+		t.Fatalf("failure=%#v", failure)
+	}
+	if _, failure := publisher.githubMergeCommitReachableFromTarget(context.Background(), "", strings.Repeat("a", 40), "../target"); failure == nil || failure.Code != v1.ProviderReviewObservationInvalidProviderResponse {
+		t.Fatalf("failure=%#v", failure)
+	}
+	if calls != 0 {
+		t.Fatalf("malformed provider facts triggered %d dependent requests", calls)
+	}
+}
+
+func TestGitLabCompletionRevalidationNeverInfersAmbiguousMergeUser(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		io.WriteString(w, `{"state":"merged","merge_user":{"id":42}}`)
+	}))
+	defer server.Close()
+	out := newGitLabPublisher(server.URL, "secret", server.Client()).observeProviderReviews(context.Background(), completionReviewObservationOperationForTest("gitlab"))
+	if out.Kind != v1.ProviderReviewObservationPermanent || out.Code != v1.ProviderReviewObservationUnsupportedProviderInstance ||
+		out.MergedByProviderAccountID != "" || calls != 0 {
+		t.Fatalf("out=%#v calls=%d", out, calls)
+	}
+}
+
+func TestCompletionRevalidationFailsClosedWithoutProviderProof(t *testing.T) {
+	t.Run("github target authority mismatch", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/repositories/123":
+				io.WriteString(w, `{"id":123,"full_name":"acme/repo"}`)
+			case "/repos/acme/repo/pulls/7":
+				io.WriteString(w, `{"number":7,"state":"closed","merged":true,"head":{"sha":"0123456789abcdef0123456789abcdef01234567"},"base":{"ref":"release"},"merge_commit_sha":"`+strings.Repeat("a", 40)+`","merged_at":"2026-08-21T12:00:00Z","updated_at":"2026-08-21T12:01:00Z","merged_by":{"id":42}}`)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+		out := newGitHubPublisher(server.URL, "secret", server.Client()).observeProviderReviews(context.Background(), completionReviewObservationOperationForTest("github"))
+		if out.Kind != v1.ProviderReviewObservationPermanent || out.Code != v1.ProviderReviewObservationIncomplete {
+			t.Fatalf("out=%#v", out)
+		}
+	})
+	t.Run("github missing merger", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/repositories/123":
+				io.WriteString(w, `{"id":123,"full_name":"acme/repo"}`)
+			case "/repos/acme/repo/pulls/7":
+				io.WriteString(w, `{"number":7,"state":"closed","merged":true,"head":{"sha":"0123456789abcdef0123456789abcdef01234567"},"base":{"ref":"main"},"merge_commit_sha":"`+strings.Repeat("a", 40)+`","merged_at":"2026-08-21T12:00:00Z","updated_at":"2026-08-21T12:01:00Z"}`)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+		out := newGitHubPublisher(server.URL, "secret", server.Client()).observeProviderReviews(context.Background(), completionReviewObservationOperationForTest("github"))
+		if out.Kind != v1.ProviderReviewObservationPermanent || out.Code != v1.ProviderReviewObservationInvalidProviderResponse {
+			t.Fatalf("out=%#v", out)
+		}
+	})
+	t.Run("gitlab unsupported before identity lookup", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+		defer server.Close()
+		out := observeThroughRegistry(t, server, "gitlab", completionReviewObservationOperationForTest("gitlab"))
+		if out.Kind != v1.ProviderReviewObservationPermanent || out.Code != v1.ProviderReviewObservationUnsupportedProviderInstance || out.MergedByProviderAccountID != "" || calls != 0 {
+			t.Fatalf("out=%#v calls=%d", out, calls)
+		}
+	})
+	t.Run("bitbucket unsupported", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+		defer server.Close()
+		out := observeThroughRegistry(t, server, "bitbucket", completionReviewObservationOperationForTest("bitbucket"))
+		if out.Kind != v1.ProviderReviewObservationPermanent || out.Code != v1.ProviderReviewObservationUnsupportedProviderInstance || calls != 0 {
+			t.Fatalf("out=%#v calls=%d", out, calls)
+		}
+	})
 }
 
 func TestGitHubProviderReviewObservationIsGETOnlyAndMetadataOnly(t *testing.T) {
@@ -252,7 +496,7 @@ func TestReviewObservationRegistryFailsClosedBeforeNetwork(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			out := registry.ObserveProviderReviews(context.Background(), tc.op)
+			out := registry.ObserveProviderReviews(context.Background(), tc.op, nil)
 			if out.Code != tc.code || calls != 0 {
 				t.Fatalf("out=%#v calls=%d", out, calls)
 			}
@@ -261,7 +505,7 @@ func TestReviewObservationRegistryFailsClosedBeforeNetwork(t *testing.T) {
 	badToken := &Registry{installations: map[string]config.SourcePublicationInstallationConfig{"installation-1": {Provider: "github", APIBaseURL: server.URL, TokenFile: t.TempDir() + "/missing"}}, httpClient: server.Client()}
 	op := reviewObservationOperationForTest("github")
 	op.ProviderInstanceKey = configuredProviderInstanceKey("github", server.URL)
-	if out := badToken.ObserveProviderReviews(context.Background(), op); out.Code != v1.ProviderReviewObservationInstallationInactive || calls != 0 {
+	if out := badToken.ObserveProviderReviews(context.Background(), op, nil); out.Code != v1.ProviderReviewObservationInstallationInactive || calls != 0 {
 		t.Fatalf("token out=%#v calls=%d", out, calls)
 	}
 }
@@ -766,7 +1010,7 @@ func TestReviewObservationPaginationAndProviderDispatchAreClosed(t *testing.T) {
 	op := reviewObservationOperationForTest("github")
 	op.Provider = "unknown"
 	op.ProviderInstanceKey = configuredProviderInstanceKey("unknown", "https://provider.example")
-	if out := registry.ObserveProviderReviews(context.Background(), op); out.Code != v1.ProviderReviewObservationUnsupportedProviderInstance {
+	if out := registry.ObserveProviderReviews(context.Background(), op, nil); out.Code != v1.ProviderReviewObservationUnsupportedProviderInstance {
 		t.Fatalf("out=%#v", out)
 	}
 	badSubject := reviewObservationOperationForTest("gitlab")

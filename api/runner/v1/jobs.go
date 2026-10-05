@@ -70,9 +70,21 @@ func (job *JobSpec) UnmarshalJSON(data []byte) error {
 }
 
 type JobRepository struct {
-	RepositoryID string `json:"repository_id"`
-	BaseBranch   string `json:"base_branch,omitempty"`
-	Primary      bool   `json:"primary,omitempty"`
+	RepositoryID                string `json:"repository_id"`
+	RepositoryHeadObservationID string `json:"repository_head_observation_id,omitempty"`
+	BaseBranch                  string `json:"base_branch,omitempty"`
+	BaseSHA                     string `json:"base_sha,omitempty"`
+	Primary                     bool   `json:"primary,omitempty"`
+}
+
+// PlanRepositoryAuthority is the complete ordered repository identity emitted
+// with a plan. Unlike generic job input, every field is explicit on the wire.
+type PlanRepositoryAuthority struct {
+	RepositoryID                string `json:"repository_id"`
+	RepositoryHeadObservationID string `json:"repository_head_observation_id"`
+	BaseBranch                  string `json:"base_branch"`
+	BaseSHA                     string `json:"base_sha"`
+	Primary                     bool   `json:"primary"`
 }
 
 type TicketContext struct {
@@ -90,6 +102,7 @@ type AgentPackRef struct {
 }
 
 type CommandPayload struct {
+	AgentConfigScan                          *AgentConfigScanAuthority                          `json:"agent_config_scan,omitempty"`
 	Command                                  string                                             `json:"command"`
 	Job                                      *JobSpec                                           `json:"job,omitempty"`
 	JobID                                    string                                             `json:"job_id,omitempty"`

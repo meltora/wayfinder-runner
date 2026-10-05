@@ -63,7 +63,7 @@ func (c *Client) Enroll(ctx context.Context, req Request) (*Response, error) {
 		return nil, fmt.Errorf("enroll response exceeds size limit")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("enroll rejected: status %d: %s", resp.StatusCode, truncateResponse(respBody))
+		return nil, newRejectedError(resp, respBody)
 	}
 	var out Response
 	decoder := json.NewDecoder(bytes.NewReader(respBody))

@@ -10,6 +10,12 @@ import (
 )
 
 func (p *gitLabPublisher) observeProviderReviews(ctx context.Context, op v1.ProviderReviewObservationOperation) v1.ProviderReviewObservationResultOutcome {
+	if providerReviewCompletionRequested(op) {
+		// GitLab's merge_user is explicitly ambiguous: it can identify either the
+		// merger or the user who enabled auto-merge. It cannot satisfy the exact
+		// merged_by_provider_account_id contract without inference.
+		return reviewObservationPermanent(v1.ProviderReviewObservationUnsupportedProviderInstance)
+	}
 	repoID, err := strconv.ParseUint(op.ProviderRepositoryID, 10, 64)
 	if err != nil || repoID == 0 || strconv.FormatUint(repoID, 10) != op.ProviderRepositoryID {
 		return reviewObservationPermanent(v1.ProviderReviewObservationRepositoryMismatch)

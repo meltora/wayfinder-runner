@@ -10,9 +10,10 @@ import (
 )
 
 type fakeSourcePublicationPublisher struct {
-	outcome   v1.SourcePublicationResultOutcome
-	providers []string
-	calls     int
+	outcome    v1.SourcePublicationResultOutcome
+	providers  []string
+	calls      int
+	credential *v1.ProviderCredential
 }
 
 type blockingSourcePublicationPublisher struct {
@@ -28,6 +29,7 @@ func (publisher *blockingSourcePublicationPublisher) ReadyProviders() []string {
 func (publisher *blockingSourcePublicationPublisher) Publish(
 	ctx context.Context,
 	_ v1.SourcePublicationOperation,
+	_ *v1.ProviderCredential,
 ) v1.SourcePublicationResultOutcome {
 	close(publisher.started)
 	select {
@@ -47,8 +49,10 @@ func (publisher *fakeSourcePublicationPublisher) ReadyProviders() []string {
 func (publisher *fakeSourcePublicationPublisher) Publish(
 	_ context.Context,
 	_ v1.SourcePublicationOperation,
+	credential *v1.ProviderCredential,
 ) v1.SourcePublicationResultOutcome {
 	publisher.calls++
+	publisher.credential = credential
 	return publisher.outcome
 }
 

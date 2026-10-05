@@ -27,8 +27,11 @@ func validJob() v1.JobSpec {
 		JobID: "job-1", AttemptID: "attempt-1", ProjectID: "project-1", Kind: v1.JobKindPlan,
 		LeaseID: "lease-1", ManifestID: "manifest-1", ManifestDigest: strings.Repeat("a", 64),
 		WorkflowRevision: 2, FencingToken: 1,
-		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
-		Ticket:       v1.TicketContext{Key: "PROJ-1", Summary: "Implement feature"},
+		Repositories: []v1.JobRepository{{
+			RepositoryID: "repo-1", RepositoryHeadObservationID: "head-observation-1",
+			BaseBranch: "main", BaseSHA: strings.Repeat("1", 40), Primary: true,
+		}},
+		Ticket: v1.TicketContext{Key: "PROJ-1", Summary: "Implement feature"},
 	}
 }
 
@@ -193,10 +196,31 @@ func TestJobSpecAcceptsValidPlanAndRejectsEveryUntrustedBoundary(t *testing.T) {
 		"oversized fence":   func(j *v1.JobSpec) { j.FencingToken = 1 << 53 },
 		"no repository":     func(j *v1.JobSpec) { j.Repositories = nil },
 		"bad repository id": func(j *v1.JobSpec) { j.Repositories[0].RepositoryID = "bad/id" },
-		"duplicate repo":    func(j *v1.JobSpec) { j.Repositories = append(j.Repositories, j.Repositories[0]) },
-		"no primary":        func(j *v1.JobSpec) { j.Repositories[0].Primary = false },
+		"missing head observation": func(j *v1.JobSpec) {
+			j.Repositories[0].RepositoryHeadObservationID = ""
+		},
+		"invalid head observation": func(j *v1.JobSpec) {
+			j.Repositories[0].RepositoryHeadObservationID = "bad/id"
+		},
+		"missing base sha":    func(j *v1.JobSpec) { j.Repositories[0].BaseSHA = "" },
+		"invalid base sha":    func(j *v1.JobSpec) { j.Repositories[0].BaseSHA = "abc" },
+		"missing base branch": func(j *v1.JobSpec) { j.Repositories[0].BaseBranch = "" },
+		"duplicate repo":      func(j *v1.JobSpec) { j.Repositories = append(j.Repositories, j.Repositories[0]) },
+		"no primary":          func(j *v1.JobSpec) { j.Repositories[0].Primary = false },
 		"multiple primary": func(j *v1.JobSpec) {
-			j.Repositories = append(j.Repositories, v1.JobRepository{RepositoryID: "repo-2", Primary: true})
+			j.Repositories = append(j.Repositories, v1.JobRepository{
+				RepositoryID: "repo-2", RepositoryHeadObservationID: "head-observation-2",
+				BaseBranch: "main", BaseSHA: strings.Repeat("2", 40), Primary: true,
+			})
+		},
+		"primary not first": func(j *v1.JobSpec) {
+			j.Repositories = []v1.JobRepository{
+				{
+					RepositoryID: "repo-2", RepositoryHeadObservationID: "head-observation-2",
+					BaseBranch: "main", BaseSHA: strings.Repeat("2", 40),
+				},
+				j.Repositories[0],
+			}
 		},
 		"unsafe base": func(j *v1.JobSpec) { j.Repositories[0].BaseBranch = "../main" },
 		"ticket key":  func(j *v1.JobSpec) { j.Ticket.Key = "" },

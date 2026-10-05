@@ -23,11 +23,13 @@ import (
 )
 
 type Detector struct {
+	AgentConfigScanRepositoryIDs                          []string
 	RunnerID                                              string
 	RunnerVersion                                         string
 	Labels                                                map[string]string
 	LookPath                                              func(string) (string, error)
 	RunVersion                                            func(ctx context.Context, name string, args ...string) (string, error)
+	RunProviderVersion                                    func(ctx context.Context, env []string, name string, args ...string) (string, error)
 	ProbeDocker                                           func(ctx context.Context) isolation.DockerInfo
 	SourcePublicationProviders                            []string
 	PreviewObservationProfiles                            []v1.PreviewObservationProfileCapability
@@ -42,10 +44,13 @@ type Detector struct {
 	WorkIntakeProposalPromptTemplateDigest                string
 	WorkIntakeProposalPolicyDigest                        string
 	WorkIntakeProposalModelExecutionConfigDigest          string
+	RunnerConfigurationDigest                             string
 	WorkIntakeProposalHardened                            bool
 	WorkIntakeProposalRestrictedEgress                    bool
 	AuthReady                                             func(string) bool
 	trustedAgentPackKeyIDs                                []string
+	providerBinaries                                      map[string]string
+	providerEnvironment                                   map[string][]string
 }
 
 func New(runnerID, version string, labels, agentPackPublicKeys map[string]string) *Detector {
@@ -60,6 +65,7 @@ func New(runnerID, version string, labels, agentPackPublicKeys map[string]string
 		Labels:                 labels,
 		LookPath:               exec.LookPath,
 		RunVersion:             defaultRunVersion,
+		RunProviderVersion:     defaultRunProviderVersion,
 		ProbeDocker:            isolation.ProbeDocker,
 		trustedAgentPackKeyIDs: trustedAgentPackKeyIDs,
 	}
@@ -68,7 +74,7 @@ func New(runnerID, version string, labels, agentPackPublicKeys map[string]string
 func defaultRunVersion(ctx context.Context, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	// #nosec G204 -- callers use a fixed allowlist of git/docker/provider version commands without a shell.
+	// #nosec G204 -- callers use fixed tool names or validated operator-configured provider paths with --version and no shell.
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
@@ -118,8 +124,9 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		RunnerVersion:                         d.RunnerVersion,
 		ProtocolVersion:                       v1.ProtocolVersion,
 		AgentPackDeliveryAuthorityVersion:     v1.AgentPackDeliveryAuthorityVersion,
+		AgentPackRevocationEvictionVersion:    v1.AgentPackRevocationEvictionVersion,
 		AgentRunTransportVersion:              v1.AgentRunTransportVersion,
-		TrustedAgentPackKeyIDs:                append([]string(nil), d.trustedAgentPackKeyIDs...),
+		TrustedAgentPackKeyIDs:                append([]string{}, d.trustedAgentPackKeyIDs...),
 		SourcePublicationProviders:            sourcePublicationProviders,
 		PreviewObservationProfiles:            previewObservationProfiles,
 		PreviewLifecycleProfiles:              previewLifecycleProfiles,
@@ -134,7 +141,7 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		ProviderReviewFeedbackContentProviders:                providerReviewFeedbackContentProviders,
 		ProviderReviewFeedbackContentInstallations:            providerReviewFeedbackContentInstallations,
 	}
-	if d.WorkIntakeProposalHardened && d.WorkIntakeProposalRestrictedEgress && d.hardenedDockerReady(ctx) && d.WorkIntakeProposalAdapter != "" && d.WorkIntakeProposalModel != "" &&
+	if d.WorkIntakeProposalHardened && d.WorkIntakeProposalRestrictedEgress && d.hardenedDockerReady(ctx) && d.providerBinary(d.WorkIntakeProposalAdapter) != "" && d.WorkIntakeProposalModel != "" &&
 		validCapabilityDigest(d.WorkIntakeProposalPromptTemplateDigest) &&
 		validCapabilityDigest(d.WorkIntakeProposalPolicyDigest) &&
 		validCapabilityDigest(d.WorkIntakeProposalModelExecutionConfigDigest) {
@@ -142,7 +149,7 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		if d.AuthReady != nil {
 			ready = d.AuthReady(d.WorkIntakeProposalAdapter)
 		}
-		if _, err := d.LookPath(d.WorkIntakeProposalAdapter); err == nil && ready {
+		if _, err := d.LookPath(d.providerBinary(d.WorkIntakeProposalAdapter)); err == nil && ready {
 			m.WorkIntakeProposalTransportVersion = v1.WorkIntakeProposalTransportVersion
 			m.WorkIntakeProposalAdapter = d.WorkIntakeProposalAdapter
 			m.WorkIntakeProposalModel = d.WorkIntakeProposalModel
@@ -150,6 +157,9 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 			m.WorkIntakeProposalPolicyDigest = d.WorkIntakeProposalPolicyDigest
 			m.WorkIntakeProposalModelExecutionConfigDigest = d.WorkIntakeProposalModelExecutionConfigDigest
 		}
+	}
+	if validCapabilityDigest(d.RunnerConfigurationDigest) {
+		m.RunnerConfigurationDigest = d.RunnerConfigurationDigest
 	}
 	if len(sourcePublicationProviders) != 0 {
 		m.SourcePublicationTransportVersion = v1.SourcePublicationTransportVersion
@@ -182,6 +192,10 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	if _, err := d.LookPath("git"); err == nil {
 		if out, err := d.RunVersion(ctx, "git", "--version"); err == nil {
 			m.GitVersion = out
+			if ids := scanCapabilityRepositories(d.AgentConfigScanRepositoryIDs); len(ids) > 0 && scanCapabilitySupportedOS(runtime.GOOS) {
+				m.AgentConfigScanTransportVersion = v1.AgentConfigScanTransportVersion
+				m.AgentConfigScanRepositoryIDs = ids
+			}
 		}
 	}
 	for _, eng := range []string{"docker", "podman"} {
@@ -199,30 +213,27 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	if _, err := os.Stat("/dev/kvm"); err == nil {
 		m.KVM = true
 	}
-	for _, agent := range []struct{ adapter, bin string }{
-		{"codex", "codex"},
-		{"claude", "claude"},
-		{"opencode", "opencode"},
-	} {
-		ac := v1.AgentCapability{Provider: agent.adapter}
-		if adapter, err := provider.For(agent.adapter); err == nil {
+	for _, name := range []string{"codex", "claude", "opencode"} {
+		binary := d.providerBinary(name)
+		ac := v1.AgentCapability{Provider: name}
+		if adapter, err := provider.For(name); err == nil {
 			hooks := adapter.ManagedHooks()
 			ac.ManagedHooksSupported = hooks.Supported
 			ac.ManagedHooksVersion = hooks.Version
 			ac.ManagedHookEvents = append([]string(nil), hooks.Events...)
 		}
-		if _, err := d.LookPath(agent.bin); err == nil {
+		if resolved, err := d.LookPath(binary); err == nil {
 			ac.Available = true
-			if out, err := d.RunVersion(ctx, agent.bin, "--version"); err == nil {
-				ac.Version = out
+			if out, err := d.runProviderVersion(ctx, name, binary); err == nil {
+				ac.Version = providerVersion(name, out, append([]string{binary, resolved}, d.providerEnvironmentValues(name)...)...)
 			}
 			if d.AuthReady != nil {
-				ac.AuthReady = d.AuthReady(agent.adapter)
+				ac.AuthReady = d.AuthReady(name)
 			} else {
-				ac.AuthReady = authReady(agent.adapter)
+				ac.AuthReady = d.authReady(name)
 			}
 		}
-		m.Agents = append(m.Agents, ac)
+		m.Agents = append(m.Agents, providerCapabilityAliases(ac)...)
 	}
 	for _, sup := range []string{"herdr", "tmux"} {
 		if _, err := d.LookPath(sup); err == nil {

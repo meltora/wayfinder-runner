@@ -12,7 +12,7 @@ import (
 
 type providerReviewFeedbackContentReader interface {
 	ReadyProviderReviewFeedbackContentInstallations() []v1.ProviderReviewFeedbackContentInstallationCapability
-	FetchProviderReviewFeedbackContent(context.Context, v1.ProviderReviewFeedbackContentOperation) v1.ProviderReviewFeedbackContentResultOutcome
+	FetchProviderReviewFeedbackContent(context.Context, v1.ProviderReviewFeedbackContentOperation, *v1.ProviderCredential) v1.ProviderReviewFeedbackContentResultOutcome
 }
 
 func validateProviderReviewFeedbackContentCommandBoundary(c v1.CommandPayload) error {
@@ -31,8 +31,9 @@ func validateProviderReviewFeedbackContentCommandBoundary(c v1.CommandPayload) e
 	return nil
 }
 
-func (d *Daemon) executeProviderReviewFeedbackContent(ctx context.Context, id string, op v1.ProviderReviewFeedbackContentOperation) error {
-	if d.providerReviewFeedbackContentReader == nil {
+func (d *Daemon) executeProviderReviewFeedbackContent(ctx context.Context, id string, op v1.ProviderReviewFeedbackContentOperation, providerCredential *v1.ProviderCredential) error {
+	reader := d.sourcePublicationServices().providerReviewFeedbackContentReader
+	if reader == nil {
 		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}
 	if err := validation.ProviderReviewFeedbackContentCommandMessageID(id); err != nil {
@@ -48,7 +49,7 @@ func (d *Daemon) executeProviderReviewFeedbackContent(ctx context.Context, id st
 	if code := expiredProviderReviewFeedbackAuthority(op, now); code != "" {
 		outcome = feedbackContentPermanent(code)
 	} else {
-		outcome = d.providerReviewFeedbackContentReader.FetchProviderReviewFeedbackContent(fetchCtx, op)
+		outcome = reader.FetchProviderReviewFeedbackContent(fetchCtx, op, providerCredential)
 	}
 	observed := time.Now().UTC()
 	if observed.Before(op.EvidenceObservedAt) {

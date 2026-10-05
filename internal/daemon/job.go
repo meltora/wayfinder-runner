@@ -48,6 +48,7 @@ type jobRunner struct {
 	sanitizedLogs     int
 
 	reviewFeedbackContinuation *v1.ReviewFeedbackContinuationAuthority
+	providerCredential         *v1.ProviderCredential
 
 	decisionMu         sync.Mutex
 	decisions          map[string]chan v1.CommandPayload
@@ -55,24 +56,34 @@ type jobRunner struct {
 
 	checkMu sync.Mutex
 
-	reviewReadyMu     sync.Mutex
-	reviewReadyIntent *reviewReadyIntent
+	reviewReadyMu      sync.Mutex
+	reviewReadyIntent  *reviewReadyIntent
+	startEvidenceOnce  sync.Once
+	startEvidenceReady chan struct{}
 
-	idempotencyMu   sync.Mutex
-	seenIdempotency map[string]*toolCallMemo
-	repositoryURL   string
-	repositoryID    string
-	repositories    []checkedOutRepository
-	packDir         string
+	idempotencyMu            sync.Mutex
+	seenIdempotency          map[string]*toolCallMemo
+	repositoryURL            string
+	repositoryID             string
+	repositories             []checkedOutRepository
+	verifiedPlanRepositories []v1.JobRepository
+	packDir                  string
+	packFiles                map[string]string
+	configDir                string
+	composition              *compositionBody
+	compositionHook          func(context.Context) error
+	configuration            *hotConfiguration
 }
 
 type checkedOutRepository struct {
-	ID      string
-	URL     string
-	Base    string
-	Branch  string
-	WorkDir string
-	Primary bool
+	ID          string
+	URL         string
+	Base        string
+	BaseSHA     string
+	Branch      string
+	WorkDir     string
+	Primary     bool
+	Fingerprint string
 }
 
 type toolCallMemo struct {
@@ -113,18 +124,31 @@ func (jr *jobRunner) startupFailureOutcome(
 }
 
 func (d *Daemon) startJob(ctx context.Context, job v1.JobSpec) error {
-	return d.startJobWithReviewFeedbackContinuation(ctx, job, nil)
+	return d.startJobWithProviderCredential(ctx, job, nil)
+}
+
+func (d *Daemon) startJobWithProviderCredential(
+	ctx context.Context,
+	job v1.JobSpec,
+	providerCredential *v1.ProviderCredential,
+) error {
+	return d.startJobWithReviewFeedbackContinuation(ctx, job, nil, providerCredential)
 }
 
 func (d *Daemon) startJobWithReviewFeedbackContinuation(
 	ctx context.Context,
 	job v1.JobSpec,
 	continuation *v1.ReviewFeedbackContinuationAuthority,
+	providerCredential *v1.ProviderCredential,
 ) error {
 	if err := validation.JobSpec(job); err != nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
 	}
-	if err := d.verifyJobAgentPackAuthority(job); err != nil {
+	configuration := d.hotConfiguration()
+	if err := refuseRevokedAgentPack(job, configuration.revokedAgentPackDigests); err != nil {
+		return err
+	}
+	if err := d.verifyAgentPackAuthority(job, configuration.agentPackPublicKeys); err != nil {
 		return err
 	}
 	job, err := v1.CloneJobSpec(job)
@@ -140,7 +164,7 @@ func (d *Daemon) startJobWithReviewFeedbackContinuation(
 	if d.updateDrain != nil {
 		return rejectCommand(v1.CommandAckReasonRunnerDraining, nil)
 	}
-	if d.activeJob != nil || d.workIntakeProposalActive {
+	if d.activeJob != nil || d.agentConfigScanCancel != nil || d.workIntakeProposalActive {
 		return rejectCommand(v1.CommandAckReasonRunnerBusy, nil)
 	}
 	expiresAt := job.LeaseExpiresAt
@@ -199,6 +223,11 @@ func (d *Daemon) startJobWithReviewFeedbackContinuation(
 		decisions:                  map[string]chan v1.CommandPayload{},
 		seenIdempotency:            map[string]*toolCallMemo{},
 		reviewFeedbackContinuation: continuation,
+		providerCredential:         providerCredential,
+		configuration:              &configuration,
+	}
+	if job.AgentRunAuthority != nil {
+		jr.startEvidenceReady = make(chan struct{})
 	}
 	jr.ctx, jr.cancel = context.WithCancel(context.Background())
 	d.activeJob = jr
@@ -358,6 +387,7 @@ func (jr *jobRunner) run() {
 		return
 	}
 	defer func() { _ = os.RemoveAll(socketDir) }()
+	jr.configDir = socketDir
 	sockPath := filepath.Join(socketDir, "mcp.sock")
 	tokenPath := filepath.Join(socketDir, "job.token")
 	if err := os.WriteFile(tokenPath, []byte(jr.jobToken+"\n"), 0o400); err != nil {
@@ -409,6 +439,7 @@ func (jr *jobRunner) run() {
 		Model:           d.cfg.AgentModel,
 		ResumeSessionID: job.ResumeSessionID,
 		ReadOnly:        job.Kind == v1.JobKindPlan,
+		Environment:     d.agentEnvironment(adapterName),
 	})
 	if err != nil {
 		finish(
@@ -495,6 +526,11 @@ func (jr *jobRunner) run() {
 		}()
 		isoPolicy.JobHome = jobHome
 	}
+	composition := compositionStartContext{
+		adapter: adapterName, isolation: iso.Name(),
+		pluginLoaded: compositionPluginLoaded(spec.Args), hostHome: compositionHostHome(spec.Env),
+		hostClaudeDir: compositionHostClaudeDir(spec.ProviderEnvironment),
+	}
 	spec.Command, spec.Args, err = iso.Wrap(spec.Command, spec.Args, isoPolicy)
 	if err != nil {
 		finish(
@@ -523,7 +559,11 @@ func (jr *jobRunner) run() {
 	}
 	spec.RuntimeDir = supervisorRoot
 
-	jr.publishProgress(ctx, "agent_started", "provider process starting", "")
+	if outcome, failed := jr.verifyCompositionBeforeStart(ctx, composition); failed {
+		finish(outcome, nil)
+		return
+	}
+	jr.publishProgress(ctx, "provider_process_starting", "launching provider process", "")
 	outR, outW := io.Pipe()
 	spec.Stdout = outW
 	spec.Stderr = outW
@@ -553,16 +593,38 @@ func (jr *jobRunner) run() {
 		return
 	}
 	jr.proc = proc
-	jr.procMu.Unlock()
 	outputConsumed := make(chan struct{})
 	go func() {
 		defer close(outputConsumed)
 		jr.consumeOutput(outR)
 	}()
+	if err := jr.finalizeProviderStart(ctx, proc); err != nil {
+		leaseUnavailable := errors.Is(err, errJobStartLeaseUnavailable)
+		cancelled := errors.Is(err, errJobStartCancelled)
+		jr.cancelled = true
+		jr.leaseLost = leaseUnavailable
+		jr.procMu.Unlock()
+		_ = outW.Close()
+		_ = proc.Wait()
+		<-outputConsumed
+		jr.logger.Error("provider start evidence unavailable", "err", err)
+		if leaseUnavailable {
+			finish(jobOutcome{State: v1.JobFinishedQuarantined, FailureCode: v1.JobFailureLeaseLost, FailureMessage: "authoritative lease was lost"}, nil)
+			return
+		}
+		if cancelled {
+			finish(jobOutcome{State: v1.JobFinishedCancelled, FailureCode: v1.JobFailureCancelled}, nil)
+			return
+		}
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureRunnerInternal, FailureMessage: "job start evidence could not be recorded"}, nil)
+		return
+	}
+	jr.procMu.Unlock()
 
 	exitErr := proc.Wait()
 	_ = outW.Close()
 	<-outputConsumed
+	jr.publishAfterExitComposition(ctx)
 	if reporter, ok := proc.(supervisor.SessionReporter); ok {
 		if ref, err := reporter.SessionRef(); err == nil && ref != "" {
 			jr.procMu.Lock()
@@ -615,7 +677,7 @@ func (jr *jobRunner) run() {
 		rm.AllowLocal = d.cfg.AllowUnsafeDirect
 		state, _, err := jr.finalizeBuild(ctx, rm, true)
 		if err != nil {
-			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureBuildFinalization, FailureMessage: "build finalization failed"}, nil)
+			finish(buildFinalizationFailure(err), nil)
 			return
 		}
 		if state == "failed" {
@@ -684,6 +746,7 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 		return "", func() {}, fmt.Errorf("job must define exactly one primary repository")
 	}
 
+	repositories := jr.jobConfiguration().repositories
 	rm := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
 	rm.AllowLocal = d.cfg.AllowUnsafeDirect
 	cleanup := func() {
@@ -707,7 +770,7 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 			return "", func() {}, fmt.Errorf("repository %q appears more than once", ref.RepositoryID)
 		}
 		seen[ref.RepositoryID] = true
-		repository, ok := d.cfg.Repositories[ref.RepositoryID]
+		repository, ok := repositories[ref.RepositoryID]
 		if !ok {
 			cleanup()
 			return "", func() {}, fmt.Errorf("repository %q is not registered on this runner", ref.RepositoryID)
@@ -727,13 +790,41 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 		}
 		wtDir := filepath.Join(jr.workDir, "repositories", ref.RepositoryID)
 		branch := "job/" + job.JobID + "/" + job.AttemptID
-		if err := rm.CreateWorkspace(ctx, repository.URL, branch, base, wtDir); err != nil {
+		var workspaceErr error
+		if job.Kind == v1.JobKindPlan || job.Kind == v1.JobKindBuild {
+			workspaceErr = rm.CreateDetachedWorkspace(ctx, repository.URL, ref.BaseSHA, wtDir)
+			if job.Kind == v1.JobKindPlan {
+				branch = ""
+			} else if workspaceErr == nil {
+				workspaceErr = validation.GitRef("branch", branch)
+				if workspaceErr == nil {
+					_, workspaceErr = rm.Git(ctx, wtDir, "checkout", "-b", branch, ref.BaseSHA)
+				}
+				if workspaceErr != nil {
+					_ = rm.RemoveWorkspace(wtDir)
+				}
+			}
+		} else {
+			workspaceErr = rm.CreateWorkspace(ctx, repository.URL, branch, base, wtDir)
+		}
+		if workspaceErr != nil {
 			cleanup()
+			return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, workspaceErr)
+		}
+		if err := ensureRunnerArtifactsExcluded(wtDir); err != nil {
+			cleanup()
+			_ = rm.RemoveWorkspace(wtDir)
+			return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, err)
+		}
+		fingerprint, err := worktreeFingerprint(ctx, wtDir)
+		if err != nil {
+			cleanup()
+			_ = rm.RemoveWorkspace(wtDir)
 			return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, err)
 		}
 		runtimeRepository := checkedOutRepository{
-			ID: ref.RepositoryID, URL: repository.URL, Base: base,
-			Branch: branch, WorkDir: wtDir, Primary: ref.Primary,
+			ID: ref.RepositoryID, URL: repository.URL, Base: base, BaseSHA: ref.BaseSHA,
+			Branch: branch, WorkDir: wtDir, Primary: ref.Primary, Fingerprint: fingerprint,
 		}
 		jr.repositories = append(jr.repositories, runtimeRepository)
 		if ref.Primary {
@@ -746,6 +837,9 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 			cleanup()
 			return "", func() {}, fmt.Errorf("repository %s discovery: %w", ref.RepositoryID, err)
 		}
+	}
+	if job.Kind == v1.JobKindPlan {
+		jr.verifiedPlanRepositories = append([]v1.JobRepository(nil), refs...)
 	}
 
 	if job.AgentPack != nil {
@@ -785,7 +879,11 @@ func (jr *jobRunner) buildPrompt() string {
 	}
 	b.WriteString("\nFirst call the platform_get_job_context MCP tool for full context. ")
 	if jr.packDir != "" {
-		fmt.Fprintf(&b, "A signed, approved Agent Pack is mounted read-only at %s; load its instructions and relevant skills before acting. ", jr.packDir)
+		if jr.d.cfg.Isolation == "docker" {
+			fmt.Fprintf(&b, "A signed, approved Agent Pack is mounted read-only at %s; load its instructions and relevant skills before acting. ", jr.packDir)
+		} else {
+			fmt.Fprintf(&b, "A signed, approved Agent Pack is provided as a verified, permission-restricted directory at %s; load its instructions and relevant skills before acting. ", jr.packDir)
+		}
 	}
 	switch jr.job.Kind {
 	case v1.JobKindPlan:

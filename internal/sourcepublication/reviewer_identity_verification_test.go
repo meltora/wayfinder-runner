@@ -71,7 +71,7 @@ func TestGitHubReviewerIdentityVerificationUsesExactAccountAndEveryRepository(t 
 		RepositoryID: "repository-2", RepositoryExternalID: "102",
 	})
 	operation.RepositorySetDigest = v1.ReviewerIdentityRepositorySetDigest(operation.Repositories)
-	outcome := reviewerRegistryForServer(t, "github", server).VerifyReviewerIdentity(t.Context(), operation)
+	outcome := reviewerRegistryForServer(t, "github", server).VerifyReviewerIdentity(t.Context(), operation, nil)
 	if outcome.Kind != v1.ReviewerIdentityVerificationSucceeded || outcome.ProviderUsername != "octocat" ||
 		outcome.AssignmentPrincipal != "octocat" || len(outcome.Repositories) != 2 ||
 		outcome.Repositories[0].EffectiveReviewerAccess != v1.ReviewerIdentityEligible ||
@@ -91,7 +91,7 @@ func TestGitHubReviewerIdentityVerificationFailsClosedOnMismatchedAccount(t *tes
 	}))
 	defer server.Close()
 	outcome := reviewerRegistryForServer(t, "github", server).VerifyReviewerIdentity(
-		t.Context(), reviewerIdentityOperation("github", serverInstanceKey(t, server)),
+		t.Context(), reviewerIdentityOperation("github", serverInstanceKey(t, server)), nil,
 	)
 	if outcome.Kind != v1.ReviewerIdentityVerificationPermanent || outcome.Code != v1.ReviewerIdentityAccountNotFound {
 		t.Fatalf("outcome = %+v", outcome)
@@ -111,7 +111,7 @@ func TestGitHubReviewerIdentityVerificationRejectsRedirectAndOversizedResponses(
 			server := httptest.NewTLSServer(handler)
 			defer server.Close()
 			outcome := reviewerRegistryForServer(t, "github", server).VerifyReviewerIdentity(
-				t.Context(), reviewerIdentityOperation("github", serverInstanceKey(t, server)),
+				t.Context(), reviewerIdentityOperation("github", serverInstanceKey(t, server)), nil,
 			)
 			if outcome.Kind != v1.ReviewerIdentityVerificationPermanent {
 				t.Fatalf("outcome = %+v", outcome)
@@ -140,7 +140,7 @@ func TestGitHubReviewerIdentityVerificationClassifiesAuthenticationAndRateFailur
 			}))
 			defer server.Close()
 			outcome := reviewerRegistryForServer(t, "github", server).VerifyReviewerIdentity(
-				t.Context(), reviewerIdentityOperation("github", serverInstanceKey(t, server)),
+				t.Context(), reviewerIdentityOperation("github", serverInstanceKey(t, server)), nil,
 			)
 			if outcome.Kind != test.kind || outcome.Code != test.code {
 				t.Fatalf("outcome = %+v", outcome)
@@ -178,7 +178,7 @@ func TestGitHubReviewerIdentityVerificationRejectsRepositoryIdentityDrift(t *tes
 			defer server.Close()
 			verification := reviewerIdentityOperation("github", serverInstanceKey(t, server))
 			operation(&verification)
-			outcome := reviewerRegistryForServer(t, "github", server).VerifyReviewerIdentity(t.Context(), verification)
+			outcome := reviewerRegistryForServer(t, "github", server).VerifyReviewerIdentity(t.Context(), verification, nil)
 			if outcome.Kind != v1.ReviewerIdentityVerificationPermanent || outcome.Code != v1.ReviewerIdentityRepositoryAccessDenied {
 				t.Fatalf("outcome = %+v", outcome)
 			}
@@ -205,7 +205,7 @@ func TestGitLabReviewerIdentityVerificationUsesNumericMemberID(t *testing.T) {
 	defer server.Close()
 
 	operation := reviewerIdentityOperation("gitlab", serverInstanceKey(t, server))
-	outcome := reviewerRegistryForServer(t, "gitlab", server).VerifyReviewerIdentity(t.Context(), operation)
+	outcome := reviewerRegistryForServer(t, "gitlab", server).VerifyReviewerIdentity(t.Context(), operation, nil)
 	if outcome.Kind != v1.ReviewerIdentityVerificationSucceeded || outcome.ProviderUsername != "gitlab-user" ||
 		outcome.AssignmentPrincipal != "42" || len(outcome.Repositories) != 1 ||
 		outcome.Repositories[0].EffectiveReviewerAccess != v1.ReviewerIdentityEligible {
@@ -222,7 +222,7 @@ func TestGitLabReviewerIdentityVerificationRejectsMismatchedStableAccountID(t *t
 	}))
 	defer server.Close()
 	outcome := reviewerRegistryForServer(t, "gitlab", server).VerifyReviewerIdentity(
-		t.Context(), reviewerIdentityOperation("gitlab", serverInstanceKey(t, server)),
+		t.Context(), reviewerIdentityOperation("gitlab", serverInstanceKey(t, server)), nil,
 	)
 	if outcome.Kind != v1.ReviewerIdentityVerificationPermanent || outcome.Code != v1.ReviewerIdentityAccountNotFound {
 		t.Fatalf("outcome = %+v", outcome)
@@ -235,7 +235,7 @@ func TestGitLabReviewerIdentityVerificationRejectsInactiveAccount(t *testing.T) 
 	}))
 	defer server.Close()
 	outcome := reviewerRegistryForServer(t, "gitlab", server).VerifyReviewerIdentity(
-		t.Context(), reviewerIdentityOperation("gitlab", serverInstanceKey(t, server)),
+		t.Context(), reviewerIdentityOperation("gitlab", serverInstanceKey(t, server)), nil,
 	)
 	if outcome.Kind != v1.ReviewerIdentityVerificationPermanent || outcome.Code != v1.ReviewerIdentityInstallationInactive {
 		t.Fatalf("outcome = %+v", outcome)
@@ -255,7 +255,7 @@ func TestGitLabReviewerIdentityVerificationNormalizesInsufficientPermission(t *t
 	}))
 	defer server.Close()
 	outcome := reviewerRegistryForServer(t, "gitlab", server).VerifyReviewerIdentity(
-		t.Context(), reviewerIdentityOperation("gitlab", serverInstanceKey(t, server)),
+		t.Context(), reviewerIdentityOperation("gitlab", serverInstanceKey(t, server)), nil,
 	)
 	if outcome.Kind != v1.ReviewerIdentityVerificationSucceeded ||
 		outcome.Repositories[0].EffectiveReviewerAccess != v1.ReviewerIdentityInsufficientPermission {
@@ -276,7 +276,7 @@ func TestGitLabReviewerIdentityVerificationRejectsRepositoryIDDrift(t *testing.T
 	}))
 	defer server.Close()
 	outcome := reviewerRegistryForServer(t, "gitlab", server).VerifyReviewerIdentity(
-		t.Context(), reviewerIdentityOperation("gitlab", serverInstanceKey(t, server)),
+		t.Context(), reviewerIdentityOperation("gitlab", serverInstanceKey(t, server)), nil,
 	)
 	if outcome.Kind != v1.ReviewerIdentityVerificationPermanent || outcome.Code != v1.ReviewerIdentityRepositoryAccessDenied {
 		t.Fatalf("outcome = %+v", outcome)
@@ -299,7 +299,7 @@ func TestGitLabReviewerIdentityVerificationRejectsRepositoryPathDrift(t *testing
 	operation := reviewerIdentityOperation("gitlab", serverInstanceKey(t, server))
 	operation.Repositories[0].RepositoryPath = "octo/example"
 	operation.RepositorySetDigest = v1.ReviewerIdentityRepositorySetDigest(operation.Repositories)
-	outcome := reviewerRegistryForServer(t, "gitlab", server).VerifyReviewerIdentity(t.Context(), operation)
+	outcome := reviewerRegistryForServer(t, "gitlab", server).VerifyReviewerIdentity(t.Context(), operation, nil)
 	if outcome.Kind != v1.ReviewerIdentityVerificationPermanent || outcome.Code != v1.ReviewerIdentityRepositoryAccessDenied {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -328,7 +328,7 @@ func TestBitbucketReviewerIdentityVerificationUsesAccountIDAndRejectsPartialPage
 	operation.Repositories[0].RepositoryExternalID = "{85d08b4e-571d-44e9-a507-fa476535aa98}"
 	operation.Repositories[0].RepositoryPath = "octo/example"
 	operation.RepositorySetDigest = v1.ReviewerIdentityRepositorySetDigest(operation.Repositories)
-	outcome := reviewerRegistryForServer(t, "bitbucket", server).VerifyReviewerIdentity(t.Context(), operation)
+	outcome := reviewerRegistryForServer(t, "bitbucket", server).VerifyReviewerIdentity(t.Context(), operation, nil)
 	if outcome.Kind != v1.ReviewerIdentityVerificationPermanent || outcome.Code != v1.ReviewerIdentityAccountAmbiguous {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -376,7 +376,7 @@ func TestBitbucketReviewerIdentityVerificationAcceptsOneExactEffectivePermission
 	operation.Repositories[0].RepositoryExternalID = "{85d08b4e-571d-44e9-a507-fa476535aa98}"
 	operation.Repositories[0].RepositoryPath = "octo/example"
 	operation.RepositorySetDigest = v1.ReviewerIdentityRepositorySetDigest(operation.Repositories)
-	outcome := reviewerRegistryForServer(t, "bitbucket", server).VerifyReviewerIdentity(t.Context(), operation)
+	outcome := reviewerRegistryForServer(t, "bitbucket", server).VerifyReviewerIdentity(t.Context(), operation, nil)
 	if outcome.Kind != v1.ReviewerIdentityVerificationSucceeded || outcome.ProviderUsername != "bitbucket-user" ||
 		outcome.AssignmentPrincipal != "{504c3b62-8120-4f0c-a7bc-87800b9d6f70}" ||
 		outcome.Repositories[0].EffectiveReviewerAccess != v1.ReviewerIdentityEligible {
@@ -401,7 +401,7 @@ func TestBitbucketReviewerIdentityVerificationRejectsRepositoryUUIDDrift(t *test
 	operation.Repositories[0].RepositoryExternalID = "{85d08b4e-571d-44e9-a507-fa476535aa98}"
 	operation.Repositories[0].RepositoryPath = "octo/example"
 	operation.RepositorySetDigest = v1.ReviewerIdentityRepositorySetDigest(operation.Repositories)
-	outcome := reviewerRegistryForServer(t, "bitbucket", server).VerifyReviewerIdentity(t.Context(), operation)
+	outcome := reviewerRegistryForServer(t, "bitbucket", server).VerifyReviewerIdentity(t.Context(), operation, nil)
 	if outcome.Kind != v1.ReviewerIdentityVerificationPermanent || outcome.Code != v1.ReviewerIdentityRepositoryAccessDenied {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -416,15 +416,15 @@ func TestReviewerIdentityRegistryFailsClosedOnInstallationAndInstanceDrift(t *te
 
 	missing := reviewerIdentityOperation("github", serverInstanceKey(t, server))
 	missing.InstallationID = "installation-missing"
-	if outcome := registry.VerifyReviewerIdentity(t.Context(), missing); outcome.Code != v1.ReviewerIdentityInstallationNotFound {
+	if outcome := registry.VerifyReviewerIdentity(t.Context(), missing, nil); outcome.Code != v1.ReviewerIdentityInstallationNotFound {
 		t.Fatalf("missing installation outcome = %+v", outcome)
 	}
 	mismatch := reviewerIdentityOperation("gitlab", serverInstanceKey(t, server))
-	if outcome := registry.VerifyReviewerIdentity(t.Context(), mismatch); outcome.Code != v1.ReviewerIdentityProviderMismatch {
+	if outcome := registry.VerifyReviewerIdentity(t.Context(), mismatch, nil); outcome.Code != v1.ReviewerIdentityProviderMismatch {
 		t.Fatalf("provider mismatch outcome = %+v", outcome)
 	}
 	drift := reviewerIdentityOperation("github", "attacker.example")
-	if outcome := registry.VerifyReviewerIdentity(t.Context(), drift); outcome.Code != v1.ReviewerIdentityUnsupportedProviderInstance {
+	if outcome := registry.VerifyReviewerIdentity(t.Context(), drift, nil); outcome.Code != v1.ReviewerIdentityUnsupportedProviderInstance {
 		t.Fatalf("provider instance drift outcome = %+v", outcome)
 	}
 }

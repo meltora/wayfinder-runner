@@ -54,6 +54,147 @@ func TestProviderReviewObservationOperationAcceptsExactZeroSubjectStateRevisions
 		t.Fatalf("zero is a legitimate active state revision: %v", err)
 	}
 }
+
+func TestProviderReviewObservationOperationVersionsAreClosed(t *testing.T) {
+	v1Operation := validProviderReviewObservationOperation()
+	if err := ProviderReviewObservationOperation(v1Operation); err != nil {
+		t.Fatal(err)
+	}
+	v2Operation := v1Operation
+	v2Operation.SchemaVersion = 2
+	v2Operation.Purpose = v1.ProviderReviewObservationCompletionRevalidation
+	v2Operation.ExpectedTargetBranch = "main"
+	if err := ProviderReviewObservationOperation(v2Operation); err != nil {
+		t.Fatalf("exact completion revalidation rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*v1.ProviderReviewObservationOperation){
+		"v1 purpose": func(value *v1.ProviderReviewObservationOperation) {
+			value.Purpose = v1.ProviderReviewObservationCompletionRevalidation
+		},
+		"v2 missing purpose": func(value *v1.ProviderReviewObservationOperation) { value.SchemaVersion = 2 },
+		"v2 missing target": func(value *v1.ProviderReviewObservationOperation) {
+			value.SchemaVersion, value.Purpose = 2, v1.ProviderReviewObservationCompletionRevalidation
+		},
+		"v2 unsafe target": func(value *v1.ProviderReviewObservationOperation) {
+			value.SchemaVersion, value.Purpose, value.ExpectedTargetBranch = 2, v1.ProviderReviewObservationCompletionRevalidation, "refs/heads/main..evil"
+		},
+		"v2 unknown purpose": func(value *v1.ProviderReviewObservationOperation) {
+			value.SchemaVersion, value.Purpose, value.ExpectedTargetBranch = 2, "review_merge", "main"
+		},
+		"unknown version": func(value *v1.ProviderReviewObservationOperation) {
+			value.SchemaVersion, value.Purpose, value.ExpectedTargetBranch = 3, v1.ProviderReviewObservationCompletionRevalidation, "main"
+		},
+		"v1 target": func(value *v1.ProviderReviewObservationOperation) {
+			value.ExpectedTargetBranch = "main"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := v1Operation
+			mutate(&value)
+			if ProviderReviewObservationOperation(value) == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+}
+
+func TestProviderReviewObservationCompletionResultRequiresExactMergeEvidence(t *testing.T) {
+	op := validProviderReviewObservationOperation()
+	op.SchemaVersion = 2
+	op.Purpose = v1.ProviderReviewObservationCompletionRevalidation
+	op.ExpectedTargetBranch = "main"
+	observed := op.LeaseExpiresAt.Add(-time.Minute)
+	mergedAt := observed.Add(-2 * time.Minute)
+	updatedAt := observed.Add(-time.Minute)
+	base := v1.ProviderReviewObservationResultEvent{
+		Kind: v1.EventProviderReviewObservationResult, ProviderReviewObservationAuthority: op.ProviderReviewObservationAuthority,
+		CommandMessageID: "provider-review-observation-command-" + strings.Repeat("9", 64), ObservedAt: observed,
+		Outcome: v1.ProviderReviewObservationResultOutcome{
+			Kind: v1.ProviderReviewObservationSucceeded, RequestState: v1.ProviderReviewObservationRequestMerged,
+			ObservedHeadSHA: op.ExpectedHeadSHA, SnapshotSemantics: "current_state", SnapshotComplete: true,
+			Collections: &v1.ProviderReviewObservationCollections{
+				ReviewEvents: v1.ProviderReviewObservationCollectionCompleteness{Complete: true, PagesRead: 1},
+				Comments:     v1.ProviderReviewObservationCollectionCompleteness{Complete: true, PagesRead: 1},
+			},
+			MergeCommitSHA: strings.Repeat("a", 40), TargetBranch: "main", TargetHeadSHA: strings.Repeat("b", 40),
+			MergeCommitReachableFromTarget: true, MergedAt: mergedAt, ProviderUpdatedAt: updatedAt,
+			MergedByProviderAccountID: "42",
+		},
+	}
+	if err := ProviderReviewObservationResultEvent(base); err != nil {
+		t.Fatal(err)
+	}
+	unsupportedSuccess := base
+	unsupportedSuccess.Provider = "gitlab"
+	unsupportedSuccess.ProviderInstanceKey = "gitlab.com"
+	if ProviderReviewObservationResultEvent(unsupportedSuccess) == nil {
+		t.Fatal("accepted completion success from a provider without exact merger authority")
+	}
+	unsupportedFailure := unsupportedSuccess
+	unsupportedFailure.Outcome = v1.ProviderReviewObservationResultOutcome{
+		Kind: v1.ProviderReviewObservationPermanent, Code: v1.ProviderReviewObservationUnsupportedProviderInstance,
+	}
+	if err := ProviderReviewObservationResultEvent(unsupportedFailure); err != nil {
+		t.Fatalf("rejected fail-closed unsupported-provider result: %v", err)
+	}
+	negative := base
+	negative.Outcome.MergeCommitReachableFromTarget = false
+	if err := ProviderReviewObservationResultEvent(negative); err != nil {
+		t.Fatalf("negative reachability is exact evidence: %v", err)
+	}
+	for name, mutate := range map[string]func(*v1.ProviderReviewObservationResultEvent){
+		"not merged": func(value *v1.ProviderReviewObservationResultEvent) {
+			value.Outcome.RequestState = v1.ProviderReviewObservationRequestClosed
+		},
+		"missing merge sha": func(value *v1.ProviderReviewObservationResultEvent) { value.Outcome.MergeCommitSHA = "" },
+		"unsafe target": func(value *v1.ProviderReviewObservationResultEvent) {
+			value.Outcome.TargetBranch = "refs/heads/main..evil"
+		},
+		"missing target head": func(value *v1.ProviderReviewObservationResultEvent) { value.Outcome.TargetHeadSHA = "" },
+		"missing merged at":   func(value *v1.ProviderReviewObservationResultEvent) { value.Outcome.MergedAt = time.Time{} },
+		"provider update before merge": func(value *v1.ProviderReviewObservationResultEvent) {
+			value.Outcome.ProviderUpdatedAt = mergedAt.Add(-time.Nanosecond)
+		},
+		"provider update after observation": func(value *v1.ProviderReviewObservationResultEvent) {
+			value.Outcome.ProviderUpdatedAt = observed.Add(time.Nanosecond)
+		},
+		"invalid merger": func(value *v1.ProviderReviewObservationResultEvent) {
+			value.Outcome.MergedByProviderAccountID = "reviewer-name"
+		},
+		"target authority mismatch": func(value *v1.ProviderReviewObservationResultEvent) {
+			value.Outcome.TargetBranch = "release"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := base
+			mutate(&value)
+			if ProviderReviewObservationResultEvent(value) == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+	legacy := base
+	legacy.SchemaVersion = 1
+	legacy.Purpose = ""
+	legacy.ExpectedTargetBranch = ""
+	if ProviderReviewObservationResultEvent(legacy) == nil {
+		t.Fatal("v1 accepted v2 completion evidence")
+	}
+	for _, failure := range []v1.ProviderReviewObservationResultOutcome{
+		{Kind: v1.ProviderReviewObservationRetryable, Code: v1.ProviderReviewObservationProviderUnavailable},
+		{Kind: v1.ProviderReviewObservationPermanent, Code: v1.ProviderReviewObservationInvalidProviderResponse},
+	} {
+		value := base
+		value.Outcome = failure
+		if err := ProviderReviewObservationResultEvent(value); err != nil {
+			t.Fatalf("exact failure rejected: %v", err)
+		}
+		value.Outcome.MergeCommitSHA = strings.Repeat("a", 40)
+		if ProviderReviewObservationResultEvent(value) == nil {
+			t.Fatal("failure accepted completion evidence")
+		}
+	}
+}
 func TestProviderReviewObservationResultStrictNormalizedShape(t *testing.T) {
 	op := validProviderReviewObservationOperation()
 	observed := op.LeaseExpiresAt.Add(-time.Minute)

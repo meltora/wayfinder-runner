@@ -4,7 +4,11 @@ import "time"
 
 const AgentPackDeliveryAuthorityVersion = 1
 
+const AgentPackRevocationEvictionVersion = 1
+
 type CapabilityManifest struct {
+	AgentConfigScanTransportVersion                          string                                                           `json:"agent_config_scan_transport_version,omitempty"`
+	AgentConfigScanRepositoryIDs                             []string                                                         `json:"agent_config_scan_repository_ids,omitempty"`
 	RunnerID                                                 string                                                           `json:"runner_id"`
 	CollectedAt                                              time.Time                                                        `json:"collected_at"`
 	OS                                                       string                                                           `json:"os"`
@@ -22,6 +26,7 @@ type CapabilityManifest struct {
 	RunnerVersion                                            string                                                           `json:"runner_version"`
 	ProtocolVersion                                          int                                                              `json:"protocol_version"`
 	AgentPackDeliveryAuthorityVersion                        int                                                              `json:"agent_pack_delivery_authority_version"`
+	AgentPackRevocationEvictionVersion                       int                                                              `json:"agent_pack_revocation_eviction_version,omitempty"`
 	TrustedAgentPackKeyIDs                                   []string                                                         `json:"trusted_agent_pack_key_ids"`
 	SourcePublicationTransportVersion                        int                                                              `json:"source_publication_transport_version,omitempty"`
 	SourcePublicationProviders                               []string                                                         `json:"source_publication_providers,omitempty"`
@@ -51,6 +56,7 @@ type CapabilityManifest struct {
 	WorkIntakeProposalPromptTemplateDigest                   string                                                           `json:"work_intake_proposal_prompt_template_digest,omitempty"`
 	WorkIntakeProposalPolicyDigest                           string                                                           `json:"work_intake_proposal_policy_digest,omitempty"`
 	WorkIntakeProposalModelExecutionConfigDigest             string                                                           `json:"work_intake_proposal_model_execution_config_digest,omitempty"`
+	RunnerConfigurationDigest                                string                                                           `json:"runner_configuration_digest,omitempty"`
 	Signature                                                string                                                           `json:"signature"`
 }
 

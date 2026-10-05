@@ -1,6 +1,10 @@
 version: 2
 project_name: our-runner
 
+before:
+  hooks:
+    - sh packaging/scripts/prepare-release.sh "{{ .Tag }}" "{{ .IsSnapshot }}"
+
 builds:
   - id: our-runner-linux
     main: ./cmd/our-runner
@@ -9,7 +13,7 @@ builds:
     goos: [linux]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w -X github.com/example/app-runner/internal/daemon.Version={{.Version}}
+      - -s -w -X github.com/example/app-runner/internal/daemon.Version={{.Version}} -X github.com/example/app-runner/internal/daemon.Channel={{ .Env.OUR_RUNNER_CHANNEL }} -X github.com/example/app-runner/internal/daemon.DefaultControlPlaneURL={{ envOrDefault "OUR_RUNNER_CONTROL_PLANE_URL" "" }}
   - id: our-runner-darwin-development
     main: ./cmd/our-runner
     binary: our-runner
@@ -17,7 +21,7 @@ builds:
     goos: [darwin]
     goarch: [amd64, arm64]
     ldflags:
-      - -s -w -X github.com/example/app-runner/internal/daemon.Version={{.Version}}
+      - -s -w -X github.com/example/app-runner/internal/daemon.Version={{.Version}} -X github.com/example/app-runner/internal/daemon.Channel={{ .Env.OUR_RUNNER_CHANNEL }} -X github.com/example/app-runner/internal/daemon.DefaultControlPlaneURL={{ envOrDefault "OUR_RUNNER_CONTROL_PLANE_URL" "" }}
   - id: our-runner-updater-linux
     main: ./cmd/our-runner-updater
     binary: our-runner-updater
@@ -71,6 +75,7 @@ signs:
 
 release:
   draft: true
+  prerelease: auto
   extra_files:
     - glob: .release/install.sh
       name_template: install.sh

@@ -173,7 +173,7 @@ func TestRegistryRejectsUnconfiguredOrMismatchedInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	operation := testOperation()
-	outcome := registry.Publish(context.Background(), operation)
+	outcome := registry.Publish(context.Background(), operation, nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlInstallationRevoked {
 		t.Fatalf("outcome = %+v", outcome)
 	}
@@ -185,7 +185,7 @@ func TestRegistryRejectsUnconfiguredOrMismatchedInstallation(t *testing.T) {
 		t.Fatal(err)
 	}
 	operation.Publication.Provider = "gitlab"
-	outcome = registry.Publish(context.Background(), operation)
+	outcome = registry.Publish(context.Background(), operation, nil)
 	if outcome.Kind != v1.SourcePublicationPermanent || outcome.Code != v1.SourceControlPermissionDenied {
 		t.Fatalf("mismatched provider outcome = %+v", outcome)
 	}

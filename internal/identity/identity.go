@@ -32,7 +32,8 @@ type bundle struct {
 }
 
 type Store struct {
-	dir string
+	dir   string
+	fault func(step string) error
 }
 
 func NewStore(dir string) *Store {
@@ -164,9 +165,15 @@ func (s *Store) SaveIdentity(key *ecdsa.PrivateKey, certPEM, caPEM []byte) error
 	return nil
 }
 
+type directoryCheck func(dir string) error
+
 func (s *Store) loadBundle() (bundle, error) {
+	return s.loadBundleChecked(ensurePrivateDirectory)
+}
+
+func (s *Store) loadBundleChecked(check directoryCheck) (bundle, error) {
 	var out bundle
-	raw, err := readPrivateFile(s.dir, bundleFileName, 4<<20)
+	raw, err := readPrivateFileChecked(check, s.dir, bundleFileName, 4<<20)
 	if err != nil {
 		return out, err
 	}
@@ -185,28 +192,53 @@ func (s *Store) loadBundle() (bundle, error) {
 }
 
 func (s *Store) LoadCert() (certPEM, caPEM []byte, err error) {
-	if b, bundleErr := s.loadBundle(); bundleErr == nil {
+	return s.loadCertChecked(ensurePrivateDirectory)
+}
+
+func (s *Store) loadCertChecked(check directoryCheck) (certPEM, caPEM []byte, err error) {
+	if b, bundleErr := s.loadBundleChecked(check); bundleErr == nil {
 		return []byte(b.Certificate), []byte(b.CACert), nil
 	} else if !errors.Is(bundleErr, os.ErrNotExist) {
 		return nil, nil, bundleErr
 	}
-	certPEM, err = readPrivateFile(s.dir, certFileName, 2<<20)
+	certPEM, err = readPrivateFileChecked(check, s.dir, certFileName, 2<<20)
 	if err != nil {
 		return nil, nil, err
 	}
-	caPEM, err = readPrivateFile(s.dir, caFileName, 2<<20)
+	caPEM, err = readPrivateFileChecked(check, s.dir, caFileName, 2<<20)
 	if err != nil {
 		return nil, nil, err
 	}
 	return certPEM, caPEM, nil
 }
 
-func ensurePrivateDirectory(dir string) error {
+func checkPrivateDirectoryPath(dir string) error {
 	clean := filepath.Clean(dir)
 	root := filepath.VolumeName(clean) + string(filepath.Separator)
 	home, _ := os.UserHomeDir()
 	if !filepath.IsAbs(clean) || clean == root || filepath.Dir(clean) == root || (home != "" && clean == filepath.Clean(home)) {
 		return fmt.Errorf("identity directory must be a dedicated absolute state directory")
+	}
+	return nil
+}
+
+func inspectPrivateDirectory(dir string) error {
+	if err := checkPrivateDirectoryPath(dir); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("identity directory must be a real directory")
+	}
+	return nil
+}
+
+func ensurePrivateDirectory(dir string) error {
+	if err := checkPrivateDirectoryPath(dir); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -228,7 +260,11 @@ func ensurePrivateDirectory(dir string) error {
 }
 
 func readPrivateFile(dir, name string, maxSize int64) ([]byte, error) {
-	if err := ensurePrivateDirectory(dir); err != nil {
+	return readPrivateFileChecked(ensurePrivateDirectory, dir, name, maxSize)
+}
+
+func readPrivateFileChecked(check directoryCheck, dir, name string, maxSize int64) ([]byte, error) {
+	if err := check(dir); err != nil {
 		return nil, err
 	}
 	root, err := os.OpenRoot(dir)
@@ -284,6 +320,11 @@ func (s *Store) Enrolled() bool {
 	return err == nil
 }
 
+func (s *Store) EnrolledReadOnly() bool {
+	_, _, err := s.loadCertChecked(inspectPrivateDirectory)
+	return err == nil
+}
+
 func (s *Store) CertExpiry() (notBefore, notAfter time.Time, err error) {
 	certPEM, _, err := s.LoadCert()
 	if err != nil {
@@ -326,7 +367,7 @@ func (s *Store) ShouldRotate(now time.Time) (bool, error) {
 }
 
 func (s *Store) Clear() error {
-	for _, f := range []string{keyFileName, certFileName, caFileName, bundleFileName} {
+	for _, f := range []string{keyFileName, certFileName, caFileName, bundleFileName, pendingFileName, previousFileName} {
 		if err := os.Remove(filepath.Join(s.dir, f)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
