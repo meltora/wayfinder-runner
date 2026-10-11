@@ -157,11 +157,11 @@ func assertNoConfigurationFiles(t *testing.T, stateDir string) {
 	}
 }
 
-func TestConfigureNonInteractiveWritesPrivateFilesAndAcceptsPackKeys(t *testing.T) {
+func TestConfigureNonInteractiveWritesPrivateFilesAndNeverAnchorsPackKeys(t *testing.T) {
 	h := newConfigureHarness(t)
 	key := newConfigurePackKey(t, "pack-key-1")
 	h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker", key))
-	err := h.run("", false, "--non-interactive", "--accept-pack-keys", "--provider-env", "CLAUDE_CONFIG_DIR=/home/runner/.claude-secret-account", "--provider-binary", "/usr/local/bin/claude")
+	err := h.run("", false, "--non-interactive", "--provider-env", "CLAUDE_CONFIG_DIR=/home/runner/.claude-secret-account", "--provider-binary", "/usr/local/bin/claude")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,17 +172,17 @@ func TestConfigureNonInteractiveWritesPrivateFilesAndAcceptsPackKeys(t *testing.
 		}
 	}
 	local := h.local(t)
-	if local.ControlPlaneURL != h.gateway || local.StateDir != h.stateDir || len(local.AcceptedPackKeyFingerprints) != 1 || local.AcceptedPackKeyFingerprints[0] != key.fingerprint ||
+	if local.ControlPlaneURL != h.gateway || local.StateDir != h.stateDir ||
 		local.ProviderEnvironment["claude"]["CLAUDE_CONFIG_DIR"] != "/home/runner/.claude-secret-account" || local.ProviderBinaries["claude"] != "/usr/local/bin/claude" || local.AcknowledgeDirect {
 		t.Fatalf("local = %+v", local)
 	}
 	out := h.output.String()
-	for _, want := range []string{h.runnerID, "docker", configureJobImage, "Provider: Claude Code", "1 included", "1 omitted", "pack-key-1", key.fingerprint, "CLAUDE_CONFIG_DIR", "our-runner start"} {
+	for _, want := range []string{h.runnerID, "docker", configureJobImage, "Provider: Claude Code", "1 included", "1 omitted", "Platform trust: no signed key set delivered yet", "CLAUDE_CONFIG_DIR", "our-runner start"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)
 		}
 	}
-	for _, forbidden := range []string{".claude-secret-account", "BEGIN", key.spki} {
+	for _, forbidden := range []string{".claude-secret-account", "BEGIN", key.spki, key.fingerprint, "pack-key-1", "Agent Pack"} {
 		if strings.Contains(out, forbidden) {
 			t.Fatalf("output leaked %q", forbidden)
 		}
@@ -192,18 +192,62 @@ func TestConfigureNonInteractiveWritesPrivateFilesAndAcceptsPackKeys(t *testing.
 	}
 }
 
-func TestConfigureKeepsUnacceptedPackKeysAwaitingHostAcceptance(t *testing.T) {
+func TestConfigureRejectsTheRetiredAcceptPackKeysFlag(t *testing.T) {
 	h := newConfigureHarness(t)
 	key := newConfigurePackKey(t, "pack-key-1")
 	h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker", key))
+	if err := h.run("", false, "--non-interactive", "--accept-pack-keys"); err == nil || !strings.Contains(err.Error(), "unknown flag --accept-pack-keys") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h.stateDir, remoteconfig.LocalFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("%s was written: %v", remoteconfig.LocalFileName, err)
+	}
 	if err := h.run("", false, "--non-interactive"); err != nil {
 		t.Fatal(err)
 	}
-	if local := h.local(t); len(local.AcceptedPackKeyFingerprints) != 0 {
-		t.Fatalf("key accepted without the host: %+v", local)
-	}
-	if !strings.Contains(h.output.String(), "awaiting host acceptance") || !strings.Contains(h.output.String(), "--accept-pack-keys") {
+	if strings.Contains(h.output.String(), "awaiting host acceptance") || strings.Contains(h.output.String(), "--accept-pack-keys") {
 		t.Fatalf("output:\n%s", h.output.String())
+	}
+}
+
+func TestConfigureDropsLegacyAcceptedPackKeyFingerprintsFromAnUpgradedHost(t *testing.T) {
+	for name, legacy := range map[string]string{
+		"populated": "accepted_pack_key_fingerprints:\n  pack-key-1: " + strings.Repeat("ab", 32) + "\n",
+		"empty":     "accepted_pack_key_fingerprints: {}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newConfigureHarness(t)
+			key := newConfigurePackKey(t, "pack-key-1")
+			h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker", key))
+			if err := h.run("", false, "--non-interactive", "--provider-env", "CLAUDE_CONFIG_DIR=/home/runner/.claude"); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(h.stateDir, remoteconfig.LocalFileName)
+			written, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, append(written, []byte(legacy)...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if local := h.local(t); local.ProviderEnvironment["claude"]["CLAUDE_CONFIG_DIR"] != "/home/runner/.claude" {
+				t.Fatalf("local = %+v", local)
+			}
+			h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker", key))
+			if err := h.run("", false, "--non-interactive"); err != nil {
+				t.Fatal(err)
+			}
+			rewritten, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(rewritten), "accepted_pack_key_fingerprints") {
+				t.Fatalf("legacy key survived configure:\n%s", rewritten)
+			}
+			if local := h.local(t); local.ProviderEnvironment["claude"]["CLAUDE_CONFIG_DIR"] != "/home/runner/.claude" {
+				t.Fatalf("local = %+v", local)
+			}
+		})
 	}
 }
 
@@ -211,11 +255,11 @@ func TestConfigureInteractiveAsksOnlyLocalQuestions(t *testing.T) {
 	h := newConfigureHarness(t)
 	key := newConfigurePackKey(t, "pack-key-1")
 	h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker", key))
-	if err := h.run("/home/runner/.claude-work\n\nyes\n", true); err != nil {
+	if err := h.run("/home/runner/.claude-work\n\n", true); err != nil {
 		t.Fatal(err)
 	}
 	local := h.local(t)
-	if local.ProviderEnvironment["claude"]["CLAUDE_CONFIG_DIR"] != "/home/runner/.claude-work" || len(local.ProviderBinaries) != 0 || len(local.AcceptedPackKeyFingerprints) != 1 {
+	if local.ProviderEnvironment["claude"]["CLAUDE_CONFIG_DIR"] != "/home/runner/.claude-work" || len(local.ProviderBinaries) != 0 {
 		t.Fatalf("local = %+v", local)
 	}
 	if strings.Contains(h.output.String(), "/home/runner/.claude-work") {
@@ -310,7 +354,7 @@ func TestConfigureRequiresEnrollmentATerminalAndValidFlags(t *testing.T) {
 	}
 	h := newConfigureHarness(t)
 	if err := cmdConfigureWithDependencies([]string{"--gateway", h.gateway, "--state-dir", h.stateDir}, deps); err == nil ||
-		!strings.Contains(err.Error(), "--non-interactive") || !strings.Contains(err.Error(), "--accept-pack-keys") || !strings.Contains(err.Error(), "--provider-env") {
+		!strings.Contains(err.Error(), "--non-interactive") || strings.Contains(err.Error(), "--accept-pack-keys") || !strings.Contains(err.Error(), "--provider-env") {
 		t.Fatalf("err = %v", err)
 	}
 	for _, args := range [][]string{
@@ -336,7 +380,7 @@ func TestStateDirModesLoadTheMergedConfiguration(t *testing.T) {
 	h := newConfigureHarness(t)
 	key := newConfigurePackKey(t, "pack-key-1")
 	h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker", key))
-	if err := h.run("", false, "--non-interactive", "--accept-pack-keys"); err != nil {
+	if err := h.run("", false, "--non-interactive"); err != nil {
 		t.Fatal(err)
 	}
 	var captured doctor.Options
@@ -358,7 +402,7 @@ func TestStateDirModesLoadTheMergedConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !captured.ConfigurationLoaded || captured.Provider != "claude" || captured.RepositoryCount != 1 || captured.TrustedAgentPackKeyCount != 1 ||
+	if !captured.ConfigurationLoaded || captured.Provider != "claude" || captured.RepositoryCount != 1 || captured.TrustedAgentPackKeyCount != 0 ||
 		captured.StateDir != h.stateDir || captured.ControlPlaneURL != h.gateway || captured.JobImage != configureJobImage {
 		t.Fatalf("options = %+v", captured)
 	}

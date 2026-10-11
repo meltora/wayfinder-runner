@@ -2,16 +2,16 @@ package remoteconfig
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"regexp"
-	"sort"
+
+	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/agentpack/trustset"
 )
 
 const MaxDeliveryBytes = 1 << 20
@@ -19,12 +19,6 @@ const MaxDeliveryBytes = 1 << 20
 const MaxRevokedAgentPackDigests = 256
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
-type PackKey struct {
-	ID          string
-	Fingerprint string
-	PublicKey   string
-}
 
 const (
 	OmissionCloneURLUnavailable  = "clone_url_unavailable"
@@ -47,9 +41,9 @@ type Remote struct {
 	JobPIDs                        int
 	Labels                         map[string]string
 	Repositories                   map[string]string
-	AgentPackPublicKeys            map[string]string
 	SourcePublicationInstallations map[string]string
 	RevokedAgentPackDigests        []string
+	AgentPackTrustedKeySet         *v1.AgentPackTrustedKeySet
 }
 
 type Delivery struct {
@@ -57,19 +51,25 @@ type Delivery struct {
 	ProfileRevision     int
 	Digest              string
 	Remote              Remote
-	PackKeys            []PackKey
 	OmittedRepositories []OmittedRepository
 }
 
 var envelopeFields = []string{"schema_version", "runner_id", "profile_revision", "digest", "config", "pack_key_fingerprints", "omitted_repositories"}
 
+var requiredEnvelopeFields = []string{"schema_version", "runner_id", "profile_revision", "digest", "config", "omitted_repositories"}
+
 var remoteFields = map[string]bool{
 	"isolation": true, "allow_unsafe_direct": true, "provider": true, "job_image": true, "job_network": true,
 	"job_memory_mb": true, "job_cpus": true, "job_pids": true, "labels": true, "repositories": true,
 	"agent_pack_public_keys": true, "source_publication_installations": true, "revoked_agent_pack_digests": true,
+	"agent_pack_trusted_key_set": true,
 }
 
-var requiredRemoteFields = []string{"isolation", "provider", "labels", "repositories", "agent_pack_public_keys", "source_publication_installations"}
+var requiredRemoteFields = []string{"isolation", "provider", "labels", "repositories", "source_publication_installations"}
+
+var trustedKeySetFields = []string{"document_base64", "signature_base64", "root_key_id"}
+
+const maxTrustedKeySetSignatureBase64 = 128
 
 func ParseDelivery(raw []byte, expectedRunnerID string) (Delivery, error) {
 	var out Delivery
@@ -80,7 +80,7 @@ func ParseDelivery(raw []byte, expectedRunnerID string) (Delivery, error) {
 	if err != nil {
 		return out, fmt.Errorf("remote configuration: %w", err)
 	}
-	if err := exactFields(fields, envelopeFields, envelopeFields); err != nil {
+	if err := exactFields(fields, envelopeFields, requiredEnvelopeFields); err != nil {
 		return out, fmt.Errorf("remote configuration: %w", err)
 	}
 	var schemaVersion int
@@ -101,12 +101,10 @@ func ParseDelivery(raw []byte, expectedRunnerID string) (Delivery, error) {
 		return out, fmt.Errorf("remote configuration: %w", err)
 	}
 	out.Remote = remote
-	fingerprints, err := stringMap(fields["pack_key_fingerprints"])
-	if err != nil {
-		return out, fmt.Errorf("remote configuration: pack_key_fingerprints: %w", err)
-	}
-	if out.PackKeys, err = packKeys(remote.AgentPackPublicKeys, fingerprints); err != nil {
-		return out, fmt.Errorf("remote configuration: %w", err)
+	if value, ok := fields["pack_key_fingerprints"]; ok {
+		if _, err := stringMap(value); err != nil {
+			return out, fmt.Errorf("remote configuration: pack_key_fingerprints: %w", err)
+		}
 	}
 	if out.OmittedRepositories, err = omittedRepositories(fields["omitted_repositories"]); err != nil {
 		return out, fmt.Errorf("remote configuration: %w", err)
@@ -157,8 +155,15 @@ func parseRemote(raw json.RawMessage) (Remote, error) {
 	if out.Labels, err = stringMap(fields["labels"]); err != nil {
 		return out, fmt.Errorf("config labels: %w", err)
 	}
-	if out.AgentPackPublicKeys, err = stringMap(fields["agent_pack_public_keys"]); err != nil {
-		return out, fmt.Errorf("config agent_pack_public_keys: %w", err)
+	if value, ok := fields["agent_pack_public_keys"]; ok {
+		if _, err := stringMap(value); err != nil {
+			return out, fmt.Errorf("config agent_pack_public_keys: %w", err)
+		}
+	}
+	if value, ok := fields["agent_pack_trusted_key_set"]; ok {
+		if out.AgentPackTrustedKeySet, err = trustedKeySet(value); err != nil {
+			return out, fmt.Errorf("config agent_pack_trusted_key_set: %w", err)
+		}
 	}
 	if out.Repositories, err = singleFieldMap(fields["repositories"], "url"); err != nil {
 		return out, fmt.Errorf("config repositories: %w", err)
@@ -185,6 +190,32 @@ func parseRemote(raw json.RawMessage) (Remote, error) {
 	return out, nil
 }
 
+func trustedKeySet(raw json.RawMessage) (*v1.AgentPackTrustedKeySet, error) {
+	fields, err := objectFields(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := exactFields(fields, trustedKeySetFields, trustedKeySetFields); err != nil {
+		return nil, err
+	}
+	var out v1.AgentPackTrustedKeySet
+	if strictValue(fields["document_base64"], &out.DocumentBase64) != nil ||
+		strictValue(fields["signature_base64"], &out.SignatureBase64) != nil ||
+		strictValue(fields["root_key_id"], &out.RootKeyID) != nil {
+		return nil, fmt.Errorf("fields must be strings")
+	}
+	if out.DocumentBase64 == "" || len(out.DocumentBase64) > base64.StdEncoding.EncodedLen(trustset.MaxDocumentBytes) {
+		return nil, fmt.Errorf("document_base64 must be a non-empty signed document within %d bytes", trustset.MaxDocumentBytes)
+	}
+	if out.SignatureBase64 == "" || len(out.SignatureBase64) > maxTrustedKeySetSignatureBase64 {
+		return nil, fmt.Errorf("signature_base64 is invalid")
+	}
+	if !digestPattern.MatchString(out.RootKeyID) {
+		return nil, fmt.Errorf("root_key_id must be a lowercase SHA-256 key id")
+	}
+	return &out, nil
+}
+
 func revokedAgentPackDigests(raw json.RawMessage) ([]string, error) {
 	var digests []string
 	if err := strictValue(raw, &digests); err != nil || digests == nil {
@@ -202,38 +233,6 @@ func revokedAgentPackDigests(raw json.RawMessage) ([]string, error) {
 		}
 	}
 	return digests, nil
-}
-
-func packKeys(publicKeys, fingerprints map[string]string) ([]PackKey, error) {
-	if len(publicKeys) != len(fingerprints) {
-		return nil, fmt.Errorf("pack_key_fingerprints must list exactly the delivered Agent Pack keys")
-	}
-	out := make([]PackKey, 0, len(publicKeys))
-	for id, encoded := range publicKeys {
-		expected, ok := fingerprints[id]
-		if !ok {
-			return nil, fmt.Errorf("pack_key_fingerprints must list exactly the delivered Agent Pack keys")
-		}
-		fingerprint, err := PackKeyFingerprint(encoded)
-		if err != nil {
-			return nil, fmt.Errorf("agent pack key %s: %w", id, err)
-		}
-		if fingerprint != expected {
-			return nil, fmt.Errorf("agent pack key %s does not match its fingerprint", id)
-		}
-		out = append(out, PackKey{ID: id, Fingerprint: fingerprint, PublicKey: encoded})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
-}
-
-func PackKeyFingerprint(encoded string) (string, error) {
-	der, err := base64.StdEncoding.Strict().DecodeString(encoded)
-	if err != nil || base64.StdEncoding.EncodeToString(der) != encoded {
-		return "", fmt.Errorf("invalid canonical base64")
-	}
-	sum := sha256.Sum256(der)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 func knownOmissionReason(reason string) bool {

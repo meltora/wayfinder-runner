@@ -81,7 +81,7 @@ func AgentConfigScanResultEvent(e v1.AgentConfigScanResultEvent) error {
 			return fmt.Errorf("failed scan cannot carry inventory")
 		}
 		switch e.Outcome.Code {
-		case "repository_unavailable", "checkout_failed", "scan_failed", "deadline_exceeded", "interrupted", "stopped", "limit_exceeded":
+		case "repository_unavailable", "checkout_failed", "scan_failed", "deadline_exceeded", "interrupted", "stopped", "limit_exceeded", "repository_credential_unavailable", "repository_access_denied":
 		default:
 			return fmt.Errorf("unsupported scan failure code")
 		}

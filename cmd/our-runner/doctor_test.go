@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/config"
+	"github.com/example/app-runner/internal/daemon"
 	"github.com/example/app-runner/internal/doctor"
-	"github.com/example/app-runner/internal/remoteconfig"
 )
 
 func TestDoctorCommandPassesValidatedOperatorSetupFacts(t *testing.T) {
@@ -146,13 +147,12 @@ func TestDoctorCommandPassesProviderEnvironmentNamesWithoutValues(t *testing.T) 
 		t.Fatalf("output = %q", output.String())
 	}
 }
-func TestDoctorCommandReportsAgentPackKeysAwaitingAcceptance(t *testing.T) {
+func TestDoctorCommandReportsPlatformTrustInsteadOfHostPackKeyAcceptance(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
 	cfg.Provider = "claude"
 	cfg.Isolation = "direct"
-	awaiting := []doctor.AwaitingAgentPackKey{{ID: "platform-key-2", Fingerprint: strings.Repeat("ab", 32)}}
-	command := "our-runner configure --state-dir '/runner state' --accept-pack-keys"
+	cfg.AgentPackTrustedKeySet = &v1.AgentPackTrustedKeySet{DocumentBase64: "e30=", SignatureBase64: "AAAA", RootKeyID: strings.Repeat("a", 64)}
 	var captured doctor.Options
 	var output bytes.Buffer
 	err := cmdDoctorWithDependencies([]string{"--state-dir", "/runner state"}, doctorCommandDependencies{
@@ -160,11 +160,11 @@ func TestDoctorCommandReportsAgentPackKeysAwaitingAcceptance(t *testing.T) {
 			t.Fatal("state-dir diagnostics loaded a config file")
 			return config.Config{}, nil
 		},
-		loadStateDirAwaiting: func(stateDir string) (config.Config, []doctor.AwaitingAgentPackKey, string, error) {
+		loadStateDir: func(stateDir string) (config.Config, error) {
 			if stateDir != "/runner state" {
 				t.Fatalf("state dir = %q", stateDir)
 			}
-			return cfg, awaiting, command, nil
+			return cfg, nil
 		},
 		run: func(ctx context.Context, opts doctor.Options) doctor.Report {
 			captured = opts
@@ -179,52 +179,34 @@ func TestDoctorCommandReportsAgentPackKeysAwaitingAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a Warn failed the command: %v\n%s", err, output.String())
 	}
-	if !captured.ConfigurationLoaded || len(captured.AwaitingAgentPackKeys) != 1 || captured.AcceptAgentPackKeysCommand != command {
-		t.Fatalf("awaiting keys were not passed: %+v", captured)
+	if !captured.ConfigurationLoaded || captured.PlatformTrustedKeySet != cfg.AgentPackTrustedKeySet || captured.BuildChannel != daemon.Channel {
+		t.Fatalf("platform trust inputs were not passed: %+v", captured)
 	}
-	for _, expected := range []string{
-		"[WARN] agent-pack-keys-awaiting: ",
-		"platform-key-2 (sha256:" + strings.Repeat("ab", 32) + ")",
-		command,
-		"[WARN] isolation: direct isolation is development-only",
-	} {
+	for _, expected := range []string{"[WARN] platform-trust: ", "[WARN] isolation: direct isolation is development-only"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("output lacks %q:\n%s", expected, output.String())
 		}
 	}
-}
-func TestStateDirAcceptPackKeysCommandQuotesTheStateDirectory(t *testing.T) {
-	t.Parallel()
-	got := acceptPackKeysCommand("https://gateway.example", false, "/runner's state")
-	want := "our-runner configure --gateway 'https://gateway.example' --state-dir '/runner'\\''s state' --accept-pack-keys"
-	if got != want {
-		t.Fatalf("command = %q, want %q", got, want)
-	}
-	if stored := acceptPackKeysCommand("https://gateway.example", true, "/state"); stored != "our-runner configure --state-dir '/state' --accept-pack-keys" {
-		t.Fatalf("stored gateway command = %q", stored)
+	for _, forbidden := range []string{"agent-pack-keys-awaiting", "--accept-pack-keys", "awaiting acceptance"} {
+		if strings.Contains(output.String(), forbidden) {
+			t.Fatalf("output still asks the host to accept pack keys (%q):\n%s", forbidden, output.String())
+		}
 	}
 }
-
-func TestDoctorConfigResolvesAwaitingAgentPackKeysFromItsStateDirectory(t *testing.T) {
+func TestDoctorConfigDoesNotResolvePackKeysFromTheStateDirectory(t *testing.T) {
 	t.Parallel()
 	cfg := config.Default()
 	cfg.Provider = "claude"
 	cfg.Isolation = "direct"
 	cfg.StateDir = "/operator state"
 	cfg.Repositories = map[string]config.RepositoryConfig{"repo-a": {URL: "https://example.com/a"}}
-	stateDirConfig := config.Default()
-	stateDirConfig.Provider = "codex"
-	awaiting := []doctor.AwaitingAgentPackKey{{ID: "platform-key-2", Fingerprint: strings.Repeat("ab", 32)}}
-	command := "our-runner configure --state-dir '/operator state' --accept-pack-keys"
 	var captured doctor.Options
 	var output bytes.Buffer
 	err := cmdDoctorWithDependencies([]string{"--config", "operator.yaml"}, doctorCommandDependencies{
 		load: func(string) (config.Config, error) { return cfg, nil },
-		loadStateDirAwaiting: func(stateDir string) (config.Config, []doctor.AwaitingAgentPackKey, string, error) {
-			if stateDir != "/operator state" {
-				t.Fatalf("state dir = %q", stateDir)
-			}
-			return stateDirConfig, awaiting, command, nil
+		loadStateDir: func(string) (config.Config, error) {
+			t.Fatal("--config diagnostics resolved the state directory")
+			return config.Config{}, nil
 		},
 		run: func(ctx context.Context, opts doctor.Options) doctor.Report {
 			captured = opts
@@ -242,50 +224,7 @@ func TestDoctorConfigResolvesAwaitingAgentPackKeysFromItsStateDirectory(t *testi
 	if captured.Provider != "claude" || captured.RepositoryCount != 1 || captured.StateDir != "/operator state" {
 		t.Fatalf("--config facts were replaced: %+v", captured)
 	}
-	if len(captured.AwaitingAgentPackKeys) != 1 || captured.AcceptAgentPackKeysCommand != command || captured.AgentPackKeysNotEvaluated != "" {
-		t.Fatalf("awaiting keys were not passed: %+v", captured)
-	}
-	if !strings.Contains(output.String(), "[WARN] agent-pack-keys-awaiting: Agent Pack keys awaiting acceptance: platform-key-2") || !strings.Contains(output.String(), command) {
+	if strings.Contains(output.String(), "agent-pack-keys-awaiting") || strings.Contains(output.String(), "--accept-pack-keys") || !strings.Contains(output.String(), "platform-trust") {
 		t.Fatalf("output:\n%s", output.String())
-	}
-}
-
-func TestDoctorConfigReportsAwaitingAgentPackKeysNotEvaluatedWhenTheStateDirectoryCannotBeResolved(t *testing.T) {
-	t.Parallel()
-	for name, tc := range map[string]struct {
-		err    error
-		reason string
-	}{
-		"not enrolled": {remoteconfig.ErrNotEnrolled, "the state directory is not enrolled"},
-		"unresolved":   {errors.New("gateway unreachable and no cached configuration at /secret/path"), "the runner configuration could not be resolved from the state directory"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := config.Default()
-			cfg.Provider = "claude"
-			var output bytes.Buffer
-			err := cmdDoctorWithDependencies([]string{"--config", "operator.yaml"}, doctorCommandDependencies{
-				load: func(string) (config.Config, error) { return cfg, nil },
-				loadStateDirAwaiting: func(string) (config.Config, []doctor.AwaitingAgentPackKey, string, error) {
-					return config.Config{}, nil, "", tc.err
-				},
-				run: func(ctx context.Context, opts doctor.Options) doctor.Report {
-					if opts.AgentPackKeysNotEvaluated != tc.reason || len(opts.AwaitingAgentPackKeys) != 0 {
-						t.Fatalf("options = %+v", opts)
-					}
-					return doctor.RunWithDependencies(ctx, opts, doctor.Dependencies{
-						SystemChecks: func(context.Context, doctor.Options) []doctor.Check { return nil },
-						LookPath:     func(string) (string, error) { return os.Args[0], nil },
-						Stat:         os.Stat,
-					})
-				},
-				output: &output,
-			})
-			if err != nil {
-				t.Fatalf("unresolved state dir failed the command: %v\n%s", err, output.String())
-			}
-			if !strings.Contains(output.String(), "[WARN] agent-pack-keys-awaiting: Agent Pack keys awaiting acceptance were not evaluated: "+tc.reason) || strings.Contains(output.String(), "/secret/") {
-				t.Fatalf("output:\n%s", output.String())
-			}
-		})
 	}
 }

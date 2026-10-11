@@ -11,7 +11,6 @@ import (
 func TestSaveAndLoadLocalFilesArePrivateAndStrict(t *testing.T) {
 	local := testLocal(t)
 	local.ProviderEnvironment = map[string]map[string]string{"claude": {"CLAUDE_CONFIG_DIR": "/home/runner/.claude"}}
-	local.AcceptedPackKeyFingerprints = []string{strings.Repeat("a", 64)}
 	local.AcknowledgeDirect = true
 	remote := []byte(`{"cached":true}`)
 	if err := SaveFiles(local.StateDir, local, remote); err != nil {
@@ -31,7 +30,7 @@ func TestSaveAndLoadLocalFilesArePrivateAndStrict(t *testing.T) {
 		t.Fatal(err)
 	}
 	if loaded.ControlPlaneURL != local.ControlPlaneURL || loaded.StateDir != local.StateDir || !loaded.AcknowledgeDirect ||
-		loaded.ProviderEnvironment["claude"]["CLAUDE_CONFIG_DIR"] != "/home/runner/.claude" || loaded.AcceptedPackKeyFingerprints[0] != strings.Repeat("a", 64) {
+		loaded.ProviderEnvironment["claude"]["CLAUDE_CONFIG_DIR"] != "/home/runner/.claude" {
 		t.Fatalf("loaded = %+v", loaded)
 	}
 	cached, err := LoadCachedDelivery(local.StateDir)
@@ -82,6 +81,47 @@ func TestLoadLocalRejectsMissingUnknownForeignAndExposedFiles(t *testing.T) {
 	}
 	if _, err := LoadCachedDelivery(local.StateDir); err == nil {
 		t.Fatal("missing cache loaded")
+	}
+}
+
+func TestLoadLocalDiscardsLegacyAcceptedPackKeyFingerprints(t *testing.T) {
+	local := testLocal(t)
+	if err := os.MkdirAll(local.StateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(local.StateDir, LocalFileName)
+	base := "control_plane_url: " + local.ControlPlaneURL + "\nstate_dir: " + local.StateDir + "\nacknowledge_direct: true\n"
+	for name, legacy := range map[string]string{
+		"populated": "accepted_pack_key_fingerprints:\n  pack-key-1: " + strings.Repeat("ab", 32) + "\n  pack-key-2: " + strings.Repeat("cd", 32) + "\n",
+		"empty":     "accepted_pack_key_fingerprints: {}\n",
+		"null":      "accepted_pack_key_fingerprints:\n",
+	} {
+		if err := os.WriteFile(path, []byte(base+legacy), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadLocal(local.StateDir)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if loaded.ControlPlaneURL != local.ControlPlaneURL || loaded.StateDir != local.StateDir || !loaded.AcknowledgeDirect {
+			t.Fatalf("%s: loaded = %+v", name, loaded)
+		}
+		if err := SaveFiles(local.StateDir, loaded, []byte(`{"cached":true}`)); err != nil {
+			t.Fatal(err)
+		}
+		written, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(written), "accepted_pack_key_fingerprints") || strings.Contains(string(written), "pack-key-1") {
+			t.Fatalf("%s: legacy key written back:\n%s", name, written)
+		}
+	}
+	if err := os.WriteFile(path, []byte(base+"accepted_pack_key_fingerprints: {}\nisolation: direct\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLocal(local.StateDir); err == nil {
+		t.Fatal("the legacy key opened the file to other unknown keys")
 	}
 }
 

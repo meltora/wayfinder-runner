@@ -22,13 +22,16 @@ type Manager struct {
 	AllowLocal        bool
 	Git               func(ctx context.Context, dir string, args ...string) (string, error)
 	AskPassExecutable string
+	RemoteGit         func(ctx context.Context, dir, remoteURL string, credential GitHTTPSCredential, args ...string) (string, error)
 
 	testGitEnvironment []string
+	testGitObserver    func(args, env []string)
 }
 
 func NewManager(root string) *Manager {
 	m := &Manager{Root: root}
 	m.Git = m.runGit
+	m.RemoteGit = m.runCredentialGit
 	return m
 }
 
@@ -128,6 +131,10 @@ func (m *Manager) CreateWorkspace(ctx context.Context, url, branch, baseRef, des
 // CreateDetachedWorkspace materializes exactly the observed commit. Mutable
 // remote branch names are never consulted when selecting planning content.
 func (m *Manager) CreateDetachedWorkspace(ctx context.Context, url, baseSHA, dest string) error {
+	return m.CreateDetachedWorkspaceWithCredential(ctx, url, baseSHA, dest, nil)
+}
+
+func (m *Manager) CreateDetachedWorkspaceWithCredential(ctx context.Context, url, baseSHA, dest string, credential *GitHTTPSCredential) error {
 	if err := validateURL(url, m.AllowLocal); err != nil {
 		return err
 	}
@@ -143,7 +150,10 @@ func (m *Manager) CreateDetachedWorkspace(ctx context.Context, url, baseSHA, des
 	mirror := m.mirrorDir(url)
 	resolved, resolveErr := m.runGitWithProtocols(ctx, mirror, false, "rev-parse", "--verify", baseSHA+"^{commit}")
 	if resolveErr != nil || resolved != baseSHA {
-		if _, err := m.runGitWithProtocols(ctx, mirror, m.AllowLocal, "fetch", "--no-tags", "origin", baseSHA); err != nil {
+		fetch := []string{"fetch", "--no-tags", "origin", baseSHA}
+		if _, err := m.remoteFetch(ctx, mirror, url, credential, true, func() (string, error) {
+			return m.runGitWithProtocols(ctx, mirror, m.AllowLocal, fetch...)
+		}, fetch...); err != nil {
 			return fmt.Errorf("fetch observed planning commit: %w", err)
 		}
 		resolved, resolveErr = m.runGitWithProtocols(ctx, mirror, false, "rev-parse", "--verify", baseSHA+"^{commit}")
@@ -241,11 +251,6 @@ func (m *Manager) PushMirrorBranch(ctx context.Context, url, branch string) erro
 	return err
 }
 
-type PushCredential struct {
-	Username string
-	Password string
-}
-
 // #nosec G101 -- environment variable names, not credentials.
 const (
 	AskPassModeEnv   = "SHORTSTACK_GIT_ASKPASS"
@@ -324,7 +329,7 @@ func (m *Manager) PushMirrorBranchWithCredential(ctx context.Context, remoteURL,
 	if credential.Username == "" || credential.Password == "" {
 		return fmt.Errorf("credential push requires a username and token")
 	}
-	if err := m.checkCredentialPushConfig(ctx, remoteURL); err != nil {
+	if err := m.checkCredentialMirrorConfig(ctx, remoteURL, "push"); err != nil {
 		return err
 	}
 	helper, err := m.askPassExecutable()
@@ -351,14 +356,14 @@ func (m *Manager) askPassExecutable() (string, error) {
 	return os.Executable()
 }
 
-func (m *Manager) checkCredentialPushConfig(ctx context.Context, remoteURL string) error {
+func (m *Manager) checkCredentialMirrorConfig(ctx context.Context, remoteURL, operation string) error {
 	mirror := m.mirrorDir(remoteURL)
 	if _, err := os.Lstat(filepath.Join(mirror, "config.worktree")); !os.IsNotExist(err) {
-		return fmt.Errorf("credential push refused: mirror has a worktree Git config")
+		return fmt.Errorf("credential %s refused: mirror has a worktree Git config", operation)
 	}
 	names, err := m.runGitWithProtocols(ctx, mirror, false, "config", "-z", "--name-only", "--list")
 	if err != nil {
-		return fmt.Errorf("credential push refused: mirror Git config could not be inspected")
+		return fmt.Errorf("credential %s refused: mirror Git config could not be inspected", operation)
 	}
 	for _, name := range strings.Split(names, "\x00") {
 		name = strings.TrimSpace(name)
@@ -366,7 +371,7 @@ func (m *Manager) checkCredentialPushConfig(ctx context.Context, remoteURL strin
 			continue
 		}
 		if !credentialPushConfigAllowed(strings.ToLower(name)) {
-			return fmt.Errorf("credential push refused: mirror Git config sets %s", sanitizedConfigKey(name))
+			return fmt.Errorf("credential %s refused: mirror Git config sets %s", operation, sanitizedConfigKey(name))
 		}
 	}
 	return nil
@@ -435,6 +440,10 @@ func (m *Manager) mirrorDir(url string) string {
 }
 
 func (m *Manager) Register(ctx context.Context, url string) (string, error) {
+	return m.RegisterWithCredential(ctx, url, nil)
+}
+
+func (m *Manager) RegisterWithCredential(ctx context.Context, url string, credential *GitHTTPSCredential) (string, error) {
 	if err := validateURL(url, m.AllowLocal); err != nil {
 		return "", err
 	}
@@ -450,7 +459,10 @@ func (m *Manager) Register(ctx context.Context, url string) (string, error) {
 		if _, err := m.Git(ctx, dir, "worktree", "prune"); err != nil {
 			return "", err
 		}
-		if _, err := m.Git(ctx, dir, "fetch", "--prune", "origin"); err != nil {
+		fetch := []string{"fetch", "--prune", "origin"}
+		if _, err := m.remoteFetch(ctx, dir, url, credential, true, func() (string, error) {
+			return m.Git(ctx, dir, fetch...)
+		}, fetch...); err != nil {
 			return "", err
 		}
 		return dir, nil
@@ -458,7 +470,10 @@ func (m *Manager) Register(ctx context.Context, url string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return "", err
 	}
-	if _, err := m.Git(ctx, "", "clone", "--mirror", url, dir); err != nil {
+	clone := []string{"clone", "--mirror", url, dir}
+	if _, err := m.remoteFetch(ctx, "", url, credential, false, func() (string, error) {
+		return m.Git(ctx, "", clone...)
+	}, clone...); err != nil {
 		return "", err
 	}
 	return dir, nil

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/example/app-runner/internal/agentpack/trustset"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -292,17 +293,33 @@ func TestReloadStillAppliesWhenTheCacheCannotBeWritten(t *testing.T) {
 	}
 }
 
-func TestReloadWarnsAboutPackKeysAwaitingHostAcceptance(t *testing.T) {
+func TestReloadAppliesTheDeliveredTrustSetWithoutHostAcceptance(t *testing.T) {
 	d, _, logs := reloadTestDaemon(t)
-	reload := hotReload(d.cfg, strings.Repeat("e", 64), nil)
-	reload.Merged.AwaitingPackKeys = []remoteconfig.PackKey{{ID: "key-new", Fingerprint: strings.Repeat("9", 64), PublicKey: "c3BraS1u"}}
+	root, packKey := newTrustTestKey(t), newTrustTestKey(t)
+	store, err := trustset.OpenStore(d.cfg.StateDir, trustTestRoots(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.agentPackTrust = &agentPackTrust{store: store}
+	set := signTrustTestSet(t, root, 2, []trustTestSetKey{{id: "key-new", key: packKey}})
+	reload := hotReload(d.cfg, strings.Repeat("e", 64), func(c *config.Config) { c.AgentPackTrustedKeySet = &set })
 	d.configurationReloader = &fakeConfigurationReloader{reloads: []remoteconfig.Reload{reload}, errs: []error{nil}}
 	d.reloadConfiguration(context.Background())
 	if _, ok := d.hotConfiguration().agentPackPublicKeys["key-new"]; ok {
-		t.Fatal("an unaccepted key became trusted")
+		t.Fatal("a remotely delivered key became a hand-written trusted key")
 	}
-	if !strings.Contains(logs.String(), "key-new") || !strings.Contains(logs.String(), "--accept-pack-keys") || strings.Contains(logs.String(), "c3BraS1u") {
-		t.Fatalf("logs = %s", logs.String())
+	if snapshot := store.Snapshot(); snapshot.HighestSequence != 2 || snapshot.Current == nil {
+		t.Fatalf("the delivered trust set was not applied: %+v", snapshot)
+	}
+	foreign := signTrustTestSet(t, newTrustTestKey(t), 3, nil)
+	next := hotReload(d.cfg, strings.Repeat("f", 64), func(c *config.Config) { c.AgentPackTrustedKeySet = &foreign })
+	d.configurationReloader = &fakeConfigurationReloader{reloads: []remoteconfig.Reload{next}, errs: []error{nil}}
+	d.reloadConfiguration(context.Background())
+	if snapshot := store.Snapshot(); snapshot.HighestSequence != 2 {
+		t.Fatalf("an unverifiable delivered set replaced the trust state: %+v", snapshot)
+	}
+	if !strings.Contains(logs.String(), "signature_invalid") && !strings.Contains(logs.String(), "unknown_root") {
+		t.Fatalf("the refused set was not reported: %s", logs.String())
 	}
 }
 

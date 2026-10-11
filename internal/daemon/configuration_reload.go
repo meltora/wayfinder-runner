@@ -180,16 +180,13 @@ func (d *Daemon) reloadConfiguration(ctx context.Context) bool {
 	d.configurationApplyFailing = false
 	d.configurationRestartDigest = ""
 	d.applyAgentPackRevocations()
+	d.applyConfiguredAgentPackTrust(ctx, reload.Merged.Config.AgentPackTrustedKeySet)
 	if err := d.configurationReloader.Commit(reload); err != nil {
 		d.logger.Warn("cache the applied runner configuration", "err", err)
 	}
 	hot := d.hotConfiguration()
 	d.logger.Info("applied runner configuration without a restart", "digest", hot.digest,
 		"repositories", len(hot.repositories), "agent_pack_keys", len(hot.agentPackPublicKeys))
-	for _, key := range reload.Merged.AwaitingPackKeys {
-		d.logger.Warn(fmt.Sprintf("Agent Pack key %s (sha256:%s) is awaiting host acceptance; run our-runner configure --state-dir %s --accept-pack-keys, then restart our-runner",
-			key.ID, key.Fingerprint, d.cfg.StateDir))
-	}
 	if d.controlReady.Load() {
 		if err := d.publishCapability(ctx); err != nil && ctx.Err() == nil {
 			d.logger.Warn("publish capability manifest after configuration change", "err", err)

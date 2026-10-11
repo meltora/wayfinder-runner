@@ -20,6 +20,7 @@ import (
 	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/mcpbridge"
 	"github.com/example/app-runner/internal/provider"
+	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/repo"
 	"github.com/example/app-runner/internal/supervisor"
 	"github.com/example/app-runner/internal/validation"
@@ -345,7 +346,7 @@ func (jr *jobRunner) run() {
 	jr.publishProgress(ctx, "provisioning", "preparing workspace", "")
 	workDir, cleanup, err := jr.prepareWorkspace(ctx)
 	if err != nil {
-		jr.logger.Error("workspace preparation failed", "err", err)
+		jr.logger.Error("workspace preparation failed", "err", jr.redactProviderCredential(err))
 		failure := classifyWorkspacePreparationFailure(err)
 		outcome := jr.startupFailureOutcome(failure.FailureCode, failure.FailureMessage)
 		if outcome.State == v1.JobFinishedFailed {
@@ -687,7 +688,7 @@ func (jr *jobRunner) run() {
 		finish(jobOutcome{State: v1.JobFinishedSucceeded}, nil)
 		return
 	}
-	finish(jobOutcome{State: v1.JobFinishedSucceeded}, nil)
+	finish(jr.planExitOutcome(ctx), nil)
 }
 
 func (jr *jobRunner) monitorLease(ctx context.Context) {
@@ -746,9 +747,13 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 		return "", func() {}, fmt.Errorf("job must define exactly one primary repository")
 	}
 
-	repositories := jr.jobConfiguration().repositories
+	configuration := jr.jobConfiguration()
+	repositories := configuration.repositories
 	rm := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
 	rm.AllowLocal = d.cfg.AllowUnsafeDirect
+	if d.configureRepositoryManager != nil {
+		d.configureRepositoryManager(rm)
+	}
 	cleanup := func() {
 		for i := len(jr.repositories) - 1; i >= 0; i-- {
 			repository := jr.repositories[i]
@@ -775,9 +780,14 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 			cleanup()
 			return "", func() {}, fmt.Errorf("repository %q is not registered on this runner", ref.RepositoryID)
 		}
-		if _, err := rm.Register(ctx, repository.URL); err != nil {
+		credential, gitHubOrigin, err := repositoryCredential(jr.providerCredential, repository.URL, configuration.sourcePublicationInstallations, time.Now())
+		if err != nil {
 			cleanup()
-			return "", func() {}, fmt.Errorf("register repository %s: %w", ref.RepositoryID, err)
+			return "", func() {}, repositoryAccessFailure(fmt.Errorf("repository %s: %w", ref.RepositoryID, err), gitHubOrigin)
+		}
+		if _, err := rm.RegisterWithCredential(ctx, repository.URL, credential); err != nil {
+			cleanup()
+			return "", func() {}, repositoryAccessFailure(fmt.Errorf("register repository %s: %w", ref.RepositoryID, err), gitHubOrigin)
 		}
 		base := ref.BaseBranch
 		if base == "" {
@@ -792,7 +802,7 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 		branch := "job/" + job.JobID + "/" + job.AttemptID
 		var workspaceErr error
 		if job.Kind == v1.JobKindPlan || job.Kind == v1.JobKindBuild {
-			workspaceErr = rm.CreateDetachedWorkspace(ctx, repository.URL, ref.BaseSHA, wtDir)
+			workspaceErr = rm.CreateDetachedWorkspaceWithCredential(ctx, repository.URL, ref.BaseSHA, wtDir, credential)
 			if job.Kind == v1.JobKindPlan {
 				branch = ""
 			} else if workspaceErr == nil {
@@ -809,7 +819,7 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 		}
 		if workspaceErr != nil {
 			cleanup()
-			return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, workspaceErr)
+			return "", func() {}, repositoryAccessFailure(fmt.Errorf("workspace %s: %w", ref.RepositoryID, workspaceErr), gitHubOrigin)
 		}
 		if err := ensureRunnerArtifactsExcluded(wtDir); err != nil {
 			cleanup()
@@ -854,6 +864,13 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 	return primaryDir, cleanup, nil
 }
 
+func (jr *jobRunner) redactProviderCredential(err error) error {
+	if jr.providerCredential == nil {
+		return err
+	}
+	return redact.Error(err, jr.providerCredential.Token)
+}
+
 func classifyWorkspacePreparationFailure(err error) jobOutcome {
 	var materializationFailure *agentPackMaterializationError
 	if errors.As(err, &materializationFailure) {
@@ -864,10 +881,37 @@ func classifyWorkspacePreparationFailure(err error) jobOutcome {
 			FailureMessage: "Agent Pack materialization failed",
 		}
 	}
+	message := "workspace preparation failed"
+	var accessFailure *repositoryAccessError
+	if errors.As(err, &accessFailure) {
+		message = accessFailure.message
+	}
 	return jobOutcome{
 		State: v1.JobFinishedFailed, FailureCode: v1.JobFailureWorkspacePreparation,
-		FailureMessage: "workspace preparation failed",
+		FailureMessage: message,
 	}
+}
+
+type repositoryAccessError struct {
+	message string
+	cause   error
+}
+
+func (e *repositoryAccessError) Error() string { return e.cause.Error() }
+
+func (e *repositoryAccessError) Unwrap() error { return e.cause }
+
+func repositoryAccessFailure(err error, gitHubOrigin bool) error {
+	if !gitHubOrigin {
+		return err
+	}
+	switch {
+	case errors.Is(err, repo.ErrRepositoryCredentialUnavailable):
+		return &repositoryAccessError{message: "repository credential unavailable", cause: err}
+	case errors.Is(err, repo.ErrRepositoryAccessDenied):
+		return &repositoryAccessError{message: "repository access denied", cause: err}
+	}
+	return err
 }
 
 func (jr *jobRunner) buildPrompt() string {

@@ -53,3 +53,18 @@ func TestCommandAckEvidenceMatchesStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandAckAcceptsTrustChainRejectionCodes(t *testing.T) {
+	t.Parallel()
+	for code, wire := range map[CommandAckReasonCode]string{
+		CommandAckReasonAgentPackTrustUnverifiable: "agent_pack_trust_unverifiable",
+		CommandAckReasonAgentPackKeyRevoked:        "agent_pack_key_revoked",
+	} {
+		if string(code) != wire {
+			t.Fatalf("reason code %q != %q", code, wire)
+		}
+		if err := ValidateCommandAckPayload(CommandAckPayload{Status: CommandAckRejected, ReasonCode: code}); err != nil {
+			t.Fatalf("%s rejected: %v", code, err)
+		}
+	}
+}

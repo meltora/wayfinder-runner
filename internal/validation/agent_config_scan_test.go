@@ -81,16 +81,18 @@ func TestAgentConfigScanResultBindsAuthorityAndOutcome(t *testing.T) {
 			}
 		})
 	}
-	for _, code := range []string{"repository_unavailable", "checkout_failed", "scan_failed", "deadline_exceeded", "interrupted", "stopped", "limit_exceeded"} {
+	for _, code := range []string{"repository_unavailable", "checkout_failed", "scan_failed", "deadline_exceeded", "interrupted", "stopped", "limit_exceeded", "repository_credential_unavailable", "repository_access_denied"} {
 		e := event
 		e.Outcome = v1.AgentConfigScanOutcome{Kind: "failed", Code: code}
 		if err := AgentConfigScanResultEvent(e); err != nil {
 			t.Fatal(err)
 		}
 	}
-	event.Outcome = v1.AgentConfigScanOutcome{Kind: "failed", Code: "secret diagnostics"}
-	if AgentConfigScanResultEvent(event) == nil {
-		t.Fatal("unknown failure accepted")
+	for _, code := range []string{"secret diagnostics", "bogus_code", "authentication_failed", "repository_credential_unavailable ", ""} {
+		event.Outcome = v1.AgentConfigScanOutcome{Kind: "failed", Code: code}
+		if AgentConfigScanResultEvent(event) == nil {
+			t.Fatalf("unknown failure %q accepted", code)
+		}
 	}
 }
 

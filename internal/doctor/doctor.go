@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/egresspolicy"
 	"github.com/example/app-runner/internal/identity"
 	"github.com/example/app-runner/internal/isolation"
@@ -63,14 +64,8 @@ type Options struct {
 	WorkIntakeProposalEnabled  bool
 	EgressPolicyVerifierSocket string
 	ProviderEnvironmentNames   map[string][]string
-	AwaitingAgentPackKeys      []AwaitingAgentPackKey
-	AcceptAgentPackKeysCommand string
-	AgentPackKeysNotEvaluated  string
-}
-
-type AwaitingAgentPackKey struct {
-	ID          string
-	Fingerprint string
+	PlatformTrustedKeySet      *v1.AgentPackTrustedKeySet
+	BuildChannel               string
 }
 
 func runSystemChecks(ctx context.Context, opts Options) Report {

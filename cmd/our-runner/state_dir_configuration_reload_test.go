@@ -15,7 +15,7 @@ func TestStateDirReloaderFollowsTheRunningDigest(t *testing.T) {
 	key := newConfigurePackKey(t, "pack-key-1")
 	delivered := configureDelivery(t, h.runnerID, "docker", key)
 	h.respond(http.StatusOK, delivered)
-	if err := h.run("", false, "--non-interactive", "--accept-pack-keys"); err != nil {
+	if err := h.run("", false, "--non-interactive"); err != nil {
 		t.Fatal(err)
 	}
 	cfg, reloader, err := loadStateDirConfigurationWithReloader(context.Background(), h.stateDir, &bytes.Buffer{})
@@ -42,8 +42,8 @@ func TestStateDirReloaderFollowsTheRunningDigest(t *testing.T) {
 	if err != nil || reload.Outcome != remoteconfig.ReloadApply || reload.Merged.Config.Labels["pool"] != "hot" {
 		t.Fatalf("reload = %+v err = %v", reload, err)
 	}
-	if len(reload.Merged.Config.AgentPackPublicKeys) != 1 {
-		t.Fatalf("the accepted key was lost: %+v", reload.Merged.Config.AgentPackPublicKeys)
+	if len(reload.Merged.Config.AgentPackPublicKeys) != 0 {
+		t.Fatalf("a remote pack key was trusted: %+v", reload.Merged.Config.AgentPackPublicKeys)
 	}
 }
 

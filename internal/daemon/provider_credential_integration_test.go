@@ -224,3 +224,47 @@ func TestTerminalCommandRedeliveryWithExpiredCredentialReplaysStoredAck(t *testi
 		t.Fatal("acknowledgements carry the provider token")
 	}
 }
+
+func TestNonPushingJobAcceptsRepositoryReadCredential(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	origin := seedBareOrigin(t)
+	fakeAgent := writeFakeAgent(t, `echo '{"type":"result","session_id":"sess-read","status":"success"}'
+`)
+	cp, stateDir, ctx := startCredentialTestRunner(t, func(cfg *config.Config) {
+		cfg.Provider = "claude"
+		cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
+		cfg.Repositories = map[string]config.RepositoryConfig{"repo-1": {URL: origin}}
+	})
+	job := withIntegrationAuthority(v1.JobSpec{
+		JobID: "plan-read-credential", AttemptID: "att-read-credential", Kind: v1.JobKindPlan, FencingToken: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)},
+		Ticket:       v1.TicketContext{Key: "PROJ-10", Summary: "Plan with a read credential"},
+	})
+	envelope := v1.Envelope{
+		Version: v1.ProtocolVersion, Type: v1.TypeCommand, ID: "start-plan-with-read-credential",
+		SentAt: time.Now(), Payload: v1.CommandPayload{Command: v1.CmdStartJob, Job: &job},
+	}
+	if err := cp.SendCommandWithProviderCredential(ctx, envelope, integrationProviderCredential(time.Now().Add(time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "job finished", 60*time.Second, func() bool {
+		return len(cp.EventsByKind("job_finished")) >= 1
+	})
+	acknowledgements := cp.CommandAcks()
+	if len(acknowledgements) == 0 || acknowledgements[0].InReplyTo != envelope.ID ||
+		acknowledgements[0].Payload.(map[string]any)["status"] != "accepted" {
+		t.Fatalf("acknowledgements = %+v", acknowledgements)
+	}
+	encoded, err := json.Marshal([]any{cp.Events(), cp.CommandAcks()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), integrationProviderToken) {
+		t.Fatal("events or acknowledgements carry the provider token")
+	}
+	if matches := treeContains(t, stateDir, integrationProviderToken); len(matches) != 0 {
+		t.Fatalf("provider token reached runner state: %v", matches)
+	}
+}

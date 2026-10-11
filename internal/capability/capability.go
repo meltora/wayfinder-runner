@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -49,6 +50,8 @@ type Detector struct {
 	WorkIntakeProposalRestrictedEgress                    bool
 	AuthReady                                             func(string) bool
 	trustedAgentPackKeyIDs                                []string
+	agentPackTrustChain                                   bool
+	agentPackTrustRootKeyIDs                              []string
 	providerBinaries                                      map[string]string
 	providerEnvironment                                   map[string][]string
 }
@@ -113,7 +116,15 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		providerReviewFeedbackContentProviders = append(providerReviewFeedbackContentProviders, installation.Provider)
 	}
 	providerReviewFeedbackContentProviders = uniqueSorted(providerReviewFeedbackContentProviders)
+	trustChainVersion := ""
+	var trustRootKeyIDs []string
+	if d.agentPackTrustChain {
+		trustChainVersion = v1.AgentPackTrustChainVersion
+		trustRootKeyIDs = slices.Clone(d.agentPackTrustRootKeyIDs)
+	}
 	m := v1.CapabilityManifest{
+		AgentPackTrustChainVersion:            trustChainVersion,
+		AgentPackTrustRootKeyIDs:              trustRootKeyIDs,
 		RunnerID:                              d.RunnerID,
 		CollectedAt:                           time.Now().UTC(),
 		OS:                                    runtime.GOOS,

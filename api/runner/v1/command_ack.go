@@ -13,33 +13,37 @@ const (
 type CommandAckReasonCode string
 
 const (
-	CommandAckReasonInvalidCommand            CommandAckReasonCode = "invalid_command"
-	CommandAckReasonUnsupportedCommand        CommandAckReasonCode = "unsupported_command"
-	CommandAckReasonCommandConflict           CommandAckReasonCode = "command_conflict"
-	CommandAckReasonRunnerPaused              CommandAckReasonCode = "runner_paused"
-	CommandAckReasonRunnerBusy                CommandAckReasonCode = "runner_busy"
-	CommandAckReasonRunnerDraining            CommandAckReasonCode = "runner_draining"
-	CommandAckReasonLeaseRejected             CommandAckReasonCode = "lease_rejected"
-	CommandAckReasonAgentPackKeyUntrusted     CommandAckReasonCode = "agent_pack_key_untrusted"
-	CommandAckReasonAgentPackAuthorityInvalid CommandAckReasonCode = "agent_pack_authority_invalid"
-	CommandAckReasonAgentPackIncompatible     CommandAckReasonCode = "agent_pack_incompatible"
-	CommandAckReasonAgentPackOriginUnapproved CommandAckReasonCode = "agent_pack_origin_unapproved"
-	CommandAckReasonInternalRejection         CommandAckReasonCode = "internal_rejection"
+	CommandAckReasonInvalidCommand             CommandAckReasonCode = "invalid_command"
+	CommandAckReasonUnsupportedCommand         CommandAckReasonCode = "unsupported_command"
+	CommandAckReasonCommandConflict            CommandAckReasonCode = "command_conflict"
+	CommandAckReasonRunnerPaused               CommandAckReasonCode = "runner_paused"
+	CommandAckReasonRunnerBusy                 CommandAckReasonCode = "runner_busy"
+	CommandAckReasonRunnerDraining             CommandAckReasonCode = "runner_draining"
+	CommandAckReasonLeaseRejected              CommandAckReasonCode = "lease_rejected"
+	CommandAckReasonAgentPackKeyUntrusted      CommandAckReasonCode = "agent_pack_key_untrusted"
+	CommandAckReasonAgentPackAuthorityInvalid  CommandAckReasonCode = "agent_pack_authority_invalid"
+	CommandAckReasonAgentPackIncompatible      CommandAckReasonCode = "agent_pack_incompatible"
+	CommandAckReasonAgentPackOriginUnapproved  CommandAckReasonCode = "agent_pack_origin_unapproved"
+	CommandAckReasonAgentPackTrustUnverifiable CommandAckReasonCode = "agent_pack_trust_unverifiable"
+	CommandAckReasonAgentPackKeyRevoked        CommandAckReasonCode = "agent_pack_key_revoked"
+	CommandAckReasonInternalRejection          CommandAckReasonCode = "internal_rejection"
 )
 
 var commandAckReasonCodes = map[CommandAckReasonCode]struct{}{
-	CommandAckReasonInvalidCommand:            {},
-	CommandAckReasonUnsupportedCommand:        {},
-	CommandAckReasonCommandConflict:           {},
-	CommandAckReasonRunnerPaused:              {},
-	CommandAckReasonRunnerBusy:                {},
-	CommandAckReasonRunnerDraining:            {},
-	CommandAckReasonLeaseRejected:             {},
-	CommandAckReasonAgentPackKeyUntrusted:     {},
-	CommandAckReasonAgentPackAuthorityInvalid: {},
-	CommandAckReasonAgentPackIncompatible:     {},
-	CommandAckReasonAgentPackOriginUnapproved: {},
-	CommandAckReasonInternalRejection:         {},
+	CommandAckReasonInvalidCommand:             {},
+	CommandAckReasonUnsupportedCommand:         {},
+	CommandAckReasonCommandConflict:            {},
+	CommandAckReasonRunnerPaused:               {},
+	CommandAckReasonRunnerBusy:                 {},
+	CommandAckReasonRunnerDraining:             {},
+	CommandAckReasonLeaseRejected:              {},
+	CommandAckReasonAgentPackKeyUntrusted:      {},
+	CommandAckReasonAgentPackAuthorityInvalid:  {},
+	CommandAckReasonAgentPackIncompatible:      {},
+	CommandAckReasonAgentPackOriginUnapproved:  {},
+	CommandAckReasonAgentPackTrustUnverifiable: {},
+	CommandAckReasonAgentPackKeyRevoked:        {},
+	CommandAckReasonInternalRejection:          {},
 }
 
 type CommandAckPayload struct {

@@ -107,3 +107,37 @@ func TestJobFinishedEventRejectsInvalidAuthorityAndFailureCombinations(t *testin
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+func TestJobFinishedEventScopesPlanNotPublishedToFailedPlanJobs(t *testing.T) {
+	t.Parallel()
+	valid := validJobFinishedEvent()
+	valid.ManifestKind = v1.JobKindPlan
+	valid.State = v1.JobFinishedFailed
+	valid.FailureCode = v1.JobFailurePlanNotPublished
+	valid.FailureMessage = "planning finished without publishing a plan"
+	if v1.JobFailurePlanNotPublished != "plan_not_published" {
+		t.Fatalf("code=%q", v1.JobFailurePlanNotPublished)
+	}
+	if err := JobFinishedEvent(valid); err != nil {
+		t.Fatalf("plan_not_published rejected for failed plan job: %v", err)
+	}
+	mutations := map[string]func(*v1.JobFinishedEvent){
+		"build manifest": func(event *v1.JobFinishedEvent) { event.ManifestKind = v1.JobKindBuild },
+		"succeeded":      func(event *v1.JobFinishedEvent) { event.State = v1.JobFinishedSucceeded },
+		"cancelled":      func(event *v1.JobFinishedEvent) { event.State = v1.JobFinishedCancelled },
+		"quarantined":    func(event *v1.JobFinishedEvent) { event.State = v1.JobFinishedQuarantined },
+		"category": func(event *v1.JobFinishedEvent) {
+			event.FailureCategory = v1.AgentPackFailureDownloadUnavailable
+		},
+		"retryable": func(event *v1.JobFinishedEvent) { event.Retryable = boolPointer(false) },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			event := valid
+			mutate(&event)
+			if err := JobFinishedEvent(event); err == nil {
+				t.Fatalf("out-of-scope plan_not_published accepted: %#v", event)
+			}
+		})
+	}
+}

@@ -23,12 +23,16 @@ const (
 var ErrNotConfigured = errors.New("this runner has no saved configuration; run our-runner configure first")
 
 type Local struct {
-	ControlPlaneURL             string                       `yaml:"control_plane_url"`
-	StateDir                    string                       `yaml:"state_dir"`
-	ProviderEnvironment         map[string]map[string]string `yaml:"provider_environment,omitempty"`
-	ProviderBinaries            map[string]string            `yaml:"provider_binaries,omitempty"`
-	AcceptedPackKeyFingerprints []string                     `yaml:"accepted_pack_key_fingerprints,omitempty"`
-	AcknowledgeDirect           bool                         `yaml:"acknowledge_direct,omitempty"`
+	ControlPlaneURL     string                       `yaml:"control_plane_url"`
+	StateDir            string                       `yaml:"state_dir"`
+	ProviderEnvironment map[string]map[string]string `yaml:"provider_environment,omitempty"`
+	ProviderBinaries    map[string]string            `yaml:"provider_binaries,omitempty"`
+	AcknowledgeDirect   bool                         `yaml:"acknowledge_direct,omitempty"`
+}
+
+type localDocument struct {
+	Local                       `yaml:",inline"`
+	AcceptedPackKeyFingerprints yaml.Node `yaml:"accepted_pack_key_fingerprints"`
 }
 
 func (l Local) Validate() error {
@@ -37,11 +41,6 @@ func (l Local) Validate() error {
 	}
 	if !filepath.IsAbs(l.StateDir) {
 		return fmt.Errorf("state_dir must be an absolute path")
-	}
-	for _, fingerprint := range l.AcceptedPackKeyFingerprints {
-		if !digestPattern.MatchString(fingerprint) {
-			return fmt.Errorf("accepted_pack_key_fingerprints must contain lowercase SHA-256 fingerprints")
-		}
 	}
 	for provider, binary := range l.ProviderBinaries {
 		if binary != "" && !filepath.IsAbs(binary) {
@@ -71,7 +70,8 @@ func ConfigurationURL(gatewayURL string) (string, error) {
 }
 
 func LoadLocal(stateDir string) (Local, error) {
-	var out Local
+	var document localDocument
+	out := document.Local
 	raw, err := safeio.ReadRegularFile(filepath.Join(stateDir, LocalFileName), 1<<20, 0o077)
 	if errors.Is(err, fs.ErrNotExist) {
 		return out, ErrNotConfigured
@@ -81,9 +81,10 @@ func LoadLocal(stateDir string) (Local, error) {
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
-	if err := decoder.Decode(&out); err != nil {
+	if err := decoder.Decode(&document); err != nil {
 		return out, fmt.Errorf("parse %s: %w", LocalFileName, err)
 	}
+	out = document.Local
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return out, fmt.Errorf("parse %s: multiple YAML documents are not allowed", LocalFileName)

@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,7 +17,7 @@ import (
 	"github.com/example/app-runner/internal/remoteconfig"
 )
 
-const configureFlagHelp = "--non-interactive together with --provider-env NAME=VALUE, --provider-binary PATH, --accept-pack-keys and --acknowledge-direct as needed"
+const configureFlagHelp = "--non-interactive together with --provider-env NAME=VALUE, --provider-binary PATH and --acknowledge-direct as needed"
 
 var providerEnvironmentPrompts = map[string]string{
 	"claude": "CLAUDE_CONFIG_DIR",
@@ -53,7 +52,6 @@ type configureOptions struct {
 	stateDirSet       bool
 	providerEnv       map[string]string
 	providerBinary    string
-	acceptPackKeys    bool
 	acknowledgeDirect bool
 	nonInteractive    bool
 }
@@ -83,9 +81,6 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 	for i := 0; i < len(args); i++ {
 		name := args[i]
 		switch name {
-		case "--accept-pack-keys":
-			opts.acceptPackKeys = true
-			continue
 		case "--acknowledge-direct":
 			opts.acknowledgeDirect = true
 			continue
@@ -254,28 +249,6 @@ func cmdConfigureWithDependencies(args []string, deps configureDependencies) err
 			local.ProviderBinaries[provider] = answer
 		}
 	}
-	accepted := make(map[string]bool, len(local.AcceptedPackKeyFingerprints))
-	for _, fingerprint := range local.AcceptedPackKeyFingerprints {
-		accepted[fingerprint] = true
-	}
-	for _, key := range delivery.PackKeys {
-		if accepted[key.Fingerprint] {
-			continue
-		}
-		trust := opts.acceptPackKeys
-		if !trust && interactive {
-			answer, err := prompter.ask(fmt.Sprintf("Trust Agent Pack key %s with SHA-256 fingerprint %s? Type yes to accept: ", key.ID, key.Fingerprint))
-			if err != nil {
-				return err
-			}
-			trust = strings.EqualFold(answer, "yes") || strings.EqualFold(answer, "y")
-		}
-		if trust {
-			accepted[key.Fingerprint] = true
-			local.AcceptedPackKeyFingerprints = append(local.AcceptedPackKeyFingerprints, key.Fingerprint)
-		}
-	}
-	sort.Strings(local.AcceptedPackKeyFingerprints)
 	if delivery.Remote.Isolation != "direct" {
 		local.AcknowledgeDirect = false
 	} else if opts.acknowledgeDirect {
@@ -305,13 +278,6 @@ func cmdConfigureWithDependencies(args []string, deps configureDependencies) err
 	if names := merged.Config.ProviderEnvironmentNames(provider); len(names) > 0 {
 		fmt.Fprintf(deps.output, "Provider environment for %s: %s\n", providerName, strings.Join(names, ", "))
 	}
-	if len(merged.AwaitingPackKeys) > 0 {
-		fmt.Fprintln(deps.output, "Agent Pack keys awaiting host acceptance:")
-		for _, key := range merged.AwaitingPackKeys {
-			fmt.Fprintf(deps.output, "  %s  sha256:%s\n", key.ID, key.Fingerprint)
-		}
-		fmt.Fprintf(deps.output, "Accept them with: our-runner configure%s%s --accept-pack-keys\n", gatewayArgument(opts.gateway, opts.gatewayFromFile), stateDirArgument(opts))
-	}
 	fmt.Fprintf(deps.output, "Start the runner with: our-runner start%s\n", stateDirArgument(opts))
 	return nil
 }
@@ -329,7 +295,6 @@ func startingLocal(opts configureOptions) (remoteconfig.Local, error) {
 		for provider, binary := range existing.ProviderBinaries {
 			local.ProviderBinaries[provider] = binary
 		}
-		local.AcceptedPackKeyFingerprints = append(local.AcceptedPackKeyFingerprints, existing.AcceptedPackKeyFingerprints...)
 		local.AcknowledgeDirect = existing.AcknowledgeDirect
 	}
 	local.ControlPlaneURL = opts.gateway
@@ -347,14 +312,11 @@ func printConfigureSummary(output io.Writer, delivery remoteconfig.Delivery) {
 	}
 	fmt.Fprintf(output, "Provider: %s\n", providerDisplayName(remote.Provider))
 	fmt.Fprintf(output, "Repositories: %d included, %d omitted%s\n", len(remote.Repositories), len(delivery.OmittedRepositories), omissionBreakdown(delivery.OmittedRepositories))
-	if len(delivery.PackKeys) == 0 {
-		fmt.Fprintln(output, "Agent Pack keys: none")
+	if remote.AgentPackTrustedKeySet == nil {
+		fmt.Fprintln(output, "Platform trust: no signed key set delivered yet")
 		return
 	}
-	fmt.Fprintln(output, "Agent Pack keys:")
-	for _, key := range delivery.PackKeys {
-		fmt.Fprintf(output, "  %s  sha256:%s\n", key.ID, key.Fingerprint)
-	}
+	fmt.Fprintln(output, "Platform trust: signed key set delivered; the runner verifies it against this build's trust roots")
 }
 
 func omissionBreakdown(omitted []remoteconfig.OmittedRepository) string {

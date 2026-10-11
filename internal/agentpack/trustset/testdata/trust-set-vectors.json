@@ -1,0 +1,260 @@
+{
+  "description": "Agent Pack trusted-key set conformance vectors shared by the Go runner and the TypeScript control plane. Public keys only.",
+  "cases": [
+    {
+      "name": "canonical document",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}",
+      "lenient": "ok",
+      "canonical": "ok",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}"
+    },
+    {
+      "name": "pretty-printed document",
+      "document": "{\n  \"format\": 1,\n  \"issuedAt\": \"2026-10-10T12:00:00Z\",\n  \"keys\": [\n    {\n      \"keyId\": \"platform-a\",\n      \"notAfter\": \"2027-10-10T00:00:00Z\",\n      \"notBefore\": \"2026-10-01T00:00:00Z\",\n      \"publicKeySpkiBase64\": \"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"\n    },\n    {\n      \"keyId\": \"platform-b\",\n      \"notBefore\": \"2026-10-01T00:00:00Z\",\n      \"publicKeySpkiBase64\": \"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"\n    }\n  ],\n  \"revokedKeyIds\": [\n    \"platform-old\"\n  ],\n  \"sequence\": 3\n}",
+      "lenient": "ok",
+      "canonical": "non_canonical",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}"
+    },
+    {
+      "name": "fields in a different order",
+      "document": "{\"sequence\":3,\"revokedKeyIds\":[\"platform-old\"],\"keys\":[{\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"keyId\":\"platform-a\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"issuedAt\":\"2026-10-10T12:00:00Z\",\"format\":1}",
+      "lenient": "ok",
+      "canonical": "non_canonical",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}"
+    },
+    {
+      "name": "keys not sorted by keyId",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"},{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}",
+      "lenient": "ok",
+      "canonical": "non_canonical",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}"
+    },
+    {
+      "name": "revoked ids not sorted",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[\"zeta\",\"alpha\"],\"sequence\":3}",
+      "lenient": "ok",
+      "canonical": "non_canonical",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[\"alpha\",\"zeta\"],\"sequence\":3}"
+    },
+    {
+      "name": "trailing newline",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}\n",
+      "lenient": "ok",
+      "canonical": "non_canonical",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}"
+    },
+    {
+      "name": "only revocations",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[],\"revokedKeyIds\":[\"platform-a\"],\"sequence\":9}",
+      "lenient": "ok",
+      "canonical": "ok",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[],\"revokedKeyIds\":[\"platform-a\"],\"sequence\":9}"
+    },
+    {
+      "name": "duplicate key id",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "duplicate_key_id",
+      "canonical": "duplicate_key_id"
+    },
+    {
+      "name": "one key id with two public keys",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "key_id_conflict",
+      "canonical": "key_id_conflict"
+    },
+    {
+      "name": "one public key under two key ids",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "duplicate_public_key",
+      "canonical": "duplicate_public_key"
+    },
+    {
+      "name": "key id both listed and revoked",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[\"platform-a\"],\"sequence\":3}",
+      "lenient": "key_listed_and_revoked",
+      "canonical": "key_listed_and_revoked"
+    },
+    {
+      "name": "duplicate revoked key id",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[\"old\",\"old\"],\"sequence\":3}",
+      "lenient": "duplicate_revoked_key_id",
+      "canonical": "duplicate_revoked_key_id"
+    },
+    {
+      "name": "sequence zero",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":0}",
+      "lenient": "invalid_sequence",
+      "canonical": "invalid_sequence"
+    },
+    {
+      "name": "negative sequence",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":-1}",
+      "lenient": "invalid_sequence",
+      "canonical": "invalid_sequence"
+    },
+    {
+      "name": "sequence above 2^53-1",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":9007199254740992}",
+      "lenient": "invalid_sequence",
+      "canonical": "invalid_sequence"
+    },
+    {
+      "name": "largest sequence",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":9007199254740991}",
+      "lenient": "ok",
+      "canonical": "ok",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":9007199254740991}"
+    },
+    {
+      "name": "fractional sequence",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":1.0}",
+      "lenient": "non_canonical",
+      "canonical": "non_canonical"
+    },
+    {
+      "name": "exponent sequence",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":1e1}",
+      "lenient": "non_canonical",
+      "canonical": "non_canonical"
+    },
+    {
+      "name": "string sequence",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":\"3\"}",
+      "lenient": "malformed",
+      "canonical": "malformed"
+    },
+    {
+      "name": "unsupported format",
+      "document": "{\"format\":2,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "unsupported_format",
+      "canonical": "unsupported_format"
+    },
+    {
+      "name": "too many keys",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"k00\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k01\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k02\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k03\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k04\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k05\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k06\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k07\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k08\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k09\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k10\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k11\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k12\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k13\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k14\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k15\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k16\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k17\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k18\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k19\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k20\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k21\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k22\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k23\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k24\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k25\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k26\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k27\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k28\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k29\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k30\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k31\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k32\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k33\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k34\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k35\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k36\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k37\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k38\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k39\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k40\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k41\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k42\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k43\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k44\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k45\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k46\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k47\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k48\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k49\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k50\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k51\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k52\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k53\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k54\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k55\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k56\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k57\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k58\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k59\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k60\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k61\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k62\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k63\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"k64\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "too_many_keys",
+      "canonical": "too_many_keys"
+    },
+    {
+      "name": "key without notAfter",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"k00\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "ok",
+      "canonical": "ok",
+      "canonicalForm": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"k00\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}"
+    },
+    {
+      "name": "too many revoked ids",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[],\"revokedKeyIds\":[\"r000\",\"r001\",\"r002\",\"r003\",\"r004\",\"r005\",\"r006\",\"r007\",\"r008\",\"r009\",\"r010\",\"r011\",\"r012\",\"r013\",\"r014\",\"r015\",\"r016\",\"r017\",\"r018\",\"r019\",\"r020\",\"r021\",\"r022\",\"r023\",\"r024\",\"r025\",\"r026\",\"r027\",\"r028\",\"r029\",\"r030\",\"r031\",\"r032\",\"r033\",\"r034\",\"r035\",\"r036\",\"r037\",\"r038\",\"r039\",\"r040\",\"r041\",\"r042\",\"r043\",\"r044\",\"r045\",\"r046\",\"r047\",\"r048\",\"r049\",\"r050\",\"r051\",\"r052\",\"r053\",\"r054\",\"r055\",\"r056\",\"r057\",\"r058\",\"r059\",\"r060\",\"r061\",\"r062\",\"r063\",\"r064\",\"r065\",\"r066\",\"r067\",\"r068\",\"r069\",\"r070\",\"r071\",\"r072\",\"r073\",\"r074\",\"r075\",\"r076\",\"r077\",\"r078\",\"r079\",\"r080\",\"r081\",\"r082\",\"r083\",\"r084\",\"r085\",\"r086\",\"r087\",\"r088\",\"r089\",\"r090\",\"r091\",\"r092\",\"r093\",\"r094\",\"r095\",\"r096\",\"r097\",\"r098\",\"r099\",\"r100\",\"r101\",\"r102\",\"r103\",\"r104\",\"r105\",\"r106\",\"r107\",\"r108\",\"r109\",\"r110\",\"r111\",\"r112\",\"r113\",\"r114\",\"r115\",\"r116\",\"r117\",\"r118\",\"r119\",\"r120\",\"r121\",\"r122\",\"r123\",\"r124\",\"r125\",\"r126\",\"r127\",\"r128\",\"r129\",\"r130\",\"r131\",\"r132\",\"r133\",\"r134\",\"r135\",\"r136\",\"r137\",\"r138\",\"r139\",\"r140\",\"r141\",\"r142\",\"r143\",\"r144\",\"r145\",\"r146\",\"r147\",\"r148\",\"r149\",\"r150\",\"r151\",\"r152\",\"r153\",\"r154\",\"r155\",\"r156\",\"r157\",\"r158\",\"r159\",\"r160\",\"r161\",\"r162\",\"r163\",\"r164\",\"r165\",\"r166\",\"r167\",\"r168\",\"r169\",\"r170\",\"r171\",\"r172\",\"r173\",\"r174\",\"r175\",\"r176\",\"r177\",\"r178\",\"r179\",\"r180\",\"r181\",\"r182\",\"r183\",\"r184\",\"r185\",\"r186\",\"r187\",\"r188\",\"r189\",\"r190\",\"r191\",\"r192\",\"r193\",\"r194\",\"r195\",\"r196\",\"r197\",\"r198\",\"r199\",\"r200\",\"r201\",\"r202\",\"r203\",\"r204\",\"r205\",\"r206\",\"r207\",\"r208\",\"r209\",\"r210\",\"r211\",\"r212\",\"r213\",\"r214\",\"r215\",\"r216\",\"r217\",\"r218\",\"r219\",\"r220\",\"r221\",\"r222\",\"r223\",\"r224\",\"r225\",\"r226\",\"r227\",\"r228\",\"r229\",\"r230\",\"r231\",\"r232\",\"r233\",\"r234\",\"r235\",\"r236\",\"r237\",\"r238\",\"r239\",\"r240\",\"r241\",\"r242\",\"r243\",\"r244\",\"r245\",\"r246\",\"r247\",\"r248\",\"r249\",\"r250\",\"r251\",\"r252\",\"r253\",\"r254\",\"r255\",\"r256\"],\"sequence\":3}",
+      "lenient": "too_many_revoked_key_ids",
+      "canonical": "too_many_revoked_key_ids"
+    },
+    {
+      "name": "unknown top-level field",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3,\"zzz\":true}",
+      "lenient": "malformed",
+      "canonical": "malformed"
+    },
+    {
+      "name": "duplicate top-level field",
+      "document": "{\"format\":1,\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2027-10-10T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"},{\"keyId\":\"platform-b\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEAsCl2UFcATc6DRrxZHOyXBJEbHavaLZ/Wj7/HP/JqtR4=\"}],\"revokedKeyIds\":[\"platform-old\"],\"sequence\":3}",
+      "lenient": "malformed",
+      "canonical": "malformed"
+    },
+    {
+      "name": "missing revokedKeyIds",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[],\"sequence\":1}",
+      "lenient": "malformed",
+      "canonical": "malformed"
+    },
+    {
+      "name": "unknown key field",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\",\"scope\":\"platform\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "malformed",
+      "canonical": "malformed"
+    },
+    {
+      "name": "null notAfter",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":null,\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "malformed",
+      "canonical": "malformed"
+    },
+    {
+      "name": "notAfter not after notBefore",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notAfter\":\"2026-10-01T00:00:00Z\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "invalid_validity_window",
+      "canonical": "invalid_validity_window"
+    },
+    {
+      "name": "issuedAt with fractional seconds",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00.000Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "invalid_timestamp",
+      "canonical": "invalid_timestamp"
+    },
+    {
+      "name": "issuedAt with numeric offset",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00+00:00\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "invalid_timestamp",
+      "canonical": "invalid_timestamp"
+    },
+    {
+      "name": "impossible calendar date",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-02-30T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "invalid_timestamp",
+      "canonical": "invalid_timestamp"
+    },
+    {
+      "name": "public key is not Ed25519 SPKI",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"AAAA\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "invalid_public_key",
+      "canonical": "invalid_public_key"
+    },
+    {
+      "name": "public key with non-canonical base64",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3It=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "invalid_public_key",
+      "canonical": "invalid_public_key"
+    },
+    {
+      "name": "key id with a leading dash",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"-platform\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "invalid_key_id",
+      "canonical": "invalid_key_id"
+    },
+    {
+      "name": "key id longer than 128 bytes",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "invalid_key_id",
+      "canonical": "invalid_key_id"
+    },
+    {
+      "name": "revoked key id with a slash",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[],\"revokedKeyIds\":[\"a/b\"],\"sequence\":3}",
+      "lenient": "invalid_key_id",
+      "canonical": "invalid_key_id"
+    },
+    {
+      "name": "escaped characters",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"\\u0070latform-a\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "non_canonical",
+      "canonical": "non_canonical"
+    },
+    {
+      "name": "array document",
+      "document": "[]",
+      "lenient": "malformed",
+      "canonical": "malformed"
+    },
+    {
+      "name": "not JSON",
+      "document": "{",
+      "lenient": "malformed",
+      "canonical": "malformed"
+    },
+    {
+      "name": "non-ASCII byte",
+      "document": "{\"format\":1,\"issuedAt\":\"2026-10-10T12:00:00Z\",\"keys\":[{\"keyId\":\"platform-ä\",\"notBefore\":\"2026-10-01T00:00:00Z\",\"publicKeySpkiBase64\":\"MCowBQYDK2VwAyEA3MYqWk2hUhHEMLfLFFFVGwLOba9fJfqQWDkzWpAu3Is=\"}],\"revokedKeyIds\":[],\"sequence\":3}",
+      "lenient": "non_canonical",
+      "canonical": "non_canonical"
+    }
+  ]
+}

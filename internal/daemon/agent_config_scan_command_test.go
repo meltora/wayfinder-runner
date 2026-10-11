@@ -72,7 +72,7 @@ func TestAgentConfigScanBoundaryRejectsSmuggledAuthority(t *testing.T) {
 func TestAgentConfigScanDurableResultAndExactRedelivery(t *testing.T) {
 	d := scanDaemon(t)
 	var calls atomic.Int32
-	d.agentConfigScanReader = func(context.Context, string, string) (string, scanner.Inventory, error) {
+	d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 		calls.Add(1)
 		return strings.Repeat("a", 40), scanner.Inventory{Items: []v1.AgentConfigDiscoveryItem{}}, nil
 	}
@@ -107,7 +107,7 @@ func TestAgentConfigScanDurableResultAndExactRedelivery(t *testing.T) {
 func TestAgentConfigScanEmergencyStopCancelsWithoutBlockingLoop(t *testing.T) {
 	d := scanDaemon(t)
 	started := make(chan struct{})
-	d.agentConfigScanReader = func(ctx context.Context, _, _ string) (string, scanner.Inventory, error) {
+	d.agentConfigScanReader = func(ctx context.Context, _, _ string, _ *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 		close(started)
 		<-ctx.Done()
 		return "", scanner.Inventory{}, ctx.Err()
@@ -133,7 +133,7 @@ func TestAgentConfigScanEmergencyStopCancelsWithoutBlockingLoop(t *testing.T) {
 }
 func TestAgentConfigScanProcessingRecoveryDoesNotRepeatGit(t *testing.T) {
 	d := scanDaemon(t)
-	d.agentConfigScanReader = func(context.Context, string, string) (string, scanner.Inventory, error) {
+	d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 		t.Error("uncertain operation rescanned")
 		return "", scanner.Inventory{}, errors.New("unexpected")
 	}
@@ -161,7 +161,7 @@ func TestAgentConfigScanFailureCodesAndNoPartialInventory(t *testing.T) {
 	for code, failure := range cases {
 		t.Run(code, func(t *testing.T) {
 			d := scanDaemon(t)
-			d.agentConfigScanReader = func(context.Context, string, string) (string, scanner.Inventory, error) {
+			d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 				return strings.Repeat("a", 40), scanner.Inventory{Items: []v1.AgentConfigDiscoveryItem{}}, failure
 			}
 			c := validScanCommand()
@@ -187,7 +187,7 @@ func TestAgentConfigScanFailureCodesAndNoPartialInventory(t *testing.T) {
 	})
 	t.Run("invalid reader output", func(t *testing.T) {
 		d := scanDaemon(t)
-		d.agentConfigScanReader = func(context.Context, string, string) (string, scanner.Inventory, error) {
+		d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 			return "bad", scanner.Inventory{}, nil
 		}
 		c := validScanCommand()
@@ -246,7 +246,7 @@ func TestAgentConfigScanAdmissionAndReservation(t *testing.T) {
 func TestAgentConfigScanDurableEventSurvivesOutcomeCommitFailure(t *testing.T) {
 	d := scanDaemon(t)
 	var calls atomic.Int32
-	d.agentConfigScanReader = func(context.Context, string, string) (string, scanner.Inventory, error) {
+	d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 		calls.Add(1)
 		return strings.Repeat("a", 40), scanner.Inventory{Items: []v1.AgentConfigDiscoveryItem{}}, nil
 	}
@@ -273,10 +273,10 @@ func TestAgentConfigScanCancellationAndLateSuccess(t *testing.T) {
 				ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 			}
 			cancel()
-			d.agentConfigScanReader = func(context.Context, string, string) (string, scanner.Inventory, error) {
+			d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 				return strings.Repeat("a", 40), scanner.Inventory{}, nil
 			}
-			if got := d.scanAgentConfiguration(ctx, *validScanCommand().AgentConfigScan); got.Code != code || got.Scan != nil {
+			if got := d.scanAgentConfiguration(ctx, *validScanCommand().AgentConfigScan, nil); got.Code != code || got.Scan != nil {
 				t.Fatalf("late success=%+v", got)
 			}
 		})
@@ -387,7 +387,7 @@ func TestAgentConfigScanRejectsCommandIdentityAndPayloadBeforeGit(t *testing.T) 
 		t.Run(damage, func(t *testing.T) {
 			d := scanDaemon(t)
 			var calls atomic.Int32
-			d.agentConfigScanReader = func(context.Context, string, string) (string, scanner.Inventory, error) {
+			d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 				calls.Add(1)
 				return "", scanner.Inventory{}, nil
 			}
@@ -419,7 +419,7 @@ func TestAgentConfigScanDefaultReaderNeverAllowsLocalRepository(t *testing.T) {
 	d := scanDaemon(t)
 	d.cfg.AllowUnsafeDirect = true
 	d.cfg.Repositories["repository-1"] = config.RepositoryConfig{URL: t.TempDir()}
-	outcome := d.scanAgentConfiguration(context.Background(), *validScanCommand().AgentConfigScan)
+	outcome := d.scanAgentConfiguration(context.Background(), *validScanCommand().AgentConfigScan, nil)
 	if outcome.Code != "repository_unavailable" {
 		t.Fatalf("unsafe local registration=%+v", outcome)
 	}
@@ -461,7 +461,7 @@ func TestAgentConfigScanUnsupportedPlatformRejectsForgedCommand(t *testing.T) {
 	d := scanDaemon(t)
 	d.agentConfigScanPlatform = "windows"
 	var calls atomic.Int32
-	d.agentConfigScanReader = func(context.Context, string, string) (string, scanner.Inventory, error) {
+	d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 		calls.Add(1)
 		return "", scanner.Inventory{}, nil
 	}

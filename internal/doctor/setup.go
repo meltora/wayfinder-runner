@@ -8,19 +8,23 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/example/app-runner/internal/agentpack/trustroot"
 )
 
 // Dependencies isolate local probes so setup diagnostics can be tested without contacting services.
 type Dependencies struct {
-	SystemChecks func(context.Context, Options) []Check
-	LookPath     func(string) (string, error)
-	Stat         func(string) (os.FileInfo, error)
+	SystemChecks       func(context.Context, Options) []Check
+	LookPath           func(string) (string, error)
+	Stat               func(string) (os.FileInfo, error)
+	PlatformTrustRoots func() (trustroot.Roots, error)
 }
 
 func Run(ctx context.Context, opts Options) Report {
 	return RunWithDependencies(ctx, opts, Dependencies{
 		SystemChecks: func(ctx context.Context, opts Options) []Check { return runSystemChecks(ctx, opts).Checks },
 		LookPath:     exec.LookPath, Stat: os.Stat,
+		PlatformTrustRoots: defaultPlatformTrustRoots(opts, os.Getenv(trustroot.OverrideEnvironment)),
 	})
 }
 
@@ -40,9 +44,8 @@ func RunWithDependencies(ctx context.Context, opts Options, deps Dependencies) R
 	}
 	checks = append(checks,
 		registrationCheck("repository-registration", opts.RepositoryCount, "registered repositories", "repository access is not checked"),
-		registrationCheck("agent-pack-trust", opts.TrustedAgentPackKeyCount, "trusted Pack keys", "Pack execution is not checked"),
+		platformTrustCheck(opts, deps),
 		isolationCheck(opts.Isolation),
-		awaitingAgentPackKeysCheck(opts),
 		Check{Name: "local-check-limits", Status: Warn, Detail: "Local checks do not verify provider sign-in, runner assignment, or current app permissions. Job-image runtime availability is not checked."},
 	)
 	return Report{Checks: checks}
@@ -53,24 +56,6 @@ func isolationCheck(isolation string) Check {
 		return Check{Name: "isolation", Status: OK, Detail: "container isolation"}
 	}
 	return Check{Name: "isolation", Status: Warn, Detail: "direct isolation is development-only: no container, the Agent Pack view relies on file permissions, and the host user's Claude configuration loads into jobs"}
-}
-
-func awaitingAgentPackKeysCheck(opts Options) Check {
-	if opts.AgentPackKeysNotEvaluated != "" {
-		return Check{Name: "agent-pack-keys-awaiting", Status: Warn, Detail: "Agent Pack keys awaiting acceptance were not evaluated: " + opts.AgentPackKeysNotEvaluated}
-	}
-	if len(opts.AwaitingAgentPackKeys) == 0 {
-		return Check{Name: "agent-pack-keys-awaiting", Status: OK, Detail: "no Agent Pack keys are awaiting acceptance"}
-	}
-	keys := make([]string, 0, len(opts.AwaitingAgentPackKeys))
-	for _, key := range opts.AwaitingAgentPackKeys {
-		keys = append(keys, fmt.Sprintf("%s (sha256:%s)", key.ID, key.Fingerprint))
-	}
-	detail := "Agent Pack keys awaiting acceptance: " + strings.Join(keys, ", ")
-	if opts.AcceptAgentPackKeysCommand != "" {
-		detail += "; review the fingerprints, then run " + opts.AcceptAgentPackKeysCommand
-	}
-	return Check{Name: "agent-pack-keys-awaiting", Status: Warn, Detail: detail}
 }
 
 func checkConfiguredRuntime(opts Options, deps Dependencies) Check {

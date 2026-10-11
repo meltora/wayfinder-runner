@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
+	"strings"
 
+	"github.com/example/app-runner/internal/agentpack/trustroot"
 	"github.com/example/app-runner/internal/daemon"
 )
 
@@ -29,9 +32,26 @@ func writeVersion(output io.Writer) {
 	default:
 		fmt.Fprintln(output, "channel:", release.Channel)
 	}
+	fmt.Fprintln(output, "platform trust roots:", platformTrustRootsSummary())
 	if err != nil || release.ControlPlaneURL == "" {
 		fmt.Fprintln(output, "control plane: none (enroll requires --url)")
 		return
 	}
 	fmt.Fprintln(output, "control plane:", release.ControlPlaneURL)
+}
+
+func platformTrustRootsSummary() string {
+	roots, err := trustroot.Resolve(daemon.Channel, os.Getenv(trustroot.OverrideEnvironment))
+	if err != nil {
+		return "unavailable"
+	}
+	ids := roots.KeyIDs()
+	if len(ids) == 0 {
+		return "none"
+	}
+	summary := strings.Join(ids, ", ")
+	if roots.Source == trustroot.SourceDevelopmentOverride {
+		summary += " (development override)"
+	}
+	return summary
 }

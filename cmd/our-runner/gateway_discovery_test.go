@@ -119,14 +119,14 @@ func TestEnrollStoresTheDiscoveredGatewayAndConfigureUsesIt(t *testing.T) {
 		t.Fatalf("configuration requests = %+v", requests)
 	}
 	out := h.output.String()
-	if !strings.Contains(out, "Accept them with: our-runner configure --state-dir ") || strings.Contains(out, "--gateway") {
+	if strings.Contains(out, "--accept-pack-keys") || strings.Contains(out, "--gateway") {
 		t.Fatalf("hint:\n%s", out)
 	}
 	warnings := &bytes.Buffer{}
 	if _, err := loadStateDirConfiguration(context.Background(), h.stateDir, warnings); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(warnings.String(), "run our-runner configure --state-dir ") || strings.Contains(warnings.String(), "--gateway") {
+	if strings.Contains(warnings.String(), "awaiting host acceptance") || strings.Contains(warnings.String(), "--accept-pack-keys") {
 		t.Fatalf("start warning:\n%s", warnings.String())
 	}
 }
@@ -145,14 +145,14 @@ func TestConfigureGatewayFlagWinsAndIsNotStored(t *testing.T) {
 	if stored, _ := storedGateway(t, h.stateDir); stored != h.server.WSURL() {
 		t.Fatalf("flag written back: %q", stored)
 	}
-	if !strings.Contains(h.output.String(), "Accept them with: our-runner configure --gateway "+shellQuote(override)) {
+	if strings.Contains(h.output.String(), "--accept-pack-keys") || strings.Contains(h.output.String(), override) {
 		t.Fatalf("hint:\n%s", h.output.String())
 	}
 	warnings := &bytes.Buffer{}
 	if _, err := loadStateDirConfiguration(context.Background(), h.stateDir, warnings); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(warnings.String(), "run our-runner configure --gateway "+shellQuote(override)) {
+	if strings.Contains(warnings.String(), "awaiting host acceptance") || strings.Contains(warnings.String(), "--accept-pack-keys") {
 		t.Fatalf("start warning:\n%s", warnings.String())
 	}
 }
@@ -191,8 +191,8 @@ func TestConfigureWithoutAnyKnownGatewayFailsBeforeFetching(t *testing.T) {
 	if err := h.run("", false, "--non-interactive"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(h.output.String(), "Accept them with: our-runner configure --gateway ") {
-		t.Fatalf("pre-discovery runner lost the --gateway hint:\n%s", h.output.String())
+	if strings.Contains(h.output.String(), "--accept-pack-keys") {
+		t.Fatalf("pre-discovery runner was asked to accept pack keys:\n%s", h.output.String())
 	}
 }
 

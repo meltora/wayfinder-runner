@@ -41,11 +41,15 @@ labels:
 #   - https://packs.example.com
 
 # Repository URLs are installed by an administrator and referenced by opaque ID
-# in control-plane job specifications. Never place credentials in these URLs;
-# use the runner user's Git credential helper or SSH agent instead.
+# in control-plane job specifications. Never place credentials in these URLs.
+# GitHub repositories use an HTTPS URL; the platform's GitHub App installation
+# token, attached per command, provides read and push access. Other hosts use
+# the runner user's Git credential helper or SSH agent.
 # repositories:
 #   web-app:
-#     url: ssh://git@example.com/company/web-app.git
+#     url: https://github.com/company/web-app.git
+#   internal-tools:
+#     url: ssh://git@example.com/company/internal-tools.git
 #   shared-api:
 #     url: https://example.com/company/shared-api.git
 

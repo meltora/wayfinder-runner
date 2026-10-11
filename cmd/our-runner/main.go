@@ -64,6 +64,8 @@ func runCLI(args []string) int {
 		err = cmdMCPServe(args[1:])
 	case "hook-event":
 		err = cmdHookEvent(args[1:])
+	case "plan-command-guard":
+		return cmdPlanCommandGuard(args[1:])
 	case "support-bundle":
 		err = cmdSupportBundle(args[1:])
 	case "version":
@@ -93,7 +95,7 @@ setup:
   enroll --code-file FILE --url URL [--state-dir DIR]
                                                     one-time enrollment from a private file; use FILE=- to read stdin
   configure [--gateway URL] [--state-dir DIR] [--provider-env NAME=VALUE]... [--provider-binary PATH]
-            [--accept-pack-keys] [--acknowledge-direct] [--non-interactive]
+            [--acknowledge-direct] [--non-interactive]
                                                     fetch this runner's configuration from the dashboard over
                                                     its mTLS identity and ask only for local settings; without
                                                     --gateway it uses the gateway address saved by enroll
@@ -114,6 +116,7 @@ job tooling:
   mcp-serve --socket PATH --token-file FILE        stdio MCP bridge (spawned by agent CLIs, not for humans)
   hook-event --socket PATH --token-file FILE --type TYPE
                                                     record non-authoritative provider hook telemetry
+  plan-command-guard --root DIR [--root DIR]...   planning-job Bash guard hook (spawned by agent CLIs, not for humans)
 
 maintenance:
   updates are scheduled through the authenticated control plane after the daemon drains active work
@@ -273,8 +276,8 @@ func readEnrollmentCode(path string) (string, error) {
 
 func cmdDoctor(args []string) error {
 	return cmdDoctorWithDependencies(args, doctorCommandDependencies{load: config.Load, run: doctor.Run, output: os.Stdout,
-		loadStateDirAwaiting: func(stateDir string) (config.Config, []doctor.AwaitingAgentPackKey, string, error) {
-			return loadStateDirConfigurationForDoctor(context.Background(), stateDir, os.Stdout)
+		loadStateDir: func(stateDir string) (config.Config, error) {
+			return loadStateDirConfiguration(context.Background(), stateDir, os.Stdout)
 		},
 	})
 }

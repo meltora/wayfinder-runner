@@ -470,7 +470,7 @@ func TestCredentialPushAllowListAcceptsProductionMirror(t *testing.T) {
 		t.Fatalf("import bundle: %v", err)
 	}
 
-	if err := m.checkCredentialPushConfig(t.Context(), remoteURL); err != nil {
+	if err := m.checkCredentialMirrorConfig(t.Context(), remoteURL, "push"); err != nil {
 		t.Fatalf("production mirror failed the allow-list: %v", err)
 	}
 	if err := m.PushMirrorBranchWithCredential(t.Context(), remoteURL, branch, PushCredential{

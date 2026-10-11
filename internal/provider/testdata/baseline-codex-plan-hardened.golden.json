@@ -1,0 +1,72 @@
+{
+  "name": "codex-a1",
+  "command": "codex",
+  "args": [
+    "exec",
+    "--json",
+    "--profile",
+    "runner-plan",
+    "--strict-config",
+    "-c",
+    "mcp_servers.platform.command=\"/usr/local/bin/our-runner\"",
+    "-c",
+    "mcp_servers.platform.args=[\"mcp-serve\", \"--socket\", \"/run/runner/job.sock\", \"--token-file\", \"/run/runner/job.token\"]",
+    "--add-dir",
+    "$PACK",
+    "do the ticket"
+  ],
+  "dir": "$WORK",
+  "env_extra": null,
+  "stdin": "",
+  "provider_environment": [
+    "CLAUDE_CONFIG_DIR=/home/runner/.claude-config"
+  ],
+  "managed_config_mounts": [
+    {
+      "Source": "$CONFIG/codex-requirements.toml",
+      "Target": "/etc/codex/requirements.toml"
+    }
+  ],
+  "config_files": [
+    {
+      "name": "codex-requirements.toml",
+      "mode": "-rw-------",
+      "content": "allow_managed_hooks_only = true\n\n[features]\nhooks = true\n\n[hooks]\nmanaged_dir = \"$CONFIG\"\n\n[[hooks.SessionStart]]\n\n[[hooks.SessionStart.hooks]]\ntype = \"command\"\ncommand = \"'$CONFIG/managed-hook-session-start'\"\ntimeout = 2\n\n[[hooks.SessionEnd]]\n\n[[hooks.SessionEnd.hooks]]\ntype = \"command\"\ncommand = \"'$CONFIG/managed-hook-session-end'\"\ntimeout = 2\n\n[[hooks.PreToolUse]]\n\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"'$CONFIG/managed-hook-pre-tool'\"\ntimeout = 2\n\n[[hooks.PostToolUse]]\n\n[[hooks.PostToolUse.hooks]]\ntype = \"command\"\ncommand = \"'$CONFIG/managed-hook-post-tool'\"\ntimeout = 2\n\n[[hooks.Stop]]\n\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"'$CONFIG/managed-hook-stop'\"\ntimeout = 2\n\n[[hooks.SubagentStop]]\n\n[[hooks.SubagentStop.hooks]]\ntype = \"command\"\ncommand = \"'$CONFIG/managed-hook-subagent-stop'\"\ntimeout = 2\n\n[[hooks.UserPromptSubmit]]\n\n[[hooks.UserPromptSubmit.hooks]]\ntype = \"command\"\ncommand = \"'$CONFIG/managed-hook-user-prompt-submit'\"\ntimeout = 2\n"
+    },
+    {
+      "name": "managed-hook-post-tool",
+      "mode": "-r-x------",
+      "content": "#!/bin/sh\n'/usr/local/bin/our-runner' hook-event --socket '/run/runner/job.sock' --token-file '/run/runner/job.token' --type 'post-tool' \u003c/dev/null \u003e/dev/null 2\u003e\u00261\nexit 0\n"
+    },
+    {
+      "name": "managed-hook-pre-tool",
+      "mode": "-r-x------",
+      "content": "#!/bin/sh\n'/usr/local/bin/our-runner' hook-event --socket '/run/runner/job.sock' --token-file '/run/runner/job.token' --type 'pre-tool' \u003c/dev/null \u003e/dev/null 2\u003e\u00261\nexit 0\n"
+    },
+    {
+      "name": "managed-hook-session-end",
+      "mode": "-r-x------",
+      "content": "#!/bin/sh\n'/usr/local/bin/our-runner' hook-event --socket '/run/runner/job.sock' --token-file '/run/runner/job.token' --type 'session-end' \u003c/dev/null \u003e/dev/null 2\u003e\u00261\nexit 0\n"
+    },
+    {
+      "name": "managed-hook-session-start",
+      "mode": "-r-x------",
+      "content": "#!/bin/sh\n'/usr/local/bin/our-runner' hook-event --socket '/run/runner/job.sock' --token-file '/run/runner/job.token' --type 'session-start' \u003c/dev/null \u003e/dev/null 2\u003e\u00261\nexit 0\n"
+    },
+    {
+      "name": "managed-hook-stop",
+      "mode": "-r-x------",
+      "content": "#!/bin/sh\n'/usr/local/bin/our-runner' hook-event --socket '/run/runner/job.sock' --token-file '/run/runner/job.token' --type 'stop' \u003c/dev/null \u003e/dev/null 2\u003e\u00261\nexit 0\n"
+    },
+    {
+      "name": "managed-hook-subagent-stop",
+      "mode": "-r-x------",
+      "content": "#!/bin/sh\n'/usr/local/bin/our-runner' hook-event --socket '/run/runner/job.sock' --token-file '/run/runner/job.token' --type 'subagent-stop' \u003c/dev/null \u003e/dev/null 2\u003e\u00261\nexit 0\n"
+    },
+    {
+      "name": "managed-hook-user-prompt-submit",
+      "mode": "-r-x------",
+      "content": "#!/bin/sh\n'/usr/local/bin/our-runner' hook-event --socket '/run/runner/job.sock' --token-file '/run/runner/job.token' --type 'user-prompt-submit' \u003c/dev/null \u003e/dev/null 2\u003e\u00261\nexit 0\n"
+    }
+  ]
+}

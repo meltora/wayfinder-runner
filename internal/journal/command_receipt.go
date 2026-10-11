@@ -71,6 +71,8 @@ func (j *Journal) ensureCommandReceiptSchema() error {
 			'agent_pack_authority_invalid',
 			'agent_pack_incompatible',
 			'agent_pack_origin_unapproved',
+			'agent_pack_trust_unverifiable',
+			'agent_pack_key_revoked',
 			'internal_rejection'
 		  )
 	`)

@@ -1,0 +1,43 @@
+{
+  "name": "claude-a1",
+  "command": "claude",
+  "args": [
+    "-p",
+    "do the ticket",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--mcp-config",
+    "$CONFIG/claude-mcp.json",
+    "--strict-mcp-config",
+    "--setting-sources",
+    "user",
+    "--settings",
+    "$CONFIG/claude-settings.json",
+    "--allowedTools",
+    "mcp__platform__*",
+    "--add-dir",
+    "$PACK",
+    "--permission-mode",
+    "acceptEdits"
+  ],
+  "dir": "$WORK",
+  "env_extra": null,
+  "stdin": "",
+  "provider_environment": [
+    "CLAUDE_CONFIG_DIR=/home/runner/.claude-config"
+  ],
+  "managed_config_mounts": null,
+  "config_files": [
+    {
+      "name": "claude-mcp.json",
+      "mode": "-rw-------",
+      "content": "{\n  \"mcpServers\": {\n    \"platform\": {\n      \"args\": [\n        \"mcp-serve\",\n        \"--socket\",\n        \"/run/runner/job.sock\",\n        \"--token-file\",\n        \"/run/runner/job.token\"\n      ],\n      \"command\": \"/usr/local/bin/our-runner\"\n    }\n  }\n}"
+    },
+    {
+      "name": "claude-settings.json",
+      "mode": "-rw-------",
+      "content": "{\n  \"permissions\": {\n    \"deny\": [\n      \"Read(~/.claude/**)\",\n      \"Edit(~/.claude/**)\",\n      \"Read(~/.claude.json)\",\n      \"Edit(~/.claude.json)\",\n      \"Read(//home/runner/.claude-config/**)\",\n      \"Edit(//home/runner/.claude-config/**)\"\n    ]\n  },\n  \"sandbox\": {\n    \"allowUnsandboxedCommands\": false,\n    \"credentials\": {\n      \"files\": [\n        {\n          \"mode\": \"deny\",\n          \"path\": \"~/.claude/.credentials.json\"\n        },\n        {\n          \"mode\": \"deny\",\n          \"path\": \"~/.claude.json\"\n        },\n        {\n          \"mode\": \"deny\",\n          \"path\": \"/home/runner/.claude-config/.credentials.json\"\n        },\n        {\n          \"mode\": \"deny\",\n          \"path\": \"/home/runner/.claude-config/.claude.json\"\n        }\n      ]\n    },\n    \"enabled\": false,\n    \"failIfUnavailable\": false,\n    \"filesystem\": {\n      \"denyRead\": [\n        \"~/.claude\",\n        \"~/.claude.json\",\n        \"/home/runner/.claude-config\"\n      ],\n      \"denyWrite\": [\n        \"~/.claude\",\n        \"~/.claude.json\",\n        \"/home/runner/.claude-config\"\n      ]\n    },\n    \"network\": {\n      \"allowedDomains\": [],\n      \"strictAllowlist\": true\n    }\n  }\n}"
+    }
+  ]
+}

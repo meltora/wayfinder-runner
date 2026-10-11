@@ -28,6 +28,8 @@ type CapabilityManifest struct {
 	AgentPackDeliveryAuthorityVersion                        int                                                              `json:"agent_pack_delivery_authority_version"`
 	AgentPackRevocationEvictionVersion                       int                                                              `json:"agent_pack_revocation_eviction_version,omitempty"`
 	TrustedAgentPackKeyIDs                                   []string                                                         `json:"trusted_agent_pack_key_ids"`
+	AgentPackTrustChainVersion                               string                                                           `json:"agent_pack_trust_chain_version,omitempty"`
+	AgentPackTrustRootKeyIDs                                 []string                                                         `json:"agent_pack_trust_root_key_ids,omitempty"`
 	SourcePublicationTransportVersion                        int                                                              `json:"source_publication_transport_version,omitempty"`
 	SourcePublicationProviders                               []string                                                         `json:"source_publication_providers,omitempty"`
 	PreviewObservationTransportVersion                       int                                                              `json:"preview_observation_transport_version,omitempty"`

@@ -13,7 +13,7 @@ func TestStateDirConfigurationCarriesTheDigestItIsRunning(t *testing.T) {
 	key := newConfigurePackKey(t, "pack-key-1")
 	delivered := configureDelivery(t, h.runnerID, "docker", key)
 	h.respond(http.StatusOK, delivered)
-	if err := h.run("", false, "--non-interactive", "--accept-pack-keys"); err != nil {
+	if err := h.run("", false, "--non-interactive"); err != nil {
 		t.Fatal(err)
 	}
 	fresh := strings.Repeat("e", 64)

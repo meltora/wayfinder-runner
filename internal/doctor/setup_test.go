@@ -43,14 +43,14 @@ func TestConfiguredSetupReportsLocalFactsWithoutAuthorityClaims(t *testing.T) {
 	if report.ExitCode() != 0 {
 		t.Fatalf("unexpected setup failure: %s", Format(report))
 	}
-	for _, name := range []string{"runtime-codex", "repository-registration", "agent-pack-trust", "local-check-limits"} {
+	for _, name := range []string{"runtime-codex", "repository-registration", "platform-trust", "local-check-limits"} {
 		findCheck(t, report, name)
 	}
-	if !strings.Contains(findCheck(t, report, "repository-registration").Detail, "2 registered") || !strings.Contains(findCheck(t, report, "agent-pack-trust").Detail, "3 trusted") {
+	if !strings.Contains(findCheck(t, report, "repository-registration").Detail, "2 registered") {
 		t.Fatal("configured counts missing")
 	}
 	text := Format(report)
-	for _, expected := range []string{"access is not checked", "execution is not checked", "provider sign-in", "runner assignment", "current app permissions"} {
+	for _, expected := range []string{"access is not checked", "provider sign-in", "runner assignment", "current app permissions"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("missing limitation %s", expected)
 		}
@@ -137,7 +137,7 @@ func TestConfiguredSetupReportsEmptyAndInvalidCounts(t *testing.T) {
 			if count < 0 {
 				want = Fail
 			}
-			if findCheck(t, report, "repository-registration").Status != want || findCheck(t, report, "agent-pack-trust").Status != want {
+			if findCheck(t, report, "repository-registration").Status != want {
 				t.Fatal("empty or invalid count misreported")
 			}
 		})
@@ -192,50 +192,5 @@ func TestConfiguredSetupReportsIsolationMode(t *testing.T) {
 	}
 	if !strings.Contains(Format(direct), "[WARN] isolation: "+want) {
 		t.Fatalf("formatted report = %s", Format(direct))
-	}
-}
-func TestConfiguredSetupReportsAgentPackKeysAwaitingAcceptance(t *testing.T) {
-	t.Parallel()
-	clean := RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude"}, setupDependencies())
-	if check := findCheck(t, clean, "agent-pack-keys-awaiting"); check.Status != OK {
-		t.Fatalf("no awaiting keys = %+v", check)
-	}
-	opts := Options{
-		ConfigurationLoaded: true, Provider: "claude",
-		AwaitingAgentPackKeys: []AwaitingAgentPackKey{
-			{ID: "platform-key-2", Fingerprint: strings.Repeat("ab", 32)},
-			{ID: "org-key-1", Fingerprint: strings.Repeat("cd", 32)},
-		},
-		AcceptAgentPackKeysCommand: "our-runner configure --state-dir '/runner state' --accept-pack-keys",
-	}
-	report := RunWithDependencies(context.Background(), opts, setupDependencies())
-	check := findCheck(t, report, "agent-pack-keys-awaiting")
-	if check.Status != Warn {
-		t.Fatalf("awaiting keys = %+v", check)
-	}
-	for _, expected := range []string{
-		"platform-key-2 (sha256:" + strings.Repeat("ab", 32) + ")",
-		"org-key-1 (sha256:" + strings.Repeat("cd", 32) + ")",
-		"our-runner configure --state-dir '/runner state' --accept-pack-keys",
-	} {
-		if !strings.Contains(check.Detail, expected) {
-			t.Fatalf("detail lacks %q: %s", expected, check.Detail)
-		}
-	}
-	if report.ExitCode() != 0 {
-		t.Fatalf("awaiting keys changed the exit code: %s", Format(report))
-	}
-}
-
-func TestConfiguredSetupReportsAgentPackKeysThatCouldNotBeEvaluated(t *testing.T) {
-	t.Parallel()
-	opts := Options{ConfigurationLoaded: true, Provider: "claude", AgentPackKeysNotEvaluated: "the state directory is not enrolled"}
-	report := RunWithDependencies(context.Background(), opts, setupDependencies())
-	check := findCheck(t, report, "agent-pack-keys-awaiting")
-	if check.Status != Warn || check.Detail != "Agent Pack keys awaiting acceptance were not evaluated: the state directory is not enrolled" {
-		t.Fatalf("not evaluated = %+v", check)
-	}
-	if report.ExitCode() != 0 {
-		t.Fatalf("not evaluated changed the exit code: %s", Format(report))
 	}
 }

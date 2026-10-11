@@ -255,13 +255,33 @@ func buildFinalizationFailure(err error) jobOutcome {
 const gitHubInstallationTokenUsername = "x-access-token"
 
 func (jr *jobRunner) pushCredential(repositoryURL string, now time.Time) (*repo.PushCredential, error) {
-	if jr.providerCredential == nil || !gitHubHTTPSOrigin(repositoryURL, jr.jobConfiguration().sourcePublicationInstallations) {
-		return nil, nil
-	}
-	if !jr.providerCredential.UsableAt(now) {
+	credential, _, err := repositoryCredential(jr.providerCredential, repositoryURL, jr.jobConfiguration().sourcePublicationInstallations, now)
+	if err != nil {
 		return nil, errProviderCredentialUnavailable
 	}
-	return &repo.PushCredential{Username: gitHubInstallationTokenUsername, Password: jr.providerCredential.Token}, nil
+	return credential, nil
+}
+
+func repositoryCredential(
+	credential *v1.ProviderCredential,
+	repositoryURL string,
+	installations map[string]config.SourcePublicationInstallationConfig,
+	now time.Time,
+) (*repo.GitHTTPSCredential, bool, error) {
+	if !gitHubHTTPSOrigin(repositoryURL, installations) {
+		return nil, false, nil
+	}
+	if credential == nil {
+		return nil, true, nil
+	}
+	if !credential.UsableAt(now) {
+		return nil, true, repo.ErrRepositoryCredentialUnavailable
+	}
+	return &repo.GitHTTPSCredential{
+		Username: gitHubInstallationTokenUsername,
+		Password: credential.Token,
+		NotAfter: credential.ExpiresAt.Add(-v1.ProviderCredentialMinimumRemainingLifetime),
+	}, true, nil
 }
 
 func gitHubHTTPSOrigin(repositoryURL string, installations map[string]config.SourcePublicationInstallationConfig) bool {

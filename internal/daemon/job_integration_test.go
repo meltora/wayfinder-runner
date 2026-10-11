@@ -468,7 +468,14 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 		return len(cp.EventsByKind("job_finished")) == 1
 	})
 	terminal := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
-	if terminal["state"] != "succeeded" {
+	if terminal["state"] != "failed" || terminal["failure_code"] != "plan_not_published" ||
+		terminal["failure_message"] != "planning finished without publishing a plan" {
+		t.Fatalf("terminal after renewal = %v", terminal)
+	}
+	if _, hasCategory := terminal["failure_category"]; hasCategory {
+		t.Fatalf("terminal after renewal = %v", terminal)
+	}
+	if _, hasRetryable := terminal["retryable"]; hasRetryable {
 		t.Fatalf("terminal after renewal = %v", terminal)
 	}
 }

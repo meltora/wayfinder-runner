@@ -14,6 +14,7 @@ var failedJobCodes = map[v1.JobFinishedFailureCode]struct{}{
 	v1.JobFailureBuildFinalization:        {},
 	v1.JobFailureRequiredChecks:           {},
 	v1.JobFailureRunnerInternal:           {},
+	v1.JobFailurePlanNotPublished:         {},
 }
 
 var agentPackFailureRetryability = map[v1.AgentPackMaterializationFailureCategory]bool{
@@ -84,6 +85,9 @@ func jobFinishedEvidenceMatchesState(event v1.JobFinishedEvent) bool {
 	case v1.JobFinishedFailed:
 		_, ok := failedJobCodes[event.FailureCode]
 		if !ok {
+			return false
+		}
+		if event.FailureCode == v1.JobFailurePlanNotPublished && event.ManifestKind != v1.JobKindPlan {
 			return false
 		}
 		if event.FailureCode == v1.JobFailureAgentPackMaterialization {

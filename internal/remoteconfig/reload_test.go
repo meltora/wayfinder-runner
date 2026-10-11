@@ -68,7 +68,6 @@ func TestReloaderAppliesADocumentThatChangesOnlyHotKeys(t *testing.T) {
 	local := configuredState(t, encode(t, deliveryBody(dockerConfig())))
 	accepted := newTestPackKey(t, "key-accepted")
 	awaiting := newTestPackKey(t, "key-new")
-	local.AcceptedPackKeyFingerprints = []string{accepted.fingerprint}
 	next := dockerConfig(accepted, awaiting)
 	next["labels"] = map[string]any{"pool": "us-linux"}
 	next["repositories"] = map[string]any{"repo-9": map[string]any{"url": "https://github.com/acme/new.git"}}
@@ -87,11 +86,8 @@ func TestReloaderAppliesADocumentThatChangesOnlyHotKeys(t *testing.T) {
 	if _, ok := cfg.SourcePublicationInstallations["installation-2"]; !ok || len(cfg.SourcePublicationInstallations) != 1 {
 		t.Fatalf("installations = %+v", cfg.SourcePublicationInstallations)
 	}
-	if !reflect.DeepEqual(cfg.AgentPackPublicKeys, map[string]string{"key-accepted": accepted.spkiBase64}) {
-		t.Fatalf("an unaccepted key reached the configuration: %v", cfg.AgentPackPublicKeys)
-	}
-	if len(reload.Merged.AwaitingPackKeys) != 1 || reload.Merged.AwaitingPackKeys[0].ID != "key-new" {
-		t.Fatalf("awaiting = %+v", reload.Merged.AwaitingPackKeys)
+	if len(cfg.AgentPackPublicKeys) != 0 {
+		t.Fatalf("a remote pack key reached the configuration: %v", cfg.AgentPackPublicKeys)
 	}
 	if reloader.RunningDigest() != strings.Repeat("d", 64) {
 		t.Fatal("the running digest moved before commit")

@@ -16,22 +16,23 @@ const (
 )
 
 type JobSpec struct {
-	JobID               string                    `json:"job_id"`
-	AttemptID           string                    `json:"attempt_id"`
-	ProjectID           string                    `json:"project_id"`
-	Kind                JobKind                   `json:"kind"`
-	LeaseID             string                    `json:"lease_id"`
-	ManifestID          string                    `json:"manifest_id"`
-	ManifestDigest      string                    `json:"manifest_digest"`
-	WorkflowRevision    int                       `json:"workflow_revision"`
-	FencingToken        uint64                    `json:"fencing_token"`
-	LeaseExpiresAt      time.Time                 `json:"lease_expires_at"`
-	Repositories        []JobRepository           `json:"repositories"`
-	Ticket              TicketContext             `json:"ticket"`
-	AgentPack           *AgentPackRef             `json:"agent_pack,omitempty"`
-	AgentPackAuthority  *SignedAgentPackAuthority `json:"agent_pack_authority,omitempty"`
-	PlanRevisionContext *PlanRevisionContext      `json:"plan_revision_context,omitempty"`
-	AgentRunAuthority   *AgentRunAuthority        `json:"agent_run_authority,omitempty"`
+	JobID                  string                    `json:"job_id"`
+	AttemptID              string                    `json:"attempt_id"`
+	ProjectID              string                    `json:"project_id"`
+	Kind                   JobKind                   `json:"kind"`
+	LeaseID                string                    `json:"lease_id"`
+	ManifestID             string                    `json:"manifest_id"`
+	ManifestDigest         string                    `json:"manifest_digest"`
+	WorkflowRevision       int                       `json:"workflow_revision"`
+	FencingToken           uint64                    `json:"fencing_token"`
+	LeaseExpiresAt         time.Time                 `json:"lease_expires_at"`
+	Repositories           []JobRepository           `json:"repositories"`
+	Ticket                 TicketContext             `json:"ticket"`
+	AgentPack              *AgentPackRef             `json:"agent_pack,omitempty"`
+	AgentPackAuthority     *SignedAgentPackAuthority `json:"agent_pack_authority,omitempty"`
+	AgentPackTrustedKeySet *AgentPackTrustedKeySet   `json:"agent_pack_trusted_key_set,omitempty"`
+	PlanRevisionContext    *PlanRevisionContext      `json:"plan_revision_context,omitempty"`
+	AgentRunAuthority      *AgentRunAuthority        `json:"agent_run_authority,omitempty"`
 
 	ApprovedPlanRevision         int                  `json:"approved_plan_revision,omitempty"`
 	RequiredChecks               []string             `json:"required_checks,omitempty"`

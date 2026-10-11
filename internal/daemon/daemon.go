@@ -30,6 +30,7 @@ import (
 	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/previewlifecycle"
 	"github.com/example/app-runner/internal/previewobserver"
+	"github.com/example/app-runner/internal/repo"
 	"github.com/example/app-runner/internal/runlock"
 	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/sourcepublication"
@@ -73,6 +74,7 @@ type Daemon struct {
 	rotationMu                                            sync.Mutex
 	now                                                   func() time.Time
 	rotationFault                                         func(point string) error
+	configureRepositoryManager                            func(*repo.Manager)
 	promotedTLS                                           atomic.Pointer[tls.Config]
 	rotationCommands                                      sync.WaitGroup
 	commandMu                                             sync.Mutex
@@ -126,6 +128,7 @@ type Daemon struct {
 	configurationApplyFailing   bool
 	configurationRestartDigest  string
 	pendingAgentPackEvictions   []string
+	agentPackTrust              *agentPackTrust
 }
 
 // ExternalOperationDependencies narrows test transport injection to external
@@ -285,6 +288,12 @@ func NewWithExternalOperationDependencies(
 			return nil, fmt.Errorf("cleanup runner containers: %w", cleanupErr)
 		}
 	}
+	trust, err := openAgentPackTrust(cfg)
+	if err != nil {
+		_ = j.Close()
+		_ = lock.Close()
+		return nil, fmt.Errorf("platform trust: %w", err)
+	}
 	updateClient := updateipc.NewClient(cfg.UpdateSocketPath)
 	updateClient.ExpectedServerUID = 0
 	d := &Daemon{
@@ -306,7 +315,9 @@ func NewWithExternalOperationDependencies(
 		providerReviewerAssignmentReconciler: reviewerAssignmentReconciler,
 		providerReviewObserver:               reviewObserver,
 		providerReviewFeedbackContentReader:  feedbackContentReader,
+		agentPackTrust:                       trust,
 	}
+	d.applyConfiguredAgentPackTrust(context.Background(), cfg.AgentPackTrustedKeySet)
 	d.collectors.SetMaxSpoolBytes(int64(cfg.ArtifactSpoolMB) << 20)
 	d.recoveredLease.Store(recoveredLease)
 	d.supervisor, err = selectSupervisor(cfg, logger)
@@ -538,6 +549,9 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	det := capability.New(d.runnerID, Version, hot.labels, hot.agentPackPublicKeys).
 		WithProviderBinaries(d.cfg.ProviderBinaries).
 		WithProviderEnvironment(d.cfg.ProviderEnvironment)
+	if d.agentPackTrust != nil {
+		det = det.WithAgentPackTrust(d.agentPackTrustCapability(hot.agentPackPublicKeys))
+	}
 	det.AgentConfigScanRepositoryIDs = d.agentConfigScanRepositoriesFrom(hot.repositories)
 	det.RunnerConfigurationDigest = hot.digest
 	if d.cfg.WorkIntakeProposal.Enabled && d.cfg.Isolation == "docker" && d.cfg.JobNetwork == "restricted" {

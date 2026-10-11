@@ -193,9 +193,51 @@ checks:
     repository_id: web-app
 ```
 
-Repository credentials must come from the `our-runner` user's SSH agent or Git
-credential helper. Passwords, tokens, queries, and fragments in repository URLs
-are rejected.
+For GitHub repositories, configure an HTTPS URL on the runner's GitHub Git host
+(for example `https://github.com/company/web-app.git`) and let the platform's
+GitHub App provide access; no runner-side GitHub token, personal SSH key or
+deploy key is needed. Other origins keep using the `our-runner` user's SSH agent
+or Git credential helper. Passwords, tokens, queries, and fragments in repository
+URLs are rejected.
+
+### Repository reads through the platform GitHub App
+
+The control plane attaches a short-lived GitHub App installation token
+(`provider_credential`, `contents: read` and `metadata: read` for the command's
+repositories) to every Agent Setup repository scan (`agent_config_scan`) and to
+every non-pushing job command; pushing build commands keep the `publication`
+token described below. When the repository URL is HTTPS on the runner's single
+GitHub Git host, the runner uses that token for exactly the network steps: the
+scan's bare `clone` and pinned `fetch`, the mirror `clone --mirror` and
+`fetch --prune origin`, and the fetch of an observed commit missing from the
+mirror. These steps use the same askpass invocation as the credential push
+(`-c credential.helper=`, the runner binary as `core.askPass`,
+`http.followRedirects=false`, hooks disabled, `GIT_ALLOW_PROTOCOL=https`, and
+`LC_ALL=C` so failures can be classified). Local steps (`remote get-url`,
+`worktree prune`, workspace clones from the mirror, `checkout`, `rev-parse`,
+`ls-tree`, `cat-file`) never receive it. Before a credentialed fetch into an
+existing mirror, the runner applies the same mirror config allow-list and
+`config.worktree` refusal as the push, without any network call on violation.
+The token is never written to the mirror, workspaces, the scan snapshot, the
+journal, logs, events or errors.
+
+Without a usable token, a GitHub HTTPS origin runs Git exactly as before, so a
+public repository still works. Failures are reported without Git output: a scan
+ends `repository_credential_unavailable` when no usable token was available and
+GitHub asked for credentials, and `repository_access_denied` when GitHub
+rejected the token or hid the repository (grant the repository to the App
+installation on GitHub, then scan again). A job ends
+`workspace_preparation_failed` with the message `repository credential
+unavailable` or `repository access denied` in the same cases. SSH origins,
+other HTTPS hosts and local paths ignore the token and behave as before. The
+`register-repository` CLI never has a command credential, so it cannot clone a
+private GitHub HTTPS repository; skip it for such a repository and let the first
+job create the mirror.
+
+Deploy the control plane and its migration before this runner version: a new
+runner reports the two scan failure codes, which an older control plane rejects.
+An older runner accepts the new credential on scan and non-pushing job commands
+and ignores it.
 
 When a build command with `push_branch` carries a control-plane GitHub
 installation credential and the repository URL is HTTPS on the runner's single
@@ -688,25 +730,24 @@ before and apply no format check.
 
 The dashboard owns only `isolation`, `allow_unsafe_direct`, `provider`,
 `job_image`, `job_network`, `job_memory_mb`, `job_cpus`, `job_pids`, `labels`,
-`repositories`, `agent_pack_public_keys` and `source_publication_installations`
-(GitHub entries without `token_file`). A delivered document with any other key
-is rejected as a whole. The host keeps `control_plane_url` (the gateway
-address), `state_dir`, `provider_environment`, `provider_binaries`, the accepted
-Agent Pack key fingerprints and the direct-isolation acknowledgement in
+`repositories` and `source_publication_installations` (GitHub entries without
+`token_file`). A delivered `agent_pack_public_keys` map and envelope
+`pack_key_fingerprints` map are still accepted for compatibility and ignored;
+Agent Pack trust comes only from the platform trusted key set. A delivered
+document with any other key is rejected as a whole. The host keeps
+`control_plane_url` (the gateway address), `state_dir`, `provider_environment`,
+`provider_binaries` and the direct-isolation acknowledgement in
 `<state-dir>/runner.local.yaml`. The last valid delivered document is cached in
 `<state-dir>/runner.remote.json`. Both files are written with mode 0600 only after
 the merged configuration passes the same validation as `config.yaml`.
 
 `configure` shows the runner ID, isolation, provider, job image, repository
-counts and each Agent Pack key fingerprint, then asks only for local values:
-the provider environment variable for the selected provider (`CLAUDE_CONFIG_DIR`
-for Claude Code, `CODEX_HOME` for Codex), an optional provider binary path, whether
-to trust each new Agent Pack key, and, when the dashboard selected direct
-isolation, a typed `direct` confirmation. Keys the host has not accepted are
-removed before validation and reported as awaiting acceptance; the runner never
-trusts control-plane keys on its own. Without a terminal, pass
-`--non-interactive` with `--provider-env NAME=VALUE`, `--provider-binary PATH`,
-`--accept-pack-keys` and `--acknowledge-direct` as needed. If the dashboard has
+counts, then asks only for local values: the provider environment variable for
+the selected provider (`CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for
+Codex), an optional provider binary path, and, when the dashboard selected direct
+isolation, a typed `direct` confirmation. Without a terminal, pass
+`--non-interactive` with `--provider-env NAME=VALUE`, `--provider-binary PATH`
+and `--acknowledge-direct` as needed. If the dashboard has
 not saved the runner's configuration yet, `configure` waits up to two minutes.
 The direct-isolation acknowledgement is stored only while the dashboard delivers
 direct isolation: as soon as `configure`, `start` or `doctor` receives a Docker
@@ -772,7 +813,7 @@ again.
 our-runner enroll [--url URL] [--state-dir DIR]                # masked code prompt
 our-runner enroll --code-file FILE [--url URL] [--state-dir DIR]
 our-runner configure [--gateway URL] [--state-dir DIR] [--non-interactive] [--provider-env NAME=VALUE]
-    [--provider-binary PATH] [--accept-pack-keys] [--acknowledge-direct]
+    [--provider-binary PATH] [--acknowledge-direct]
 our-runner doctor --state-dir DIR               # diagnostics with the fetched configuration
 our-runner doctor --config FILE
 our-runner doctor --url URL [--state-dir DIR]  # limited enrollment diagnostics

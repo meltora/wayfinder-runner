@@ -141,3 +141,15 @@ func samePlanPublicationClaim(left, right PlanPublicationClaim) bool {
 		left.IdempotencyKey == right.IdempotencyKey && left.EventID == right.EventID &&
 		left.InputDigest == right.InputDigest
 }
+
+func (j *Journal) PlanPublicationQueued(ctx context.Context, attemptID string) (bool, error) {
+	claim, found, err := loadPlanPublicationClaim(ctx, j.db, attemptID)
+	if err != nil || !found {
+		return false, err
+	}
+	record, found, err := j.LoadRecord(ctx, claim.EventID)
+	if err != nil || !found {
+		return false, err
+	}
+	return record.Kind == KindEvent, nil
+}

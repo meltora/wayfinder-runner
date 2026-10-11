@@ -1,0 +1,32 @@
+{
+  "name": "opencode-a1",
+  "command": "opencode",
+  "args": [
+    "run",
+    "--format",
+    "json",
+    "--auto",
+    "--pure",
+    "--agent",
+    "build",
+    "--model",
+    "anthropic/claude-test",
+    "do the ticket"
+  ],
+  "dir": "$WORK",
+  "env_extra": [
+    "OPENCODE_CONFIG_CONTENT={\"$schema\":\"https://opencode.ai/config.json\",\"agent\":{\"build\":{\"permission\":{\"*\":\"deny\",\"bash\":\"deny\",\"doom_loop\":\"deny\",\"edit\":\"allow\",\"external_directory\":\"deny\",\"glob\":\"allow\",\"grep\":\"allow\",\"lsp\":\"deny\",\"platform_*\":\"allow\",\"question\":\"deny\",\"read\":\"allow\",\"skill\":\"allow\",\"task\":\"deny\",\"webfetch\":\"deny\",\"websearch\":\"deny\"}},\"plan\":{\"permission\":{\"*\":\"deny\",\"bash\":\"deny\",\"doom_loop\":\"deny\",\"edit\":\"allow\",\"external_directory\":\"deny\",\"glob\":\"allow\",\"grep\":\"allow\",\"lsp\":\"deny\",\"platform_*\":\"allow\",\"question\":\"deny\",\"read\":\"allow\",\"skill\":\"allow\",\"task\":\"deny\",\"webfetch\":\"deny\",\"websearch\":\"deny\"}}},\"mcp\":{\"platform\":{\"command\":[\"/usr/local/bin/our-runner\",\"mcp-serve\",\"--socket\",\"/run/runner/job.sock\",\"--token-file\",\"/run/runner/job.token\"],\"enabled\":true,\"type\":\"local\"}},\"permission\":{\"*\":\"deny\",\"bash\":\"deny\",\"doom_loop\":\"deny\",\"edit\":\"allow\",\"external_directory\":\"deny\",\"glob\":\"allow\",\"grep\":\"allow\",\"lsp\":\"deny\",\"platform_*\":\"allow\",\"question\":\"deny\",\"read\":\"allow\",\"skill\":\"allow\",\"task\":\"deny\",\"webfetch\":\"deny\",\"websearch\":\"deny\"},\"plugin\":[]}",
+    "OPENCODE_DISABLE_AUTOUPDATE=1",
+    "OPENCODE_DISABLE_SHARE=1",
+    "OPENCODE_DISABLE_LSP_DOWNLOAD=1",
+    "OPENCODE_DISABLE_DEFAULT_PLUGINS=1",
+    "OPENCODE_DISABLE_PROJECT_CONFIG=1",
+    "OPENCODE_CONFIG_DIR=$PACK"
+  ],
+  "stdin": "",
+  "provider_environment": [
+    "CLAUDE_CONFIG_DIR=/home/runner/.claude-config"
+  ],
+  "managed_config_mounts": null,
+  "config_files": null
+}

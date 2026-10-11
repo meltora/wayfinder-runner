@@ -29,7 +29,6 @@ func TestMergeUsesLocalOwnershipAndRemoteDocument(t *testing.T) {
 	local := testLocal(t)
 	local.ProviderEnvironment = map[string]map[string]string{"claude": {"CLAUDE_CONFIG_DIR": "/home/runner/.claude-work"}}
 	local.ProviderBinaries = map[string]string{"claude": "/usr/local/bin/claude"}
-	local.AcceptedPackKeyFingerprints = []string{key.fingerprint}
 	merged, err := Merge(local, parsed(t, deliveryBody(dockerConfig(key), key)))
 	if err != nil {
 		t.Fatal(err)
@@ -45,35 +44,32 @@ func TestMergeUsesLocalOwnershipAndRemoteDocument(t *testing.T) {
 	if cfg.Labels["pool"] != "eu-linux" || cfg.Repositories["repo-2"].URL != "https://github.com/acme/web.git" || cfg.SourcePublicationInstallations["installation-1"].Provider != "github" {
 		t.Fatalf("remote values were not merged: %+v", cfg)
 	}
-	if cfg.AgentPackPublicKeys["pack-key-1"] != key.spkiBase64 || len(merged.AwaitingPackKeys) != 0 || len(merged.AcceptedPackKeys) != 1 {
-		t.Fatalf("accepted key missing: %+v", merged)
+	if len(cfg.AgentPackPublicKeys) != 0 {
+		t.Fatalf("a delivered pack key anchored trust: %+v", merged)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestMergeDropsPackKeysAwaitingHostAcceptance(t *testing.T) {
+func TestMergeNeverTrustsRemotePackKeysAndCarriesTheSignedSet(t *testing.T) {
 	accepted := newTestPackKey(t, "pack-key-1")
 	pending := newTestPackKey(t, "pack-key-2")
 	local := testLocal(t)
-	local.AcceptedPackKeyFingerprints = []string{accepted.fingerprint}
-	merged, err := Merge(local, parsed(t, deliveryBody(dockerConfig(accepted, pending), accepted, pending)))
+	config := dockerConfig(accepted, pending)
+	config["agent_pack_trusted_key_set"] = map[string]any{
+		"document_base64": "eyJmb3JtYXQiOjF9", "signature_base64": strings.Repeat("A", 86) + "==", "root_key_id": strings.Repeat("b", 64),
+	}
+	merged, err := Merge(local, parsed(t, deliveryBody(config, accepted, pending)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(merged.Config.AgentPackPublicKeys) != 1 || merged.Config.AgentPackPublicKeys["pack-key-1"] == "" {
-		t.Fatalf("keys = %+v", merged.Config.AgentPackPublicKeys)
+	if len(merged.Config.AgentPackPublicKeys) != 0 {
+		t.Fatalf("remote pack keys were trusted: %+v", merged)
 	}
-	if len(merged.AwaitingPackKeys) != 1 || merged.AwaitingPackKeys[0].ID != "pack-key-2" || merged.AwaitingPackKeys[0].Fingerprint != pending.fingerprint {
-		t.Fatalf("awaiting = %+v", merged.AwaitingPackKeys)
-	}
-	none, err := Merge(testLocal(t), parsed(t, deliveryBody(dockerConfig(accepted), accepted)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(none.Config.AgentPackPublicKeys) != 0 || len(none.AwaitingPackKeys) != 1 {
-		t.Fatalf("unaccepted key was trusted: %+v", none)
+	set := merged.Config.AgentPackTrustedKeySet
+	if set == nil || set.RootKeyID != strings.Repeat("b", 64) {
+		t.Fatalf("merged trusted key set = %+v", set)
 	}
 }
 
@@ -107,7 +103,6 @@ func TestMergeRejectsInvalidLocalValues(t *testing.T) {
 		"relative state":  func(l *Local) { l.StateDir = "state" },
 		"reserved env":    func(l *Local) { l.ProviderEnvironment = map[string]map[string]string{"claude": {"GH_TOKEN": "x"}} },
 		"relative binary": func(l *Local) { l.ProviderBinaries = map[string]string{"claude": "claude"} },
-		"fingerprint":     func(l *Local) { l.AcceptedPackKeyFingerprints = []string{"not-hex"} },
 	} {
 		local := testLocal(t)
 		mutate(&local)

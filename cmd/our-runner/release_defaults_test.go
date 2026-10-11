@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/example/app-runner/internal/agentpack/trustroot"
 	"github.com/example/app-runner/internal/daemon"
 	"github.com/example/app-runner/internal/mockcp"
 )
@@ -141,18 +143,53 @@ func TestVersionPrintsChannelAndControlPlane(t *testing.T) {
 	for name, tc := range map[string]struct {
 		channel, url, want string
 	}{
-		"source":       {"", "", "our-runner 1.4.0-develop.2\nchannel: source\ncontrol plane: none (enroll requires --url)\n"},
-		"stamped":      {"develop", "https://control.example.test/", "our-runner 1.4.0-develop.2\nchannel: develop\ncontrol plane: https://control.example.test\n"},
-		"channel only": {"staging", "", "our-runner 1.4.0-develop.2\nchannel: staging\ncontrol plane: none (enroll requires --url)\n"},
-		"invalid":      {"nightly", "https://control.example.test", "our-runner 1.4.0-develop.2\nchannel: invalid (this build has an unknown release channel)\ncontrol plane: none (enroll requires --url)\n"},
+		"source":       {"", "", "our-runner 1.4.0-develop.2\nchannel: source\n" + embeddedRootsLine(t, trustroot.ChannelDevelopment) + "control plane: none (enroll requires --url)\n"},
+		"stamped":      {"develop", "https://control.example.test/", "our-runner 1.4.0-develop.2\nchannel: develop\n" + embeddedRootsLine(t, trustroot.ChannelDevelop) + "control plane: https://control.example.test\n"},
+		"channel only": {"staging", "", "our-runner 1.4.0-develop.2\nchannel: staging\n" + embeddedRootsLine(t, trustroot.ChannelStaging) + "control plane: none (enroll requires --url)\n"},
+		"invalid":      {"nightly", "https://control.example.test", "our-runner 1.4.0-develop.2\nchannel: invalid (this build has an unknown release channel)\nplatform trust roots: unavailable\ncontrol plane: none (enroll requires --url)\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			withStampedRelease(t, tc.channel, tc.url)
+			t.Setenv(trustroot.OverrideEnvironment, "")
 			var output bytes.Buffer
 			writeVersion(&output)
 			if output.String() != tc.want {
 				t.Fatalf("version output:\n%s\nwant:\n%s", output.String(), tc.want)
 			}
 		})
+	}
+}
+
+func embeddedRootsLine(t *testing.T, channel string) string {
+	t.Helper()
+	embedded, err := trustroot.Embedded(channel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := embedded.KeyIDs(); len(ids) != 0 {
+		return "platform trust roots: " + strings.Join(ids, ", ") + "\n"
+	}
+	return "platform trust roots: none\n"
+}
+
+func TestVersionPrintsTheDevelopmentRootOverride(t *testing.T) {
+	withStampedRelease(t, "", "")
+	path := filepath.Join(t.TempDir(), "roots.json")
+	keyID, spki := versionTestRoot(t)
+	raw, _ := json.Marshal(map[string]any{"format": 1, "roots": []map[string]string{{"keyId": keyID, "publicKeySpkiBase64": spki}}})
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(trustroot.OverrideEnvironment, path)
+	var output bytes.Buffer
+	writeVersion(&output)
+	if !bytes.Contains(output.Bytes(), []byte("platform trust roots: "+keyID+" (development override)\n")) {
+		t.Fatalf("version output:\n%s", output.String())
+	}
+	withStampedRelease(t, "production", "")
+	output.Reset()
+	writeVersion(&output)
+	if !bytes.Contains(output.Bytes(), []byte("platform trust roots: unavailable\n")) {
+		t.Fatalf("a release build printed an override root:\n%s", output.String())
 	}
 }

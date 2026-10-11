@@ -253,3 +253,31 @@ func TestPruneCascadesCompletedCommandReceipt(t *testing.T) {
 		t.Fatalf("receipt survived record prune: found=%v err=%v", found, err)
 	}
 }
+
+func TestCommandReceiptMigrationKeepsTrustChainRejectionCodes(t *testing.T) {
+	t.Parallel()
+	j := openTest(t)
+	ctx := context.Background()
+	for index, code := range []v1.CommandAckReasonCode{v1.CommandAckReasonAgentPackTrustUnverifiable, v1.CommandAckReasonAgentPackKeyRevoked} {
+		id := "trust-rejection-" + string(rune('a'+index))
+		if _, _, err := j.ReceiveCommand(ctx, commandRecord(id), strings.Repeat("e", 64)); err != nil {
+			t.Fatal(err)
+		}
+		if _, claimed, err := j.ClaimCommand(ctx, id, "process-1"); err != nil || !claimed {
+			t.Fatalf("claim = %v, %v", claimed, err)
+		}
+		if _, err := j.CompleteCommand(ctx, id, "process-1", "rejected", code); err != nil {
+			t.Fatal(err)
+		}
+		if err := j.ensureCommandReceiptSchema(); err != nil {
+			t.Fatal(err)
+		}
+		var stored string
+		if err := j.db.QueryRowContext(ctx, `SELECT ack_error FROM command_receipts WHERE command_id=?`, id).Scan(&stored); err != nil {
+			t.Fatal(err)
+		}
+		if stored != string(code) {
+			t.Fatalf("trust chain rejection code was rewritten to %q", stored)
+		}
+	}
+}

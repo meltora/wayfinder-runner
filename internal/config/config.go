@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 
+	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/safeio"
 	"gopkg.in/yaml.v3"
 )
@@ -59,6 +60,7 @@ type Config struct {
 	Labels                         map[string]string                              `yaml:"labels,omitempty"`
 	RunnerConfigurationDigest      string                                         `yaml:"-"`
 	RevokedAgentPackDigests        []string                                       `yaml:"-"`
+	AgentPackTrustedKeySet         *v1.AgentPackTrustedKeySet                     `yaml:"-"`
 }
 
 type WorkIntakeProposalConfig struct {
@@ -173,6 +175,10 @@ func Normalize(in Config) Config {
 	}
 	if in.RevokedAgentPackDigests != nil {
 		out.RevokedAgentPackDigests = append([]string{}, in.RevokedAgentPackDigests...)
+	}
+	if in.AgentPackTrustedKeySet != nil {
+		set := *in.AgentPackTrustedKeySet
+		out.AgentPackTrustedKeySet = &set
 	}
 	if in.Repositories != nil {
 		out.Repositories = make(map[string]RepositoryConfig, len(in.Repositories))

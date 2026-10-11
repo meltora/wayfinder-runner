@@ -26,8 +26,8 @@ func TestParseDeliveryAcceptsDockerDocument(t *testing.T) {
 	if remote.SourcePublicationInstallations["installation-1"] != "github" {
 		t.Fatalf("installations = %+v", remote.SourcePublicationInstallations)
 	}
-	if len(delivery.PackKeys) != 1 || delivery.PackKeys[0] != (PackKey{ID: "pack-key-1", Fingerprint: key.fingerprint, PublicKey: key.spkiBase64}) {
-		t.Fatalf("pack keys = %+v", delivery.PackKeys)
+	if delivery.Remote.AgentPackTrustedKeySet != nil {
+		t.Fatalf("host-anchored pack keys reached the delivery: %+v", delivery)
 	}
 	if len(delivery.OmittedRepositories) != 1 || delivery.OmittedRepositories[0].ID != "repo-3" {
 		t.Fatalf("omitted = %+v", delivery.OmittedRepositories)
@@ -39,7 +39,7 @@ func TestParseDeliveryAcceptsDirectAndEmptyDocuments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if delivery.Remote.Isolation != "direct" || !delivery.Remote.AllowUnsafeDirect || len(delivery.PackKeys) != 0 || len(delivery.Remote.Repositories) != 0 {
+	if delivery.Remote.Isolation != "direct" || !delivery.Remote.AllowUnsafeDirect || len(delivery.Remote.Repositories) != 0 {
 		t.Fatalf("direct = %+v", delivery)
 	}
 }
@@ -101,23 +101,18 @@ func TestParseDeliveryRejectsMalformedEnvelopes(t *testing.T) {
 	other := newTestPackKey(t, "pack-key-2")
 	valid := func() map[string]any { return deliveryBody(dockerConfig(key), key) }
 	cases := map[string]func(map[string]any){
-		"unknown field":        func(b map[string]any) { b["organization_id"] = "org" },
-		"schema version":       func(b map[string]any) { b["schema_version"] = 2 },
-		"other runner":         func(b map[string]any) { b["runner_id"] = "runner-other" },
-		"revision":             func(b map[string]any) { b["profile_revision"] = 0 },
-		"digest":               func(b map[string]any) { b["digest"] = "XYZ" },
-		"missing fingerprints": func(b map[string]any) { delete(b, "pack_key_fingerprints") },
-		"fingerprint mismatch": func(b map[string]any) { b["pack_key_fingerprints"] = map[string]any{"pack-key-1": other.fingerprint} },
-		"fingerprint extra key": func(b map[string]any) {
-			b["pack_key_fingerprints"] = map[string]any{"pack-key-1": key.fingerprint, "pack-key-2": other.fingerprint}
-		},
-		"fingerprint missing": func(b map[string]any) { b["pack_key_fingerprints"] = map[string]any{} },
-		"omitted reason":      func(b map[string]any) { b["omitted_repositories"] = []any{map[string]any{"id": "r", "reason": "x"}} },
+		"unknown field":              func(b map[string]any) { b["organization_id"] = "org" },
+		"schema version":             func(b map[string]any) { b["schema_version"] = 2 },
+		"other runner":               func(b map[string]any) { b["runner_id"] = "runner-other" },
+		"revision":                   func(b map[string]any) { b["profile_revision"] = 0 },
+		"digest":                     func(b map[string]any) { b["digest"] = "XYZ" },
+		"fingerprints not an object": func(b map[string]any) { b["pack_key_fingerprints"] = []any{other.fingerprint} },
+		"omitted reason":             func(b map[string]any) { b["omitted_repositories"] = []any{map[string]any{"id": "r", "reason": "x"}} },
 		"omitted extra": func(b map[string]any) {
 			b["omitted_repositories"] = []any{map[string]any{"id": "r", "reason": "clone_url_unavailable", "url": "x"}}
 		},
-		"not ed25519": func(b map[string]any) {
-			b["config"].(map[string]any)["agent_pack_public_keys"] = map[string]any{"pack-key-1": "AAAA"}
+		"legacy keys not an object": func(b map[string]any) {
+			b["config"].(map[string]any)["agent_pack_public_keys"] = []any{"AAAA"}
 		},
 	}
 	for name, mutate := range cases {
@@ -224,5 +219,80 @@ func TestParseDeliveryRejectsMalformedRevokedAgentPackDigests(t *testing.T) {
 		if _, err := ParseDelivery(encode(t, deliveryBody(config)), testRunnerID); err == nil {
 			t.Fatalf("accepted %s revoked_agent_pack_digests", name)
 		}
+	}
+}
+
+func TestParseDeliveryIgnoresHostAnchoredPackKeys(t *testing.T) {
+	key := newTestPackKey(t, "pack-key-1")
+	other := newTestPackKey(t, "pack-key-2")
+	cases := map[string]func(map[string]any){
+		"matching fingerprints": func(map[string]any) {},
+		"missing fingerprints":  func(b map[string]any) { delete(b, "pack_key_fingerprints") },
+		"fingerprint mismatch":  func(b map[string]any) { b["pack_key_fingerprints"] = map[string]any{"pack-key-1": other.fingerprint} },
+		"missing legacy keys":   func(b map[string]any) { delete(b["config"].(map[string]any), "agent_pack_public_keys") },
+		"not ed25519": func(b map[string]any) {
+			b["config"].(map[string]any)["agent_pack_public_keys"] = map[string]any{"pack-key-1": "AAAA"}
+		},
+	}
+	for name, mutate := range cases {
+		body := deliveryBody(dockerConfig(key), key)
+		mutate(body)
+		delivery, err := ParseDelivery(encode(t, body), testRunnerID)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if delivery.Remote.AgentPackTrustedKeySet != nil {
+			t.Fatalf("%s: host-anchored pack keys were accepted: %+v", name, delivery)
+		}
+	}
+}
+
+func testTrustedKeySet() map[string]any {
+	return map[string]any{
+		"document_base64":  "eyJmb3JtYXQiOjF9",
+		"signature_base64": strings.Repeat("A", 86) + "==",
+		"root_key_id":      strings.Repeat("a", 64),
+	}
+}
+
+func TestParseDeliveryCarriesTheSignedTrustedKeySet(t *testing.T) {
+	config := dockerConfig()
+	config["agent_pack_trusted_key_set"] = testTrustedKeySet()
+	delivery, err := ParseDelivery(encode(t, deliveryBody(config)), testRunnerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := delivery.Remote.AgentPackTrustedKeySet
+	if set == nil || set.DocumentBase64 != "eyJmb3JtYXQiOjF9" || set.RootKeyID != strings.Repeat("a", 64) || set.SignatureBase64 != strings.Repeat("A", 86)+"==" {
+		t.Fatalf("trusted key set = %+v", set)
+	}
+	if keys := RestartRequiredChanges(Remote{}, delivery.Remote); len(keys) != 0 && keys[0] == "agent_pack_trusted_key_set" {
+		t.Fatal("a trusted key set change must not require a restart")
+	}
+}
+
+func TestParseDeliveryRefusesMalformedTrustedKeySets(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"extra field":    func(set map[string]any) { set["keys"] = []any{} },
+		"missing field":  func(set map[string]any) { delete(set, "root_key_id") },
+		"number value":   func(set map[string]any) { set["root_key_id"] = 1 },
+		"empty document": func(set map[string]any) { set["document_base64"] = "" },
+		"oversized document": func(set map[string]any) {
+			set["document_base64"] = strings.Repeat("A", 90000)
+		},
+	}
+	for name, mutate := range cases {
+		set := testTrustedKeySet()
+		mutate(set)
+		config := dockerConfig()
+		config["agent_pack_trusted_key_set"] = set
+		if _, err := ParseDelivery(encode(t, deliveryBody(config)), testRunnerID); err == nil {
+			t.Fatalf("%s: accepted", name)
+		}
+	}
+	config := dockerConfig()
+	config["agent_pack_trusted_key_set"] = []any{}
+	if _, err := ParseDelivery(encode(t, deliveryBody(config)), testRunnerID); err == nil {
+		t.Fatal("accepted a non-object trusted key set")
 	}
 }

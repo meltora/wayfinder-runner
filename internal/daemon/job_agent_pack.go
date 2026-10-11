@@ -77,17 +77,16 @@ func (d *Daemon) agentPackArchiveCache() agentpack.ArchiveCache {
 	}
 }
 
-func (d *Daemon) verifyAgentPackAuthority(job v1.JobSpec, trustedKeys map[string]string) error {
+func (d *Daemon) verifyAgentPackAuthority(job v1.JobSpec, developmentKeys map[string]string) error {
 	if job.AgentPack == nil && job.AgentPackAuthority == nil {
 		return nil
 	}
 	if job.AgentPack == nil || job.AgentPackAuthority == nil {
 		return rejectCommand(v1.CommandAckReasonAgentPackAuthorityInvalid, nil)
 	}
-	keyID := job.AgentPack.KeyID
-	trustedKey, ok := trustedKeys[keyID]
-	if !ok || trustedKey == "" {
-		return rejectCommand(v1.CommandAckReasonAgentPackKeyUntrusted, nil)
+	trustedKey, err := d.trustedAgentPackKey(job, developmentKeys)
+	if err != nil {
+		return err
 	}
 	if err := agentpack.VerifyDeliveryAuthority(
 		*job.AgentPackAuthority,

@@ -255,6 +255,9 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 			map[string]string{"path": filepath.Join(root, ".claude.json"), "mode": "deny"},
 		)
 	}
+	if p.ReadOnly {
+		deniedPermissions = append(deniedPermissions, claudePlanDeniedTools...)
+	}
 	settings := map[string]any{
 		"permissions": map[string]any{
 			"deny": deniedPermissions,
@@ -277,6 +280,11 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if err != nil {
 		return supervisor.Spec{}, err
 	}
+	if p.ReadOnly {
+		if hooks, err = withPlanCommandGuard(p, hooks); err != nil {
+			return supervisor.Spec{}, err
+		}
+	}
 	if len(hooks) > 0 {
 		settings["hooks"] = hooks
 	}
@@ -294,9 +302,13 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		"--verbose",
 		"--mcp-config", mcpPath,
 		"--strict-mcp-config",
-		"--setting-sources", "user",
-		"--settings", settingsPath,
-		"--allowedTools", "mcp__platform__*",
+	}
+	args = append(args, claudeSettingSourceArgs(p.ReadOnly)...)
+	args = append(args, "--settings", settingsPath)
+	if p.ReadOnly {
+		args = append(args, claudePlanToolArgs()...)
+	} else {
+		args = append(args, "--allowedTools", "mcp__platform__*")
 	}
 	if p.PackDir != "" {
 		args = append(args, "--add-dir", p.PackDir)
@@ -305,7 +317,7 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		}
 	}
 	if p.ReadOnly {
-		args = append(args, "--permission-mode", "plan")
+		args = append(args, claudePlanPermissionArgs()...)
 	} else {
 		args = append(args, "--permission-mode", "acceptEdits")
 	}

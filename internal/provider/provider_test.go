@@ -1,13 +1,18 @@
 package provider
 
 import (
+	"encoding/json"
 	"errors"
+	"flag"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/supervisor"
 )
 
 func testParams(t *testing.T) StartParams {
@@ -62,7 +67,7 @@ func TestClaudeBuildSpec(t *testing.T) {
 		t.Fatalf("BuildSpec: %v", err)
 	}
 	joined := strings.Join(spec.Args, " ")
-	for _, want := range []string{"-p", "stream-json", "--mcp-config", "--strict-mcp-config", "--setting-sources user", "--settings", "mcp__platform__*"} {
+	for _, want := range []string{"-p", "stream-json", "--mcp-config", "--strict-mcp-config", "--restricted", "--settings", "mcp__platform__*"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("args %q missing %q", joined, want)
 		}
@@ -84,8 +89,8 @@ func TestClaudeBuildSpec(t *testing.T) {
 			t.Fatalf("Claude settings %s missing %s", settingsText, want)
 		}
 	}
-	if !strings.Contains(joined, "--permission-mode plan") {
-		t.Fatalf("planning spec is not in plan mode: %q", joined)
+	if strings.Contains(joined, "--permission-mode plan") || !strings.Contains(joined, "--permission-mode dontAsk --permission-prompts none") {
+		t.Fatalf("planning spec does not use the read-only allowlist mode: %q", joined)
 	}
 }
 
@@ -237,4 +242,138 @@ func TestDefaultProviderAvailabilityLookupDoesNotPanic(t *testing.T) {
 	// by the capability manifest without asserting that either CLI is installed.
 	_ = NewCodex().Available()
 	_ = NewClaude().Available()
+}
+
+var updateProviderGoldens = flag.Bool("update-provider-goldens", false, "rewrite provider baseline goldens")
+
+type goldenFile struct {
+	Name    string `json:"name"`
+	Mode    string `json:"mode"`
+	Content string `json:"content"`
+}
+
+type goldenSpec struct {
+	Name                string                          `json:"name"`
+	Command             string                          `json:"command"`
+	Args                []string                        `json:"args"`
+	Dir                 string                          `json:"dir"`
+	EnvExtra            []string                        `json:"env_extra"`
+	Stdin               string                          `json:"stdin"`
+	ProviderEnvironment []string                        `json:"provider_environment"`
+	ManagedConfigMounts []supervisor.ManagedConfigMount `json:"managed_config_mounts"`
+	ConfigFiles         []goldenFile                    `json:"config_files"`
+}
+
+func goldenParams(t *testing.T, readOnly, hardened bool) StartParams {
+	t.Helper()
+	return StartParams{
+		Job: v1.JobSpec{
+			JobID: "j1", AttemptID: "a1", Kind: v1.JobKindBuild, FencingToken: 1,
+			Ticket: v1.TicketContext{Key: "PROJ-1", Summary: "Do the thing"},
+		},
+		WorkDir:         t.TempDir(),
+		ConfigDir:       t.TempDir(),
+		PackDir:         t.TempDir(),
+		MCPSock:         "/run/runner/job.sock",
+		MCPTokenFile:    "/run/runner/job.token",
+		MCPBinary:       "/usr/local/bin/our-runner",
+		Prompt:          "do the ticket",
+		Model:           "anthropic/claude-test",
+		ReadOnly:        readOnly,
+		HardenedRuntime: hardened,
+		Environment:     []string{"CLAUDE_CONFIG_DIR=/home/runner/.claude-config"},
+	}
+}
+
+func snapshotSpec(t *testing.T, p StartParams, spec supervisor.Spec) []byte {
+	t.Helper()
+	baseline := map[string]bool{}
+	for _, entry := range allowedEnvironment() {
+		baseline[entry] = true
+	}
+	snapshot := goldenSpec{
+		Name: spec.Name, Command: spec.Command, Args: spec.Args, Dir: spec.Dir,
+		ProviderEnvironment: spec.ProviderEnvironment, ManagedConfigMounts: spec.ManagedConfigMounts,
+	}
+	for _, entry := range spec.Env {
+		if !baseline[entry] {
+			snapshot.EnvExtra = append(snapshot.EnvExtra, entry)
+		}
+	}
+	if spec.Stdin != nil {
+		raw, err := io.ReadAll(spec.Stdin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot.Stdin = string(raw)
+	}
+	entries, err := os.ReadDir(p.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(filepath.Join(p.ConfigDir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot.ConfigFiles = append(snapshot.ConfigFiles, goldenFile{Name: entry.Name(), Mode: info.Mode().Perm().String(), Content: string(raw)})
+	}
+	sort.Slice(snapshot.ConfigFiles, func(i, j int) bool { return snapshot.ConfigFiles[i].Name < snapshot.ConfigFiles[j].Name })
+	raw, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.NewReplacer(p.ConfigDir, "$CONFIG", p.WorkDir, "$WORK", p.PackDir, "$PACK").Replace(string(raw))
+	return []byte(text + "\n")
+}
+
+func TestProviderSpecsMatchBaselineGoldens(t *testing.T) {
+	cases := []struct {
+		name     string
+		adapter  Adapter
+		readOnly bool
+	}{
+		{"claude-build", NewClaude(), false},
+		{"codex-build", NewCodex(), false},
+		{"codex-plan", NewCodex(), true},
+		{"opencode-build", NewOpenCode(), false},
+		{"opencode-plan", NewOpenCode(), true},
+	}
+	for _, tc := range cases {
+		for _, hardened := range []bool{false, true} {
+			name := tc.name
+			if hardened {
+				name += "-hardened"
+			}
+			t.Run(name, func(t *testing.T) {
+				p := goldenParams(t, tc.readOnly, hardened)
+				if tc.readOnly {
+					p.Job.Kind = v1.JobKindPlan
+				}
+				spec, err := tc.adapter.BuildSpec(p)
+				if err != nil {
+					t.Fatalf("BuildSpec: %v", err)
+				}
+				got := snapshotSpec(t, p, spec)
+				path := filepath.Join("testdata", "baseline-"+name+".golden.json")
+				if *updateProviderGoldens {
+					if err := os.WriteFile(path, got, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				want, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("read golden: %v", err)
+				}
+				if string(got) != string(want) {
+					t.Fatalf("%s drifted from baseline golden\n--- got ---\n%s\n--- want ---\n%s", name, got, want)
+				}
+			})
+		}
+	}
 }

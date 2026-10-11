@@ -18,6 +18,7 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/agentpack"
+	"github.com/example/app-runner/internal/agentpack/trustset"
 	"github.com/example/app-runner/internal/collector"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/journal"
@@ -61,12 +62,21 @@ func signedTestPackJob(t *testing.T) (v1.JobSpec, string) {
 	return job, base64.StdEncoding.EncodeToString(der)
 }
 
+func developmentAgentPackTrust(t *testing.T) *agentPackTrust {
+	t.Helper()
+	store, err := trustset.OpenStore(t.TempDir(), trustTestRoots(newTrustTestKey(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &agentPackTrust{store: store, developmentKeysAllowed: true}
+}
+
 func TestRunnerVerifiesSignedAgentPackAuthorityBeforeStartingJob(t *testing.T) {
 	job, trustedKey := signedTestPackJob(t)
 	d := &Daemon{cfg: config.Config{
 		Provider: "codex", AgentPackPublicKeys: map[string]string{"pack-key-1": trustedKey},
 		AllowedArtifactOrigins: []string{"https://packs.example.test"},
-	}}
+	}, agentPackTrust: developmentAgentPackTrust(t)}
 	if err := d.verifyJobAgentPackAuthority(job); err != nil {
 		t.Fatalf("valid authority rejected: %v", err)
 	}
@@ -101,7 +111,7 @@ func TestRunnerVerifiesSignedAgentPackAuthorityBeforeStartingJob(t *testing.T) {
 			candidate := job
 			authority := *job.AgentPackAuthority
 			candidate.AgentPackAuthority = &authority
-			candidateDaemon := &Daemon{cfg: config.Normalize(d.cfg)}
+			candidateDaemon := &Daemon{cfg: config.Normalize(d.cfg), agentPackTrust: d.agentPackTrust}
 			test.mutate(candidateDaemon, &candidate)
 			if err := candidateDaemon.verifyJobAgentPackAuthority(candidate); err == nil {
 				t.Fatal("invalid authority accepted")

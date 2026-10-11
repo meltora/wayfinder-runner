@@ -2,21 +2,19 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
 	"github.com/example/app-runner/internal/config"
+	"github.com/example/app-runner/internal/daemon"
 	"github.com/example/app-runner/internal/doctor"
-	"github.com/example/app-runner/internal/remoteconfig"
 )
 
 type doctorCommandDependencies struct {
-	load                 func(string) (config.Config, error)
-	loadStateDir         func(string) (config.Config, error)
-	loadStateDirAwaiting func(string) (config.Config, []doctor.AwaitingAgentPackKey, string, error)
-	run                  func(context.Context, doctor.Options) doctor.Report
-	output               io.Writer
+	load         func(string) (config.Config, error)
+	loadStateDir func(string) (config.Config, error)
+	run          func(context.Context, doctor.Options) doctor.Report
+	output       io.Writer
 }
 
 func cmdDoctorWithDependencies(args []string, deps doctorCommandDependencies) error {
@@ -34,15 +32,6 @@ func cmdDoctorWithDependencies(args []string, deps doctorCommandDependencies) er
 			return fmt.Errorf("runner configuration could not be loaded or validated")
 		}
 		opts = loadedConfigurationDoctorOptions(cfg)
-		resolveConfiguredAwaitingAgentPackKeys(&opts, cfg.StateDir, deps.loadStateDirAwaiting)
-	} else if flags.url == "" && flags.stateDirSet && deps.loadStateDirAwaiting != nil {
-		cfg, awaiting, command, err := deps.loadStateDirAwaiting(flags.stateDir)
-		if err != nil {
-			return err
-		}
-		opts = loadedConfigurationDoctorOptions(cfg)
-		opts.AwaitingAgentPackKeys = awaiting
-		opts.AcceptAgentPackKeysCommand = command
 	} else if flags.url == "" && flags.stateDirSet && deps.loadStateDir != nil {
 		cfg, err := deps.loadStateDir(flags.stateDir)
 		if err != nil {
@@ -62,30 +51,10 @@ func cmdDoctorWithDependencies(args []string, deps doctorCommandDependencies) er
 	return nil
 }
 
-func resolveConfiguredAwaitingAgentPackKeys(
-	opts *doctor.Options,
-	stateDir string,
-	load func(string) (config.Config, []doctor.AwaitingAgentPackKey, string, error),
-) {
-	if load == nil {
-		opts.AgentPackKeysNotEvaluated = "the runner configuration could not be resolved from the state directory"
-		return
-	}
-	_, awaiting, command, err := load(stateDir)
-	switch {
-	case errors.Is(err, remoteconfig.ErrNotEnrolled):
-		opts.AgentPackKeysNotEvaluated = "the state directory is not enrolled"
-	case err != nil:
-		opts.AgentPackKeysNotEvaluated = "the runner configuration could not be resolved from the state directory"
-	default:
-		opts.AwaitingAgentPackKeys = awaiting
-		opts.AcceptAgentPackKeysCommand = command
-	}
-}
-
 func loadedConfigurationDoctorOptions(cfg config.Config) doctor.Options {
 	return doctor.Options{
 		ConfigurationLoaded: true, Provider: cfg.Provider, ProviderBinary: cfg.ProviderBinaries[cfg.Provider],
+		PlatformTrustedKeySet: cfg.AgentPackTrustedKeySet, BuildChannel: daemon.Channel,
 		RepositoryCount: len(cfg.Repositories), TrustedAgentPackKeyCount: len(cfg.AgentPackPublicKeys),
 		ControlPlaneURL: cfg.ControlPlaneURL, StateDir: cfg.StateDir, Isolation: cfg.Isolation,
 		JobImage: cfg.JobImage, JobNetwork: cfg.JobNetwork, JobNetworkName: cfg.JobNetworkName,

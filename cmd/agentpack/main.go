@@ -28,6 +28,8 @@ var commands = map[string]command{
 	"digest":     runDigest,
 	"prove":      runProve,
 	"sign":       runSign,
+	"trust-set":  runTrustSet,
+	"verify":     runVerify,
 }
 
 func main() {
@@ -36,7 +38,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(stderr, "usage: agentpack keygen|public-key|build|digest|prove|sign [flags]")
+		_, _ = fmt.Fprintln(stderr, "usage: agentpack keygen|public-key|build|digest|prove|sign|verify|trust-set sign|trust-set verify [flags]")
 		return exitUsage
 	}
 	handler, ok := commands[args[0]]
@@ -45,6 +47,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if err := handler(args[1:], stdout, stderr); err != nil {
+		var coded codedError
+		if errors.As(err, &coded) {
+			writeJSONError(stderr, coded)
+			return exitFailure
+		}
 		var usage usageError
 		if errors.As(err, &usage) || errors.Is(err, flag.ErrHelp) {
 			if usage.message != "" {

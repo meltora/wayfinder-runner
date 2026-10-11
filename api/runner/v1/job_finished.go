@@ -24,6 +24,7 @@ const (
 	JobFailureCancelled                JobFinishedFailureCode = "cancelled"
 	JobFailureLeaseLost                JobFinishedFailureCode = "lease_lost"
 	JobFailureCleanup                  JobFinishedFailureCode = "cleanup_failed"
+	JobFailurePlanNotPublished         JobFinishedFailureCode = "plan_not_published"
 )
 
 type AgentPackMaterializationFailureCategory string

@@ -17,7 +17,7 @@ import (
 
 var errAgentConfigScanStopped = errors.New("agent configuration scan stopped")
 
-type agentConfigScanReadFunc func(context.Context, string, string) (string, scanner.Inventory, error)
+type agentConfigScanReadFunc func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error)
 type agentConfigScanState struct {
 	agentConfigScanPlatform      string
 	agentConfigScanReader        agentConfigScanReadFunc
@@ -120,17 +120,22 @@ func (d *Daemon) beginAgentConfigScan(ctx context.Context, a v1.AgentConfigScanA
 	}
 	return scanCtx, finish, nil
 }
-func (d *Daemon) scanAgentConfiguration(ctx context.Context, a v1.AgentConfigScanAuthority) v1.AgentConfigScanOutcome {
-	repository, ok := d.hotConfiguration().repositories[a.RepositoryID]
+func (d *Daemon) scanAgentConfiguration(ctx context.Context, a v1.AgentConfigScanAuthority, providerCredential *v1.ProviderCredential) v1.AgentConfigScanOutcome {
+	configuration := d.hotConfiguration()
+	repository, ok := configuration.repositories[a.RepositoryID]
 	if !ok {
 		return scanFailure("repository_unavailable")
+	}
+	credential, gitHubOrigin, credentialErr := repositoryCredential(providerCredential, repository.URL, configuration.sourcePublicationInstallations, time.Now())
+	if credentialErr != nil {
+		return scanFailure("repository_credential_unavailable")
 	}
 	read := d.agentConfigScanReader
 	if read == nil {
 		manager := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
-		read = manager.ScanAgentConfig
+		read = manager.ScanAgentConfigWithCredential
 	}
-	sha, inventory, err := read(ctx, repository.URL, a.BranchRef)
+	sha, inventory, err := read(ctx, repository.URL, a.BranchRef, credential)
 	switch {
 	case errors.Is(context.Cause(ctx), errAgentConfigScanStopped):
 		return scanFailure("stopped")
@@ -144,6 +149,10 @@ func (d *Daemon) scanAgentConfiguration(ctx context.Context, a v1.AgentConfigSca
 		return scanFailure("repository_unavailable")
 	case errors.Is(err, scanner.ErrIncompleteScan):
 		return scanFailure("scan_failed")
+	case gitHubOrigin && errors.Is(err, repo.ErrRepositoryCredentialUnavailable):
+		return scanFailure("repository_credential_unavailable")
+	case gitHubOrigin && errors.Is(err, repo.ErrRepositoryAccessDenied):
+		return scanFailure("repository_access_denied")
 	case err != nil:
 		return scanFailure("checkout_failed")
 	}

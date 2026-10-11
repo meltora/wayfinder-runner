@@ -10,9 +10,7 @@ import (
 var ErrDirectNotAcknowledged = errors.New("the dashboard selected direct isolation, which runs jobs on this host without a sandbox; run our-runner configure and confirm it, or pass --acknowledge-direct")
 
 type Merged struct {
-	Config           config.Config
-	AcceptedPackKeys []PackKey
-	AwaitingPackKeys []PackKey
+	Config config.Config
 }
 
 func Merge(local Local, delivery Delivery) (Merged, error) {
@@ -55,19 +53,8 @@ func Merge(local Local, delivery Delivery) (Merged, error) {
 		cfg.SourcePublicationInstallations[id] = config.SourcePublicationInstallationConfig{Provider: provider}
 	}
 	cfg.RevokedAgentPackDigests = remote.RevokedAgentPackDigests
-	accepted := make(map[string]bool, len(local.AcceptedPackKeyFingerprints))
-	for _, fingerprint := range local.AcceptedPackKeyFingerprints {
-		accepted[fingerprint] = true
-	}
-	cfg.AgentPackPublicKeys = map[string]string{}
-	for _, key := range delivery.PackKeys {
-		if accepted[key.Fingerprint] {
-			cfg.AgentPackPublicKeys[key.ID] = key.PublicKey
-			out.AcceptedPackKeys = append(out.AcceptedPackKeys, key)
-		} else {
-			out.AwaitingPackKeys = append(out.AwaitingPackKeys, key)
-		}
-	}
+	cfg.AgentPackPublicKeys = nil
+	cfg.AgentPackTrustedKeySet = remote.AgentPackTrustedKeySet
 	cfg = config.Normalize(cfg)
 	if err := cfg.Validate(); err != nil {
 		return out, fmt.Errorf("merged runner configuration is invalid: %w", err)
