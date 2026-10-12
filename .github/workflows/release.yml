@@ -41,6 +41,8 @@ jobs:
         with:
           cosign-release: v3.0.6
       - name: Install Syft
+        env:
+          GOTOOLCHAIN: auto
         run: go install github.com/anchore/syft/cmd/syft@v1.52.0
       - name: Select the release channel and its control plane
         shell: bash
