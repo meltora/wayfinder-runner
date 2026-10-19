@@ -354,8 +354,13 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		})
 
 	case "platform_publish_test_results":
-		if err := requireToolText(raw, "suite", 1024); err != nil {
+		if err := validation.ID("suite", str(raw, "suite")); err != nil {
 			return nil, err
+		}
+		if commitSHA := str(raw, "commit_sha"); commitSHA != "" {
+			if err := validation.GitCommitSHA("commit_sha", commitSHA); err != nil {
+				return nil, fmt.Errorf("%w, or omitted when the change is not committed yet", err)
+			}
 		}
 		result := str(raw, "result")
 		if result != "passed" && result != "failed" && result != "error" {

@@ -111,6 +111,10 @@ type Daemon struct {
 	providerReviewFeedbackContentCommandMu                sync.Mutex
 	providerReviewFeedbackContentCommandActive            map[string]struct{}
 	providerReviewFeedbackContentCommands                 sync.WaitGroup
+	providerPullRequestRunner                             providerPullRequestRunner
+	providerPullRequestCommandMu                          sync.Mutex
+	providerPullRequestCommandActive                      map[string]struct{}
+	providerPullRequestCommands                           sync.WaitGroup
 	workIntakeProposalGenerator                           workIntakeProposalGenerator
 	workIntakeProposalCommandMu                           sync.Mutex
 	workIntakeProposalCommandActive                       map[string]struct{}
@@ -158,6 +162,7 @@ func NewWithExternalOperationDependencies(
 	var reviewerAssignmentReconciler providerReviewerAssignmentReconciler
 	var reviewObserver providerReviewObserver
 	var feedbackContentReader providerReviewFeedbackContentReader
+	var pullRequestRunner providerPullRequestRunner
 	if len(cfg.SourcePublicationInstallations) != 0 {
 		registry, err := sourcepublication.NewRegistry(cfg.SourcePublicationInstallations, dependencies.SourcePublicationHTTPClient)
 		if err != nil {
@@ -169,6 +174,7 @@ func NewWithExternalOperationDependencies(
 		reviewerAssignmentReconciler = registry
 		reviewObserver = registry
 		feedbackContentReader = registry
+		pullRequestRunner = registry
 	}
 	var localPreviewObserver previewObserver
 	if len(cfg.PreviewObservationProfiles) != 0 {
@@ -315,6 +321,7 @@ func NewWithExternalOperationDependencies(
 		providerReviewerAssignmentReconciler: reviewerAssignmentReconciler,
 		providerReviewObserver:               reviewObserver,
 		providerReviewFeedbackContentReader:  feedbackContentReader,
+		providerPullRequestRunner:            pullRequestRunner,
 		agentPackTrust:                       trust,
 	}
 	d.applyConfiguredAgentPackTrust(context.Background(), cfg.AgentPackTrustedKeySet)
@@ -405,6 +412,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.providerReviewerAssignmentReconciliationCommands.Wait()
 		d.providerReviewObservationCommands.Wait()
 		d.providerReviewFeedbackContentCommands.Wait()
+		d.providerPullRequestCommands.Wait()
 		d.workIntakeProposalCommands.Wait()
 		d.rotationCommands.Wait()
 		_ = d.journal.Close()
@@ -593,6 +601,9 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	}
 	if services.providerReviewFeedbackContentReader != nil {
 		det.ProviderReviewFeedbackContentInstallations = services.providerReviewFeedbackContentReader.ReadyProviderReviewFeedbackContentInstallations()
+	}
+	if services.providerPullRequestRunner != nil {
+		det.ProviderPullRequestInstallations = services.providerPullRequestRunner.ReadyProviderPullRequestInstallations()
 	}
 	m := det.Collect(ctx)
 	key, err := d.store.LoadKey()
@@ -847,6 +858,7 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 	asyncProviderReviewerAssignmentReconciliation := decodeErr == nil && cmd.Command == v1.CmdProviderReviewerAssignmentReconciliation
 	asyncProviderReviewObservation := decodeErr == nil && cmd.Command == v1.CmdProviderReviewObservation
 	asyncProviderReviewFeedbackContent := decodeErr == nil && cmd.Command == v1.CmdProviderReviewFeedbackContent
+	asyncProviderPullRequest := decodeErr == nil && isProviderPullRequestCommand(cmd.Command)
 	asyncWorkIntakeProposal := decodeErr == nil && cmd.Command == v1.CmdWorkIntakeProposal
 	if asyncSourcePublication && d.sourcePublicationCommandIsActive(env.ID) {
 		return nil
@@ -870,6 +882,9 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		return nil
 	}
 	if asyncProviderReviewFeedbackContent && d.providerReviewFeedbackContentCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncProviderPullRequest && d.providerPullRequestCommandIsActive(env.ID) {
 		return nil
 	}
 	if asyncWorkIntakeProposal && d.workIntakeProposalCommandIsActive(env.ID) {
@@ -983,6 +998,14 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		}
 		d.providerReviewFeedbackContentCommands.Add(1)
 		go d.completeProviderReviewFeedbackContentCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
+		return nil
+	}
+	if asyncProviderPullRequest {
+		if !d.providerPullRequestCommandStart(env.ID) {
+			return nil
+		}
+		d.providerPullRequestCommands.Add(1)
+		go d.completeProviderPullRequestCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
 		return nil
 	}
 	if asyncWorkIntakeProposal {
@@ -1106,6 +1129,9 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	if err := validateProviderReviewFeedbackContentCommandBoundary(cmd); err != nil {
 		return err
 	}
+	if err := validateProviderPullRequestCommandBoundary(cmd); err != nil {
+		return err
+	}
 	if err := validateReviewFeedbackContinuationCommandBoundary(cmd); err != nil {
 		return err
 	}
@@ -1220,6 +1246,11 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executeProviderReviewFeedbackContent(ctx, env.ID, *cmd.ProviderReviewFeedbackContent, env.ProviderCredential)
+	case v1.CmdProviderPullRequestObservation, v1.CmdProviderPullRequestMerge:
+		if d.Paused() {
+			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+		}
+		return d.executeProviderPullRequest(ctx, env.ID, *cmd.ProviderPullRequest, env.ProviderCredential)
 	case v1.CmdPreviewObservation:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)

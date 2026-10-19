@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/mcpbridge"
 	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/supervisor"
 )
@@ -102,6 +104,7 @@ func mcpServerEntry(socketPath, tokenFile, bin string) map[string]any {
 	return map[string]any{
 		"command": bin,
 		"args":    []string{"mcp-serve", "--socket", socketPath, "--token-file", tokenFile},
+		"timeout": (mcpbridge.ToolCallTimeout(mcpbridge.HumanInputTool) + time.Minute).Milliseconds(),
 	}
 }
 
@@ -308,7 +311,7 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if p.ReadOnly {
 		args = append(args, claudePlanToolArgs()...)
 	} else {
-		args = append(args, "--allowedTools", "mcp__platform__*")
+		args = append(args, "--allowedTools", "mcp__platform__*", "Bash")
 	}
 	if p.PackDir != "" {
 		args = append(args, "--add-dir", p.PackDir)

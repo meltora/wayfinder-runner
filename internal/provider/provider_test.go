@@ -10,8 +10,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/mcpbridge"
 	"github.com/example/app-runner/internal/supervisor"
 )
 
@@ -94,6 +96,29 @@ func TestClaudeBuildSpec(t *testing.T) {
 	}
 }
 
+func TestClaudeMCPConfigAllowsTheLongestHumanInputWait(t *testing.T) {
+	p := testParams(t)
+	if _, err := NewClaude().BuildSpec(p); err != nil {
+		t.Fatalf("BuildSpec: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(p.ConfigDir, "claude-mcp.json"))
+	if err != nil {
+		t.Fatalf("read MCP config: %v", err)
+	}
+	var config struct {
+		MCPServers map[string]struct {
+			Timeout int64 `json:"timeout"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatalf("decode MCP config: %v", err)
+	}
+	want := (mcpbridge.ToolCallTimeout(mcpbridge.HumanInputTool) + time.Minute).Milliseconds()
+	if got := config.MCPServers["platform"].Timeout; got != want {
+		t.Fatalf("platform MCP timeout = %d, want %d", got, want)
+	}
+}
+
 func TestHardenedBuildSpecsRemainAutonomousWithoutBypass(t *testing.T) {
 	p := testParams(t)
 	p.ReadOnly = false
@@ -112,6 +137,18 @@ func TestHardenedBuildSpecsRemainAutonomousWithoutBypass(t *testing.T) {
 	claudeArgs := strings.Join(claude.Args, " ")
 	if !strings.Contains(claudeArgs, "--permission-mode acceptEdits") || strings.Contains(claudeArgs, "bypassPermissions") {
 		t.Fatalf("unsafe Claude build args: %s", claudeArgs)
+	}
+}
+
+func TestClaudeBuildSpecAllowsWorkspaceCommands(t *testing.T) {
+	p := testParams(t)
+	p.ReadOnly = false
+	spec, err := NewClaude().BuildSpec(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(spec.Args, " "), "--allowedTools mcp__platform__* Bash ") {
+		t.Fatalf("Claude build spec must allow workspace commands such as tests: %q", spec.Args)
 	}
 }
 

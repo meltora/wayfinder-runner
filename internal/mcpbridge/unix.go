@@ -23,7 +23,20 @@ const (
 	requestReadTimeout     = 10 * time.Second
 	toolCallTimeout        = 31 * time.Minute
 	responseWriteTimeout   = 10 * time.Second
+	humanInputCallMargin   = 2 * time.Minute
 )
+
+const (
+	HumanInputTool    = "platform_request_human_input"
+	MaxHumanInputWait = 7*time.Hour + 30*time.Minute
+)
+
+func ToolCallTimeout(tool string) time.Duration {
+	if tool == HumanInputTool {
+		return MaxHumanInputWait + humanInputCallMargin
+	}
+	return toolCallTimeout
+}
 
 type socketRequest struct {
 	ID    uint64          `json:"id"`
@@ -73,7 +86,7 @@ func (c *UnixClient) Call(ctx context.Context, tool string, args json.RawMessage
 		return nil, fmt.Errorf("mcp socket dial: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	deadline := time.Now().Add(toolCallTimeout)
+	deadline := time.Now().Add(ToolCallTimeout(tool))
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
@@ -193,7 +206,7 @@ func (s *UnixServer) serveConn(ctx context.Context, conn net.Conn) {
 	} else if err := ValidateSocketTool(req.Tool); err != nil {
 		resp.Error = err.Error()
 	} else {
-		callCtx, cancel := context.WithTimeout(ctx, toolCallTimeout)
+		callCtx, cancel := context.WithTimeout(ctx, ToolCallTimeout(req.Tool))
 		result, err := s.Handler(callCtx, req.Tool, req.Args)
 		cancel()
 		if err != nil {

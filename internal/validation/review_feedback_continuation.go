@@ -14,6 +14,17 @@ var (
 )
 
 func reviewFeedbackContinuationAuthority(value v1.ReviewFeedbackContinuationAuthority) error {
+	if value.IsHumanChangeRequest() {
+		return humanChangeRequestContinuationAuthority(value)
+	}
+	if value.HumanChangeRequestID != "" {
+		return fmt.Errorf("provider continuation must not carry change request fields")
+	}
+	if value.HeadBranch != "" {
+		if err := humanChangeRequestHeadBranch(value.WorkflowRunID, value.HeadBranch); err != nil {
+			return err
+		}
+	}
 	if value.SchemaVersion != v1.ReviewFeedbackContinuationAuthorityVersion ||
 		value.Purpose != v1.ReviewFeedbackContinuationPurpose ||
 		!reviewFeedbackContinuationIDPattern.MatchString(value.ReviewFeedbackContinuationID) ||
@@ -154,6 +165,9 @@ func ReviewFeedbackContinuationCommand(job v1.JobSpec, authority v1.ReviewFeedba
 	}
 	if !repositoryMatches {
 		return fmt.Errorf("continuation repository is outside the target job")
+	}
+	if err := postMergeFixBase(job, authority); err != nil {
+		return err
 	}
 	if job.LeaseID != authority.LeaseID || job.FencingToken != authority.FencingToken ||
 		!job.LeaseExpiresAt.Equal(authority.LeaseExpiresAt) {

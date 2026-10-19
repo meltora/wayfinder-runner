@@ -174,3 +174,17 @@ func waitForTest(t *testing.T, what string, cond func() bool) {
 	}
 	t.Fatalf("timed out waiting for %s", what)
 }
+
+func TestHumanInputWaitsUpToSevenAndAHalfHours(t *testing.T) {
+	_, timeout, err := decisionRequestParameters(map[string]any{"question": "Formal or casual?"})
+	if err != nil || timeout != 7*time.Hour+30*time.Minute {
+		t.Fatalf("default timeout = %v, %v", timeout, err)
+	}
+	_, timeout, err = decisionRequestParameters(map[string]any{"question": "Formal or casual?", "timeout_seconds": float64(27000)})
+	if err != nil || timeout != 7*time.Hour+30*time.Minute {
+		t.Fatalf("maximum timeout = %v, %v", timeout, err)
+	}
+	if _, _, err := decisionRequestParameters(map[string]any{"question": "Formal or casual?", "timeout_seconds": float64(27001)}); err == nil {
+		t.Fatal("timeout above 27000 seconds was accepted")
+	}
+}

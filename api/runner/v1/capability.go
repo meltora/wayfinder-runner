@@ -51,7 +51,11 @@ type CapabilityManifest struct {
 	ProviderReviewFeedbackContentTransportVersion            int                                                              `json:"provider_review_feedback_content_transport_version,omitempty"`
 	ProviderReviewFeedbackContentProviders                   []string                                                         `json:"provider_review_feedback_content_providers,omitempty"`
 	ProviderReviewFeedbackContentInstallations               []ProviderReviewFeedbackContentInstallationCapability            `json:"provider_review_feedback_content_installations,omitempty"`
+	ProviderPullRequestTransportVersion                      string                                                           `json:"provider_pull_request_transport_version,omitempty"`
+	ProviderPullRequestProviders                             []string                                                         `json:"provider_pull_request_providers,omitempty"`
+	ProviderPullRequestInstallations                         []ProviderPullRequestInstallationCapability                      `json:"provider_pull_request_installations,omitempty"`
 	AgentRunTransportVersion                                 int                                                              `json:"agent_run_transport_version,omitempty"`
+	HumanChangeRequestTransportVersion                       int                                                              `json:"human_change_request_transport_version,omitempty"`
 	WorkIntakeProposalTransportVersion                       int                                                              `json:"work_intake_proposal_transport_version,omitempty"`
 	WorkIntakeProposalAdapter                                string                                                           `json:"work_intake_proposal_adapter,omitempty"`
 	WorkIntakeProposalModel                                  string                                                           `json:"work_intake_proposal_model,omitempty"`
@@ -80,6 +84,12 @@ type ProviderReviewerAssignmentReconciliationInstallationCapability struct {
 	ProviderInstanceKey string `json:"provider_instance_key"`
 }
 type ProviderReviewObservationInstallationCapability struct {
+	InstallationID      string `json:"installation_id"`
+	Provider            string `json:"provider"`
+	ProviderInstanceKey string `json:"provider_instance_key"`
+}
+
+type ProviderPullRequestInstallationCapability struct {
 	InstallationID      string `json:"installation_id"`
 	Provider            string `json:"provider"`
 	ProviderInstanceKey string `json:"provider_instance_key"`

@@ -47,3 +47,21 @@ func TestCommandContentDigestMatchesTypedAndDecodedWireRepresentations(t *testin
 		t.Fatalf("typed and decoded wire digests differ: %q != %q", typedDigest, decodedDigest)
 	}
 }
+
+func TestCommandContentDigestMatchesJavaScriptStringifyForHTMLAndLineSeparators(t *testing.T) {
+	for _, test := range []struct {
+		payload map[string]any
+		want    string
+	}{
+		{map[string]any{"b": "Goodbye, <name> & \u2028 \u2029!", "a": 1}, "2f4316aa637d353b5203d13b17db4304675adf55b526ebdeb9ae5f2ced569f04"},
+		{map[string]any{"s": "\\u2028 literal"}, "9bb546f760b61402adeb8d4f7b9c121bb25b5e7faa115c211a05ea8d6089da10"},
+	} {
+		got, err := CommandContentDigest(test.payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != test.want {
+			t.Fatalf("digest = %s, want %s", got, test.want)
+		}
+	}
+}

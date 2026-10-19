@@ -176,17 +176,37 @@ func TestProviderRetryAfterAcceptsOnlyBoundedFutureHints(t *testing.T) {
 	}
 }
 
-func TestGitHubPublicationRejectsExistingPullRequestAtDifferentHead(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+func githubExistingPullRequestServer(t *testing.T, pulls string) *httptest.Server {
+	t.Helper()
+	return httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/repos/octo/example":
 			_, _ = writer.Write([]byte(`{"id":1}`))
 		case "/repos/octo/example/git/ref/heads/job/feature-1":
 			_, _ = writer.Write([]byte(`{"object":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}`))
+		case "/repos/octo/example/pulls":
+			if request.Method != http.MethodGet {
+				t.Errorf("unexpected %s %s", request.Method, request.URL.Path)
+			}
+			_, _ = writer.Write([]byte(pulls))
 		default:
-			_, _ = writer.Write([]byte(`[{"number":7,"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base":{"ref":"main"}}]`))
+			t.Errorf("unexpected %s %s", request.Method, request.URL.Path)
 		}
 	}))
+}
+
+func TestGitHubPublicationRetriesExistingPullRequestAtStaleHead(t *testing.T) {
+	server := githubExistingPullRequestServer(t, `[{"number":7,"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base":{"ref":"main"}}]`)
+	defer server.Close()
+
+	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation(), nil)
+	if outcome.Kind != v1.SourcePublicationRetryable || outcome.Code != v1.SourceControlProviderUnavailable {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func TestGitHubPublicationRejectsExistingPullRequestOnDifferentBase(t *testing.T) {
+	server := githubExistingPullRequestServer(t, `[{"number":7,"state":"open","head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"base":{"ref":"develop"}}]`)
 	defer server.Close()
 
 	outcome := testRegistryForServer(t, server).Publish(t.Context(), testOperation(), nil)

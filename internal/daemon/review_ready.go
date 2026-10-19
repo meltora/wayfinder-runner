@@ -58,7 +58,7 @@ func (jr *jobRunner) recordReviewReadyIntent(raw map[string]any) (any, error) {
 	if jr.reviewReadyIntent != nil {
 		return nil, fmt.Errorf("a review readiness intent is already recorded for this attempt")
 	}
-	intent.limitations = append([]string(nil), intent.limitations...)
+	intent.limitations = append([]string{}, intent.limitations...)
 	jr.reviewReadyIntent = &intent
 	return map[string]any{
 		"ok": true, "status": "pending_runner_finalization",
@@ -72,7 +72,7 @@ func (jr *jobRunner) reviewReadyIntentSnapshot() (reviewReadyIntent, bool) {
 		return reviewReadyIntent{}, false
 	}
 	copy := *jr.reviewReadyIntent
-	copy.limitations = append([]string(nil), copy.limitations...)
+	copy.limitations = append([]string{}, copy.limitations...)
 	return copy, true
 }
 

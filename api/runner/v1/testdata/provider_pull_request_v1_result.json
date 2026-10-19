@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "type": "event",
+  "id": "provider-pull-request-result-eb4b9770929a2b4263749867d680da9894e6c27b9c1bef026d09054c721e6c57",
+  "sent_at": "2026-10-12T12:01:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "kind": "provider_pull_request_result",
+    "authority_version": "provider-pull-request-v1",
+    "operation_id": "22345678-1234-4234-8234-123456789abc",
+    "operation": "merge",
+    "organization_id": "organization-1",
+    "project_id": "project-1",
+    "workflow_run_id": "workflow-1",
+    "repository_id": "repository-1",
+    "provider": "github",
+    "installation_id": "installation-1",
+    "provider_instance_key": "github.com",
+    "provider_repository_id": "1385038985",
+    "pull_request_number": "2",
+    "expected_head_sha": "e31aeb2649bce0a55feed5433206cfb68f4fa94c",
+    "merge_method": "squash",
+    "lease_id": "provider-pull-request-lease-22345678-1234-4234-8234-123456789abc",
+    "fencing_token": 1,
+    "lease_expires_at": "2026-10-12T12:05:00Z",
+    "command_digest": "234a223ad652999ac81189bebd0390510189c0b5fbfc416777599afeb1f4156f",
+    "command_message_id": "provider-pull-request-command-22345678-1234-4234-8234-123456789abc",
+    "observed_at": "2026-10-12T12:01:00Z",
+    "outcome": {
+      "kind": "merged",
+      "merge_commit_sha": "ffffffffffffffffffffffffffffffffffffffff"
+    }
+  }
+}

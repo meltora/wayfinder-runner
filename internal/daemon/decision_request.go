@@ -6,11 +6,13 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/example/app-runner/internal/mcpbridge"
 )
 
 const (
-	defaultDecisionTimeout  = 4 * time.Hour
-	maxDecisionTimeout      = 4 * time.Hour
+	defaultDecisionTimeout  = mcpbridge.MaxHumanInputWait
+	maxDecisionTimeout      = mcpbridge.MaxHumanInputWait
 	maxDecisionOptions      = 32
 	maxDecisionOptionBytes  = 4 << 10
 	maxDecisionContextBytes = 16 << 10

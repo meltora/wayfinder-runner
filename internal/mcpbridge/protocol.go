@@ -158,11 +158,11 @@ var toolDefinitions = []ToolDef{
 		"attempted_resolution": stringProp("What was tried"), "recommended_action": stringProp("Recommended human or system action"),
 		"can_continue": boolProp("Can safely continue elsewhere"), "idempotency_key": stringProp("Idempotency key"),
 	})},
-	{Name: "platform_request_human_input", Description: "Creates a decision request for a human and blocks until the human answers, the timeout elapses, or the job is cancelled.", InputSchema: objectSchema(map[string]any{
+	{Name: HumanInputTool, Description: "Creates a decision request for a human and blocks until the human answers, the timeout elapses, or the job is cancelled.", InputSchema: objectSchema(map[string]any{
 		"question": stringProp("Decision needed"), "options": arrayProp("Options"),
 		"recommendation": stringProp("Recommended option"), "consequence_of_delay": stringProp("Consequence of delay"),
 		"blocked_operation": stringProp("Exact operation waiting"),
-		"timeout_seconds":   numberProp("Max seconds to wait (default 14400, max 14400)"),
+		"timeout_seconds":   numberProp("Max seconds to wait (default 27000, max 27000)"),
 		"idempotency_key":   stringProp("Idempotency key (also used as the question id)"),
 	})},
 	{Name: "platform_publish_decision", Description: "Records an agent-observed implementation decision. Does not replace human approval.", InputSchema: objectSchema(map[string]any{
@@ -170,9 +170,9 @@ var toolDefinitions = []ToolDef{
 		"evidence": arrayProp("Supporting evidence references"), "idempotency_key": stringProp("Idempotency key"),
 	})},
 	{Name: "platform_publish_test_results", Description: "Publishes test suite results with provenance.", InputSchema: objectSchema(map[string]any{
-		"suite": stringProp("Suite identity"), "command": stringProp("Command run"),
+		"suite": stringProp("Suite identifier using only letters, numbers, '.', '_' or '-', for example unit"), "command": stringProp("Command run"),
 		"result": stringProp("passed|failed|error"), "duration_ms": numberProp("Duration ms"),
-		"failures": arrayProp("Failure summaries"), "commit_sha": stringProp("Commit set tested"),
+		"failures": arrayProp("Failure summaries"), "commit_sha": stringProp("Full lowercase Git commit SHA tested; omit when the change is not committed yet"),
 		"idempotency_key": stringProp("Idempotency key"),
 	})},
 	{Name: "platform_publish_manual_test_plan", Description: "Publishes manual validation steps for a human reviewer.", InputSchema: manualTestPlanInputSchema()},

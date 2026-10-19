@@ -145,10 +145,19 @@ func (publisher *githubPublisher) findExisting(
 		outcome := permanent(v1.SourceControlInvalidProviderResponse)
 		return githubPullRequest{}, false, &outcome
 	}
+	stale := false
 	for _, request := range requests {
-		if request.Head.SHA == command.HeadSHA && request.Base.Ref == command.BaseBranch && request.State == "open" {
+		if request.Base.Ref != command.BaseBranch || request.State != "open" {
+			continue
+		}
+		if request.Head.SHA == command.HeadSHA {
 			return request, true, nil
 		}
+		stale = true
+	}
+	if stale {
+		outcome := retryable(v1.SourceControlProviderUnavailable, nil)
+		return githubPullRequest{}, false, &outcome
 	}
 	if len(requests) != 0 {
 		outcome := permanent(v1.SourceControlHeadMismatch)

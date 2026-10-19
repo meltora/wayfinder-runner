@@ -41,6 +41,7 @@ type sourcePublicationServices struct {
 	providerReviewerAssignmentReconciler providerReviewerAssignmentReconciler
 	providerReviewObserver               providerReviewObserver
 	providerReviewFeedbackContentReader  providerReviewFeedbackContentReader
+	providerPullRequestRunner            providerPullRequestRunner
 }
 
 func (d *Daemon) SetConfigurationReloader(reloader ConfigurationReloader) {
@@ -74,6 +75,7 @@ func (d *Daemon) sourcePublicationServicesLocked() sourcePublicationServices {
 		providerReviewerAssignmentReconciler: d.providerReviewerAssignmentReconciler,
 		providerReviewObserver:               d.providerReviewObserver,
 		providerReviewFeedbackContentReader:  d.providerReviewFeedbackContentReader,
+		providerPullRequestRunner:            d.providerPullRequestRunner,
 	}
 }
 
@@ -114,6 +116,7 @@ func (d *Daemon) applyHotConfiguration(next config.Config, digest string) error 
 		services = sourcePublicationServices{
 			publisher: registry, reviewerIdentityVerifier: registry, providerReviewerAssigner: registry,
 			providerReviewerAssignmentReconciler: registry, providerReviewObserver: registry, providerReviewFeedbackContentReader: registry,
+			providerPullRequestRunner: registry,
 		}
 	}
 	d.hotMu.Lock()
@@ -131,6 +134,7 @@ func (d *Daemon) applyHotConfiguration(next config.Config, digest string) error 
 		d.providerReviewerAssignmentReconciler = services.providerReviewerAssignmentReconciler
 		d.providerReviewObserver = services.providerReviewObserver
 		d.providerReviewFeedbackContentReader = services.providerReviewFeedbackContentReader
+		d.providerPullRequestRunner = services.providerPullRequestRunner
 	}
 	return nil
 }

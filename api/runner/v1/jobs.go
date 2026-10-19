@@ -124,6 +124,7 @@ type CommandPayload struct {
 	ProviderReviewerAssignmentReconciliation *ProviderReviewerAssignmentReconciliationOperation `json:"provider_reviewer_assignment_reconciliation,omitempty"`
 	ProviderReviewObservation                *ProviderReviewObservationOperation                `json:"provider_review_observation,omitempty"`
 	ProviderReviewFeedbackContent            *ProviderReviewFeedbackContentOperation            `json:"provider_review_feedback_content,omitempty"`
+	ProviderPullRequest                      *ProviderPullRequestAuthority                      `json:"provider_pull_request,omitempty"`
 	ReviewFeedbackContinuation               *ReviewFeedbackContinuationAuthority               `json:"review_feedback_continuation,omitempty"`
 	PreviewObservation                       *PreviewObservationOperation                       `json:"preview_observation,omitempty"`
 	PreviewLifecycle                         *PreviewLifecycleOperation                         `json:"preview_lifecycle,omitempty"`
@@ -169,6 +170,8 @@ const (
 	CmdProviderReviewerAssignmentReconciliation = "provider_reviewer_assignment_reconciliation"
 	CmdProviderReviewObservation                = "provider_review_observation"
 	CmdProviderReviewFeedbackContent            = "provider_review_feedback_content"
+	CmdProviderPullRequestObservation           = "provider_pull_request_observation"
+	CmdProviderPullRequestMerge                 = "provider_pull_request_merge"
 	CmdReviewFeedbackContinuation               = "review_feedback_continuation"
 	CmdPreviewObservation                       = "preview_observation"
 	CmdPreviewLifecycle                         = "preview_lifecycle"

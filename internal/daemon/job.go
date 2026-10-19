@@ -799,16 +799,16 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 			}
 		}
 		wtDir := filepath.Join(jr.workDir, "repositories", ref.RepositoryID)
-		branch := "job/" + job.JobID + "/" + job.AttemptID
+		branch, startSHA := workspaceBranch(job, jr.reviewFeedbackContinuation, ref)
 		var workspaceErr error
 		if job.Kind == v1.JobKindPlan || job.Kind == v1.JobKindBuild {
-			workspaceErr = rm.CreateDetachedWorkspaceWithCredential(ctx, repository.URL, ref.BaseSHA, wtDir, credential)
+			workspaceErr = rm.CreateDetachedWorkspaceWithCredential(ctx, repository.URL, startSHA, wtDir, credential)
 			if job.Kind == v1.JobKindPlan {
 				branch = ""
 			} else if workspaceErr == nil {
 				workspaceErr = validation.GitRef("branch", branch)
 				if workspaceErr == nil {
-					_, workspaceErr = rm.Git(ctx, wtDir, "checkout", "-b", branch, ref.BaseSHA)
+					_, workspaceErr = rm.Git(ctx, wtDir, "checkout", "-b", branch, startSHA)
 				}
 				if workspaceErr != nil {
 					_ = rm.RemoveWorkspace(wtDir)
@@ -945,7 +945,9 @@ func (jr *jobRunner) buildPrompt() string {
 		if jr.job.ReviewComment != "" {
 			fmt.Fprintf(&b, "\n\nA reviewer left this comment on your previous work; address it:\n%s\n", jr.job.ReviewComment)
 		}
-		if jr.reviewFeedbackContinuation != nil {
+		if jr.reviewFeedbackContinuation != nil && jr.reviewFeedbackContinuation.IsHumanChangeRequest() {
+			b.WriteString(humanChangeRequestPrompt(*jr.reviewFeedbackContinuation))
+		} else if jr.reviewFeedbackContinuation != nil {
 			b.WriteString(reviewFeedbackContinuationPrompt(*jr.reviewFeedbackContinuation))
 		}
 	}

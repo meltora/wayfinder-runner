@@ -40,6 +40,7 @@ type Detector struct {
 	ProviderReviewerAssignmentReconciliationInstallations []v1.ProviderReviewerAssignmentReconciliationInstallationCapability
 	ProviderReviewObservationInstallations                []v1.ProviderReviewObservationInstallationCapability
 	ProviderReviewFeedbackContentInstallations            []v1.ProviderReviewFeedbackContentInstallationCapability
+	ProviderPullRequestInstallations                      []v1.ProviderPullRequestInstallationCapability
 	WorkIntakeProposalAdapter                             string
 	WorkIntakeProposalModel                               string
 	WorkIntakeProposalPromptTemplateDigest                string
@@ -116,6 +117,12 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		providerReviewFeedbackContentProviders = append(providerReviewFeedbackContentProviders, installation.Provider)
 	}
 	providerReviewFeedbackContentProviders = uniqueSorted(providerReviewFeedbackContentProviders)
+	providerPullRequestInstallations := cloneProviderPullRequestInstallations(d.ProviderPullRequestInstallations)
+	providerPullRequestProviders := make([]string, 0, len(providerPullRequestInstallations))
+	for _, installation := range providerPullRequestInstallations {
+		providerPullRequestProviders = append(providerPullRequestProviders, installation.Provider)
+	}
+	providerPullRequestProviders = uniqueSorted(providerPullRequestProviders)
 	trustChainVersion := ""
 	var trustRootKeyIDs []string
 	if d.agentPackTrustChain {
@@ -137,6 +144,7 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		AgentPackDeliveryAuthorityVersion:     v1.AgentPackDeliveryAuthorityVersion,
 		AgentPackRevocationEvictionVersion:    v1.AgentPackRevocationEvictionVersion,
 		AgentRunTransportVersion:              v1.AgentRunTransportVersion,
+		HumanChangeRequestTransportVersion:    v1.HumanChangeRequestTransportVersion,
 		TrustedAgentPackKeyIDs:                append([]string{}, d.trustedAgentPackKeyIDs...),
 		SourcePublicationProviders:            sourcePublicationProviders,
 		PreviewObservationProfiles:            previewObservationProfiles,
@@ -151,6 +159,8 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		ProviderReviewObservationInstallations:                providerReviewObservationInstallations,
 		ProviderReviewFeedbackContentProviders:                providerReviewFeedbackContentProviders,
 		ProviderReviewFeedbackContentInstallations:            providerReviewFeedbackContentInstallations,
+		ProviderPullRequestProviders:                          providerPullRequestProviders,
+		ProviderPullRequestInstallations:                      providerPullRequestInstallations,
 	}
 	if d.WorkIntakeProposalHardened && d.WorkIntakeProposalRestrictedEgress && d.hardenedDockerReady(ctx) && d.providerBinary(d.WorkIntakeProposalAdapter) != "" && d.WorkIntakeProposalModel != "" &&
 		validCapabilityDigest(d.WorkIntakeProposalPromptTemplateDigest) &&
@@ -195,6 +205,9 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	}
 	if len(providerReviewFeedbackContentInstallations) != 0 {
 		m.ProviderReviewFeedbackContentTransportVersion = v1.ProviderReviewFeedbackContentTransportVersion
+	}
+	if len(providerPullRequestInstallations) != 0 {
+		m.ProviderPullRequestTransportVersion = v1.ProviderPullRequestTransportVersion
 	}
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(".", &fs); err == nil {
@@ -349,6 +362,11 @@ func cloneProviderReviewObservationInstallations(values []v1.ProviderReviewObser
 }
 func cloneProviderReviewFeedbackContentInstallations(values []v1.ProviderReviewFeedbackContentInstallationCapability) []v1.ProviderReviewFeedbackContentInstallationCapability {
 	result := append([]v1.ProviderReviewFeedbackContentInstallationCapability(nil), values...)
+	sort.Slice(result, func(i, j int) bool { return result[i].InstallationID < result[j].InstallationID })
+	return result
+}
+func cloneProviderPullRequestInstallations(values []v1.ProviderPullRequestInstallationCapability) []v1.ProviderPullRequestInstallationCapability {
+	result := append([]v1.ProviderPullRequestInstallationCapability(nil), values...)
 	sort.Slice(result, func(i, j int) bool { return result[i].InstallationID < result[j].InstallationID })
 	return result
 }

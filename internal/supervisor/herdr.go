@@ -365,7 +365,7 @@ func writeHerdrLaunchScript(spec Spec, exitFile, outputPath string) (string, err
 	}
 	fmt.Fprintf(&script, "\n) > %s 2>&1\n", shellQuote(outputPath))
 	script.WriteString("status=$?\n")
-	fmt.Fprintf(&script, "printf '%%s\\n' \"$status\" > %s\n", shellQuote(exitFile))
+	fmt.Fprintf(&script, "(umask 077 && printf '%%s\\n' \"$status\" > %s)\n", shellQuote(exitFile))
 	script.WriteString("exit \"$status\"\n")
 
 	if _, err := file.WriteString(script.String()); err != nil {

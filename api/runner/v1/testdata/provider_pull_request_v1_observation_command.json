@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "type": "command",
+  "id": "provider-pull-request-command-12345678-1234-4234-8234-123456789abc",
+  "sent_at": "2026-10-12T12:00:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "command": "provider_pull_request_observation",
+    "provider_pull_request": {
+      "authority_version": "provider-pull-request-v1",
+      "operation_id": "12345678-1234-4234-8234-123456789abc",
+      "operation": "observe",
+      "organization_id": "organization-1",
+      "project_id": "project-1",
+      "workflow_run_id": "workflow-1",
+      "repository_id": "repository-1",
+      "provider": "github",
+      "installation_id": "installation-1",
+      "provider_instance_key": "github.com",
+      "provider_repository_id": "1385038985",
+      "pull_request_number": "2",
+      "expected_head_sha": "e31aeb2649bce0a55feed5433206cfb68f4fa94c",
+      "merge_method": null,
+      "lease_id": "provider-pull-request-lease-12345678-1234-4234-8234-123456789abc",
+      "fencing_token": 1,
+      "lease_expires_at": "2026-10-12T12:05:00Z",
+      "command_digest": "202f6189e0e010269ba3169ed893d9440d9c94ab22932668966f36bc211203e0"
+    }
+  }
+}

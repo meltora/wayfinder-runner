@@ -79,7 +79,11 @@ func (u *artifactUploader) Upload(ctx context.Context, pending pendingArtifactUp
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("artifact upload rejected: status %d: %s", resp.StatusCode, body)
+		rejection := artifactUploadStatusError{status: resp.StatusCode, body: string(body)}
+		if definitiveArtifactUploadRejection(resp.StatusCode) {
+			return permanentUpload(rejection)
+		}
+		return rejection
 	}
 	return verifyArtifactUploadReceipt(resp.Body, pending)
 }
@@ -102,6 +106,36 @@ func setArtifactUploadHeaders(req *http.Request, pending pendingArtifactUpload) 
 		req.Header.Set("X-Step-Sequence", strconv.FormatUint(pending.AgentRunAuthority.StepSequence, 10))
 		req.Header.Set("X-Agent-Run-Schema-Version", strconv.Itoa(pending.AgentRunAuthority.SchemaVersion))
 	}
+}
+
+type artifactUploadStatusError struct {
+	status int
+	body   string
+}
+
+func (e artifactUploadStatusError) Error() string {
+	return fmt.Sprintf("artifact upload rejected: status %d: %s", e.status, e.body)
+}
+
+func definitiveArtifactUploadRejection(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict,
+		http.StatusGone, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
+}
+
+func continuesArtifactUploadBatch(err error) bool {
+	var rejection artifactUploadStatusError
+	if !errors.As(err, &rejection) {
+		return false
+	}
+	switch rejection.status {
+	case http.StatusUnauthorized, http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		return false
+	}
+	return true
 }
 
 type pendingArtifactUpload struct {
@@ -248,45 +282,57 @@ func (d *Daemon) drainArtifactUploads(ctx context.Context) {
 }
 
 func (d *Daemon) processArtifactUploadBatch(ctx context.Context) error {
+	boundary, err := d.journal.LatestSequence(ctx)
+	if err != nil {
+		return err
+	}
+	var cursor journal.Sequence
+	var deferred error
 	for {
-		records, err := d.journal.Unacked(ctx, journal.KindUpload, 100)
+		records, err := d.journal.UnackedAfter(ctx, journal.KindUpload, cursor, 100)
 		if err != nil {
 			return err
 		}
 		if len(records) == 0 {
-			return nil
+			return deferred
 		}
 		for _, record := range records {
-			var pending pendingArtifactUpload
-			decoder := json.NewDecoder(bytes.NewReader(record.Payload))
-			decoder.DisallowUnknownFields()
-			if err := decoder.Decode(&pending); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
-				if rejectErr := d.rejectArtifactUpload(ctx, record.ID, "invalid durable upload record"); rejectErr != nil {
-					return rejectErr
-				}
-				continue
+			if record.Sequence > boundary {
+				return deferred
 			}
-			if pending.RecordID != record.ID {
-				if err := d.rejectArtifactUpload(ctx, record.ID, "durable upload identity mismatch"); err != nil {
+			cursor = record.Sequence
+			if err := d.processQueuedArtifactUpload(ctx, record); err != nil {
+				if !continuesArtifactUploadBatch(err) || ctx.Err() != nil {
 					return err
 				}
-				continue
-			}
-			uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			err := d.processArtifactUpload(uploadCtx, pending)
-			cancel()
-			if err != nil {
-				var permanent permanentUploadError
-				if errors.As(err, &permanent) {
-					if rejectErr := d.rejectArtifactUpload(ctx, record.ID, truncate(err.Error(), 500)); rejectErr != nil {
-						return rejectErr
-					}
-					continue
+				if deferred == nil {
+					deferred = err
 				}
-				return err
 			}
 		}
 	}
+}
+
+func (d *Daemon) processQueuedArtifactUpload(ctx context.Context, record journal.Record) error {
+	var pending pendingArtifactUpload
+	decoder := json.NewDecoder(bytes.NewReader(record.Payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&pending); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return d.rejectArtifactUpload(ctx, record.ID, "invalid durable upload record")
+	}
+	if pending.RecordID != record.ID {
+		return d.rejectArtifactUpload(ctx, record.ID, "durable upload identity mismatch")
+	}
+	uploadCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	err := d.processArtifactUpload(uploadCtx, pending)
+	cancel()
+	var permanent permanentUploadError
+	if err == nil || !errors.As(err, &permanent) {
+		return err
+	}
+	d.logger.Warn("artifact upload rejected permanently", "record_id", record.ID,
+		"job", pending.Artifact.JobID, "attempt", pending.Artifact.AttemptID, "err", err)
+	return d.rejectArtifactUpload(ctx, record.ID, truncate(err.Error(), 500))
 }
 
 func (d *Daemon) rejectArtifactUpload(ctx context.Context, recordID, reason string) error {

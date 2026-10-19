@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/example/app-runner/internal/journal"
 )
 
 func TestMarkReviewReadyRecordsOneLocalIntentWithoutPublishingEvidence(t *testing.T) {
@@ -99,4 +102,61 @@ func mustJSON(t *testing.T, value any) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+func TestFinalReviewReadySerializesMissingLimitationsAsEmptyArray(t *testing.T) {
+	jr, captured, want := previewFixture(t)
+	jr.job.PushBranch = true
+	if _, err := call(t, jr, "platform_mark_review_ready", `{
+		"summary":"Ready for review",
+		"idempotency_key":"review-ready-no-limitations"
+	}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := jr.publishFinalReviewReady(context.Background(), want); err != nil {
+		t.Fatal(err)
+	}
+	events := captured.byKind("review_ready")
+	if len(events) != 1 {
+		t.Fatalf("review_ready events = %v", events)
+	}
+	raw, err := json.Marshal(events[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"known_limitations":[]`) {
+		t.Fatalf("review_ready payload = %s", raw)
+	}
+	records, err := jr.d.journal.Unacked(context.Background(), journal.KindEvent, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, record := range records {
+		if strings.Contains(string(record.Payload), `"kind":"review_ready"`) {
+			found = true
+			if !strings.Contains(string(record.Payload), `"known_limitations":[]`) {
+				t.Fatalf("journaled review_ready = %s", record.Payload)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("review_ready was not journaled")
+	}
+}
+
+func TestReviewReadyIntentSnapshotKeepsEmptyLimitationsNonNil(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	jr.job.PushBranch = true
+	if _, err := call(t, jr, "platform_mark_review_ready", `{
+		"summary":"Ready for review",
+		"known_limitations":[],
+		"idempotency_key":"review-ready-empty-limitations"
+	}`); err != nil {
+		t.Fatal(err)
+	}
+	intent, ok := jr.reviewReadyIntentSnapshot()
+	if !ok || intent.limitations == nil || len(intent.limitations) != 0 {
+		t.Fatalf("intent limitations = %#v, ok = %v", intent.limitations, ok)
+	}
 }

@@ -16,6 +16,7 @@
     "$CONFIG/claude-settings.json",
     "--allowedTools",
     "mcp__platform__*",
+    "Bash",
     "--add-dir",
     "$PACK",
     "--permission-mode",
@@ -32,7 +33,7 @@
     {
       "name": "claude-mcp.json",
       "mode": "-rw-------",
-      "content": "{\n  \"mcpServers\": {\n    \"platform\": {\n      \"args\": [\n        \"mcp-serve\",\n        \"--socket\",\n        \"/run/runner/job.sock\",\n        \"--token-file\",\n        \"/run/runner/job.token\"\n      ],\n      \"command\": \"/usr/local/bin/our-runner\"\n    }\n  }\n}"
+      "content": "{\n  \"mcpServers\": {\n    \"platform\": {\n      \"args\": [\n        \"mcp-serve\",\n        \"--socket\",\n        \"/run/runner/job.sock\",\n        \"--token-file\",\n        \"/run/runner/job.token\"\n      ],\n      \"command\": \"/usr/local/bin/our-runner\",\n      \"timeout\": 27180000\n    }\n  }\n}"
     },
     {
       "name": "claude-settings.json",

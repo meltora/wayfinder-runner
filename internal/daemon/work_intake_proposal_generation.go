@@ -419,7 +419,7 @@ func normalizeWorkIntakeProposal(value v1.WorkIntakeProposal) v1.WorkIntakePropo
 	for index, criterion := range draft.AcceptanceCriteria {
 		draft.AcceptanceCriteria[index] = normalize(criterion)
 	}
-	draft.NonGoals = append([]string(nil), draft.NonGoals...)
+	draft.NonGoals = append([]string{}, draft.NonGoals...)
 	for index, nonGoal := range draft.NonGoals {
 		draft.NonGoals[index] = normalize(nonGoal)
 	}

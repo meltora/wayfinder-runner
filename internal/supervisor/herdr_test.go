@@ -5,11 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -264,6 +267,30 @@ func TestHerdrWaitExitCode(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Wait did not return")
+	}
+}
+
+func TestHerdrLaunchScriptWritesPrivateExitFileUnderPermissiveUmask(t *testing.T) {
+	runtimeDir := t.TempDir()
+	exitFile := filepath.Join(runtimeDir, ".herdr-exit-test")
+	outputPath := filepath.Join(runtimeDir, "output.log")
+	launch, err := writeHerdrLaunchScript(Spec{Command: "/bin/sh", Args: []string{"-c", "exit 3"}, Dir: t.TempDir(), RuntimeDir: runtimeDir}, exitFile, outputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := syscall.Umask(0o002)
+	runErr := exec.Command(launch).Run()
+	syscall.Umask(previous)
+	var exitErr *exec.ExitError
+	if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != 3 {
+		t.Fatalf("launch script result = %v, want exit 3", runErr)
+	}
+	data, err := readExitCode(exitFile)
+	if err != nil {
+		t.Fatalf("readExitCode: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "3" {
+		t.Fatalf("exit code = %q, want 3", data)
 	}
 }
 

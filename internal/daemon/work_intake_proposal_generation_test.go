@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -488,5 +490,22 @@ func TestCleanupStaleWorkIntakeProposalExecutionsRemovesNestedSymlinkWithoutFoll
 	}
 	if raw, err := os.ReadFile(marker); err != nil || string(raw) != "keep" {
 		t.Fatalf("nested symlink target changed: %q err=%v", raw, err)
+	}
+}
+
+func TestWorkIntakeDraftSerializesEmptyOrMissingNonGoalsAsEmptyArray(t *testing.T) {
+	base := `{"schema_version":1,"kind":"draft","draft":{"problem":"Planning is inconsistent","affected_user":"Delivery teams","desired_outcome":"A reviewable draft","title":"Make planning consistent","description":"Create a consistent proposal flow.","acceptance_criteria":["A proposal can be reviewed"],%s"risk":"medium","work_type":"feature"}}`
+	for _, nonGoals := range []string{`"non_goals":[],`, ``} {
+		proposal, ok := decodeWorkIntakeProposalCandidate([]byte(fmt.Sprintf(base, nonGoals)))
+		if !ok || proposal == nil {
+			t.Fatalf("proposal with %q was rejected", nonGoals)
+		}
+		raw, err := json.Marshal(proposal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"non_goals":[]`) {
+			t.Fatalf("proposal with %q serialized as %s", nonGoals, raw)
+		}
 	}
 }

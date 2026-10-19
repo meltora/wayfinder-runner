@@ -15,6 +15,11 @@ const (
 	ReviewFeedbackContinuationContentSource    = "provider_review_event"
 	ReviewFeedbackContinuationUntrustedText    = "untrusted_provider_text"
 	ReviewFeedbackContinuationNonAuthoritative = "non_authoritative"
+
+	HumanChangeRequestTransportVersion = 3
+	HumanChangeRequestContentSource    = "human_change_request"
+	HumanChangeRequestUntrustedText    = "untrusted_member_text"
+	HumanChangeRequestAuthorized       = "authorized_change_request"
 )
 
 type ReviewFeedbackContinuationFeedback struct {
@@ -48,6 +53,8 @@ type ReviewFeedbackContinuationAuthority struct {
 	ProviderReviewObservationID                        string                                   `json:"provider_review_observation_id"`
 	ProviderReviewObservationResultPayloadChecksum     string                                   `json:"provider_review_observation_result_payload_checksum"`
 	ContentSource                                      string                                   `json:"content_source"`
+	HumanChangeRequestID                               string                                   `json:"human_change_request_id,omitempty"`
+	HeadBranch                                         string                                   `json:"head_branch,omitempty"`
 	ProviderReviewEventID                              string                                   `json:"provider_review_event_id"`
 	ProviderReviewEventRevision                        uint64                                   `json:"provider_review_event_revision"`
 	ReviewEventKind                                    ProviderReviewObservationReviewEventKind `json:"review_event_kind"`
@@ -85,6 +92,10 @@ type ReviewFeedbackContinuationAuthority struct {
 	LeaseExpiresAt                                     time.Time                                `json:"lease_expires_at"`
 	DeadlineAt                                         time.Time                                `json:"deadline_at"`
 	Feedback                                           ReviewFeedbackContinuationFeedback       `json:"feedback"`
+}
+
+func (a ReviewFeedbackContinuationAuthority) IsHumanChangeRequest() bool {
+	return a.ContentSource == HumanChangeRequestContentSource
 }
 
 type reviewFeedbackContinuationScopeRepository struct {

@@ -36,6 +36,7 @@ func validateJobControlCommandBoundary(command v1.CommandPayload, now time.Time)
 	if command.Job != nil || command.SourcePublication != nil || command.ProviderReviewerAssignment != nil ||
 		command.ProviderReviewerAssignmentReconciliation != nil || command.ProviderReviewObservation != nil ||
 		command.ProviderReviewFeedbackContent != nil || command.ReviewFeedbackContinuation != nil ||
+		command.ProviderPullRequest != nil ||
 		command.PreviewObservation != nil || command.PreviewLifecycle != nil ||
 		command.ReviewerIdentityVerification != nil || !command.LeaseExpiresAt.IsZero() ||
 		command.QuestionID != "" || command.Decision != "" || command.DecidedBy != "" ||

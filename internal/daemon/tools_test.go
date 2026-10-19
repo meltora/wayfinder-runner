@@ -576,7 +576,7 @@ func TestHumanInputRejectsInvalidDecisionContractFields(t *testing.T) {
 		json.RawMessage(`{"question":"Which DB?","options":[""],"timeout_seconds":1,"idempotency_key":"empty-option"}`),
 		json.RawMessage(`{"question":"Which DB?","timeout_seconds":0,"idempotency_key":"zero-timeout"}`),
 		json.RawMessage(`{"question":"Which DB?","timeout_seconds":1.5,"idempotency_key":"fractional-timeout"}`),
-		json.RawMessage(`{"question":"Which DB?","timeout_seconds":14401,"idempotency_key":"long-timeout"}`),
+		json.RawMessage(`{"question":"Which DB?","timeout_seconds":27001,"idempotency_key":"long-timeout"}`),
 	}
 	for _, raw := range cases {
 		if _, err := jr.handleToolCall(context.Background(), "platform_request_human_input", raw); err == nil {
@@ -673,6 +673,8 @@ func TestToolSpecificValidation(t *testing.T) {
 		{"platform_report_failure", `{"failure_type":"x","message":"","idempotency_key":"a"}`},
 		{"platform_publish_plan_revision", `{"base_revision_id":"revision-1","change_summary":"x","plan":{},"idempotency_key":"b"}`},
 		{"platform_publish_test_results", `{"suite":"unit","result":"passed","duration_ms":-1,"idempotency_key":"c"}`},
+		{"platform_publish_test_results", `{"suite":"go test ./... (unit)","result":"passed","idempotency_key":"c2"}`},
+		{"platform_publish_test_results", `{"suite":"unit","result":"passed","commit_sha":"bec4f00 + uncommitted working tree changes","idempotency_key":"c3"}`},
 		{"platform_publish_preview", `{"url":"http://preview.example.test","health":"healthy","idempotency_key":"d"}`},
 		{"platform_publish_preview", `{"url":"https://preview.example.test","health":"unknown","idempotency_key":"e"}`},
 		{"platform_mark_review_ready", `{"summary":"","idempotency_key":"f"}`},
