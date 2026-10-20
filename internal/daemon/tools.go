@@ -270,14 +270,10 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		if err := requireToolText(raw, "message", 64<<10); err != nil {
 			return nil, err
 		}
-		if err := jr.d.sendEvent(ctx, map[string]any{
-			"kind":          "job_failure",
-			"job_id":        jr.job.JobID,
-			"attempt_id":    jr.job.AttemptID,
-			"fencing_token": jr.job.FencingToken,
-			"failure_type":  str(raw, "failure_type"),
-			"message":       str(raw, "message"),
-			"retryable":     raw["retryable"],
+		if err := jr.sendJobEvent(ctx, "job_failure", map[string]any{
+			"failure_type": str(raw, "failure_type"),
+			"message":      str(raw, "message"),
+			"retryable":    raw["retryable"],
 		}); err != nil {
 			return nil, err
 		}

@@ -610,6 +610,12 @@ func TestRemainingAuthoritativeToolEvents(t *testing.T) {
 			t.Fatalf("missing %s event: %v", kind, cap.events)
 		}
 	}
+	failure := cap.byKind("job_failure")[0]
+	for _, key := range []string{"lease_id", "manifest_id", "manifest_digest", "manifest_kind", "observed_at"} {
+		if _, ok := failure[key]; !ok {
+			t.Fatalf("job_failure is not manifest bound, missing %s: %v", key, failure)
+		}
+	}
 }
 
 func TestToolBoundaryRejectsMalformedAndResourceExhaustionInputs(t *testing.T) {
