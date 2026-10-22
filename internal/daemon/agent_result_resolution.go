@@ -61,6 +61,19 @@ func (jr *jobRunner) resolveAgentResult(ctx context.Context, repository checkedO
 	}
 	trusted.mu.Lock()
 	defer trusted.mu.Unlock()
+	bounded, cancel := trusted.resolutionContext(ctx)
+	defer cancel()
+	result, err := jr.resolveWithinBound(bounded, trusted, repository, start)
+	if err != nil {
+		return agentResult{}, err
+	}
+	if result.candidate.source == agentResultWorktree {
+		jr.auditAgentResult(ctx, repository, result, use)
+	}
+	return result, nil
+}
+
+func (jr *jobRunner) resolveWithinBound(ctx context.Context, trusted *trustedResultRepository, repository checkedOutRepository, start string) (agentResult, error) {
 	workspace, err := os.OpenRoot(jr.workDir)
 	if err != nil {
 		return agentResult{}, err
@@ -70,19 +83,21 @@ func (jr *jobRunner) resolveAgentResult(ctx context.Context, repository checkedO
 	if err != nil {
 		return agentResult{}, err
 	}
-	excludeRel := path.Join(candidates[0].relPath, ".git", "info", "exclude")
+	commonGitRel := path.Join(candidates[0].relPath, ".git")
+	excludeRel := path.Join(commonGitRel, "info", "exclude")
 	for index := range candidates {
 		candidate := &candidates[index]
+		label := describeCandidate(*candidate)
 		tree, err := trusted.snapshot(ctx, workspace, agentSnapshot{
 			candidate: *candidate, skip: nestedCandidates(candidates, candidate.relPath),
-			excludeRel: excludeRel, start: start, repositoryID: repository.ID,
+			excludeRel: excludeRel, commonGitRel: commonGitRel, start: start, repositoryID: repository.ID,
 		})
 		if err != nil {
-			return agentResult{}, err
+			return agentResult{}, trusted.stepRefusal(ctx, repository.ID, label, err)
 		}
 		changes, err := trusted.changeSet(ctx, start, tree)
 		if err != nil {
-			return agentResult{}, err
+			return agentResult{}, trusted.stepRefusal(ctx, repository.ID, label, err)
 		}
 		candidate.tree, candidate.changes = tree, changes
 	}
@@ -94,11 +109,8 @@ func (jr *jobRunner) resolveAgentResult(ctx context.Context, repository checkedO
 	if len(winner.changes) > 0 {
 		message := fmt.Sprintf("agent: implement %s %s", jr.job.Ticket.Key, jr.job.Ticket.Summary)
 		if result.commit, err = trusted.commitTree(ctx, winner.tree, start, message); err != nil {
-			return agentResult{}, err
+			return agentResult{}, trusted.stepRefusal(ctx, repository.ID, describeCandidate(winner), err)
 		}
-	}
-	if winner.source == agentResultWorktree {
-		jr.auditAgentResult(ctx, repository, result, use)
 	}
 	return result, nil
 }

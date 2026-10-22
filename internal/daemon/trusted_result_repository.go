@@ -36,6 +36,8 @@ var trustedRepositoryConfig = [][2]string{
 	{"core.autocrlf", "false"},
 	{"core.symlinks", "true"},
 	{"core.ignoreCase", "false"},
+	{"core.protectHFS", "true"},
+	{"core.protectNTFS", "true"},
 	{"gc.auto", "0"},
 	{"maintenance.auto", "false"},
 	{"commit.gpgSign", "false"},
@@ -44,16 +46,19 @@ var trustedRepositoryConfig = [][2]string{
 }
 
 type trustedResultRepository struct {
-	root         string
-	gitDir       string
-	filesDir     string
-	sparseGitDir string
-	sparseTree   string
-	date         string
-	entryLimit   int
-	byteLimit    int64
-	gitlinks     map[string]bool
-	mu           sync.Mutex
+	root           string
+	gitDir         string
+	filesDir       string
+	sparseGitDir   string
+	sparseTree     string
+	date           string
+	entryLimit     int
+	byteLimit      int64
+	depthLimit     int
+	pathLimit      int
+	resolveTimeout time.Duration
+	gitlinks       map[string]bool
+	mu             sync.Mutex
 }
 
 type trustedGitOptions struct {
@@ -87,14 +92,17 @@ func configureTrustedResultRepository(ctx context.Context, dest, startSHA string
 		return nil, err
 	}
 	trusted := &trustedResultRepository{
-		root:         dest,
-		gitDir:       filepath.Join(dest, "repo.git"),
-		filesDir:     filepath.Join(dest, "files"),
-		sparseGitDir: filepath.Join(dest, "sparse.git"),
-		sparseTree:   filepath.Join(dest, "sparse-tree"),
-		date:         "@" + strconv.FormatInt(now.Unix(), 10) + " +0000",
-		entryLimit:   scanner.MaxGitTreeEntries,
-		byteLimit:    maxTrustedResultBytes,
+		root:           dest,
+		gitDir:         filepath.Join(dest, "repo.git"),
+		filesDir:       filepath.Join(dest, "files"),
+		sparseGitDir:   filepath.Join(dest, "sparse.git"),
+		sparseTree:     filepath.Join(dest, "sparse-tree"),
+		date:           "@" + strconv.FormatInt(now.Unix(), 10) + " +0000",
+		entryLimit:     scanner.MaxGitTreeEntries,
+		byteLimit:      maxTrustedResultBytes,
+		depthLimit:     maxAgentResultDepth,
+		pathLimit:      maxAgentResultPathBytes,
+		resolveTimeout: agentResultResolveTimeout,
 	}
 	for _, setting := range trustedRepositoryConfig {
 		if _, err := trusted.gitAt(ctx, trustedGitOptions{gitDir: trusted.gitDir}, "config", setting[0], setting[1]); err != nil {
@@ -214,16 +222,28 @@ func trustedGitEnvironment(home string) []string {
 	}
 }
 
+type trustedGitFailure struct {
+	subcommand string
+	stderr     string
+	err        error
+}
+
+func (f *trustedGitFailure) Error() string {
+	var exitErr *exec.ExitError
+	if errors.As(f.err, &exitErr) && f.stderr != "" {
+		return fmt.Sprintf("trusted Git %s failed: %s", f.subcommand, f.stderr)
+	}
+	return fmt.Sprintf("trusted Git %s failed: %v", f.subcommand, f.err)
+}
+
+func (f *trustedGitFailure) Unwrap() error { return f.err }
+
 func trustedGitError(args []string, err error, stderr string) error {
 	message := strings.TrimSpace(stderr)
 	if len(message) > 512 {
 		message = message[:512]
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && message != "" {
-		return fmt.Errorf("trusted Git %s failed: %s", gitSubcommand(args), message)
-	}
-	return fmt.Errorf("trusted Git %s failed: %w", gitSubcommand(args), err)
+	return &trustedGitFailure{subcommand: gitSubcommand(args), stderr: message, err: err}
 }
 
 func gitSubcommand(args []string) string {

@@ -8,21 +8,31 @@ import (
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
-const maxAgentExcludeBytes = 1 << 20
+const (
+	maxAgentExcludeBytes      = 1 << 20
+	maxAgentResultDepth       = 256
+	maxAgentResultPathBytes   = maxWorktreePointerBytes - 1
+	agentResultResolveTimeout = 10 * time.Minute
+	maxQuotedEntryBytes       = 256
+)
 
 type agentSnapshot struct {
 	candidate    agentCandidate
 	skip         map[string]bool
 	excludeRel   string
+	commonGitRel string
 	start        string
 	repositoryID string
 }
 
 type candidateCopy struct {
+	ctx          context.Context
 	trusted      *trustedResultRepository
 	target       *os.Root
 	oracle       *ignoreOracle
@@ -57,9 +67,11 @@ func (t *trustedResultRepository) snapshot(ctx context.Context, workspace *os.Ro
 	if _, err := t.git(ctx, "add", "-A", "--", ".", runnerArtifactsPathspec); err != nil {
 		return "", err
 	}
-	sparseRel := path.Join(input.candidate.adminRel, "info", "sparse-checkout")
-	if err := t.restoreSparseDeletions(ctx, workspace, sparseRel, input.start, input.repositoryID, label); err != nil {
-		return "", err
+	if sparseCheckoutEnabled(workspace, input.commonGitRel, input.candidate.adminRel) {
+		sparseRel := path.Join(input.candidate.adminRel, "info", "sparse-checkout")
+		if err := t.restoreSparseDeletions(ctx, workspace, sparseRel, input.start, input.repositoryID, label); err != nil {
+			return "", err
+		}
 	}
 	tree, err := t.git(ctx, "write-tree")
 	if err != nil {
@@ -102,7 +114,7 @@ func (t *trustedResultRepository) copyCandidate(ctx context.Context, workspace *
 		return err
 	}
 	copier := &candidateCopy{
-		trusted: t, target: target, oracle: oracle, skip: input.skip,
+		ctx: ctx, trusted: t, target: target, oracle: oracle, skip: input.skip,
 		repositoryID: input.repositoryID, label: label,
 	}
 	copyErr := copier.directory(source, ".")
@@ -134,6 +146,9 @@ func (c *candidateCopy) directory(dir *os.Root, rel string) error {
 		}
 		if strings.EqualFold(name, ".git") {
 			return c.refuse("contains a nested Git repository at %s", displayEntry(joinRel(rel, name)))
+		}
+		if gitLookalikeName(name, ".git", "git~1") {
+			return c.refuse("contains a name Git treats as .git at %s; rename or remove it", quotedEntry(joinRel(rel, name)))
 		}
 		if name == ".gitignore" || name == ".gitattributes" {
 			ordered = append(ordered, name)
@@ -184,6 +199,12 @@ func (c *candidateCopy) entry(dir *os.Root, rel, name string) error {
 	if c.skip[child] {
 		return nil
 	}
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	if len(child) > c.trusted.pathLimit {
+		return c.refuse("has a path longer than %d bytes under %s", c.trusted.pathLimit, displayEntry(topComponent(child)))
+	}
 	info, err := dir.Lstat(name)
 	if err != nil {
 		return c.refuse("changed while it was read at %s", displayEntry(child))
@@ -205,6 +226,9 @@ func (c *candidateCopy) entry(dir *os.Root, rel, name string) error {
 }
 
 func (c *candidateCopy) subdirectory(parent *os.Root, child, name string, info fs.FileInfo) error {
+	if strings.Count(child, "/")+1 > c.trusted.depthLimit {
+		return c.refuse("is more than %d directories deep under %s", c.trusted.depthLimit, displayEntry(topComponent(child)))
+	}
 	if err := c.target.Mkdir(child, 0o755); err != nil {
 		return err
 	}
@@ -230,6 +254,9 @@ func (c *candidateCopy) subdirectory(parent *os.Root, child, name string, info f
 }
 
 func (c *candidateCopy) symlink(dir *os.Root, child, name string) error {
+	if gitmodulesLookalike(name) {
+		return c.refuse("has a .gitmodules symbolic link Git refuses to store at %s; replace it with a regular file", quotedEntry(child))
+	}
 	destination, err := dir.Readlink(name)
 	if err != nil {
 		return c.refuse("changed while it was read at %s", displayEntry(child))
@@ -306,4 +333,16 @@ func displayEntry(rel string) string {
 		return rel
 	}
 	return "an entry with an unprintable name"
+}
+
+func quotedEntry(rel string) string {
+	if len(rel) > maxQuotedEntryBytes {
+		rel = strings.ToValidUTF8(rel[:maxQuotedEntryBytes], "") + "..."
+	}
+	return strconv.QuoteToASCII(rel)
+}
+
+func topComponent(rel string) string {
+	top, _, _ := strings.Cut(rel, "/")
+	return top
 }
