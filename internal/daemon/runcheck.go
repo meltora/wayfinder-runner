@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
@@ -100,13 +99,17 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 	}
 	runCtx, stopLeaseWatch := jr.leaseMonitoredContext(ctx)
 	defer stopLeaseWatch()
-	outcome := jr.executeConfiguredCheck(runCtx, checkID, repository, check)
+	resultRepository, err := jr.checkRepositoryForResult(runCtx, repository)
+	if err != nil {
+		return nil, err
+	}
+	outcome := jr.executeConfiguredCheck(runCtx, checkID, resultRepository, check)
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
 		return nil, fmt.Errorf("lease validation after check execution: %w", err)
 	}
 	evidenceCtx, evidenceCancel := context.WithTimeout(jr.ctx, 30*time.Second)
 	defer evidenceCancel()
-	commitSHA, dirty, err := jr.repositoryEvidence(evidenceCtx, repository)
+	commitSHA, dirty, err := jr.checkEvidence(evidenceCtx, repository)
 	if err != nil {
 		return nil, err
 	}
@@ -182,18 +185,4 @@ func (jr *jobRunner) leaseMonitoredContext(ctx context.Context) (context.Context
 		}
 	}()
 	return runCtx, cancel
-}
-
-func (jr *jobRunner) repositoryEvidence(ctx context.Context, repository checkedOutRepository) (string, bool, error) {
-	head, _, err := jr.runWorkspaceCommand(ctx, "git-head-runcheck-"+repository.ID, repository.WorkDir,
-		"git", []string{"rev-parse", "--verify", "HEAD^{commit}"}, false, 1<<20)
-	if err != nil {
-		return "", false, fmt.Errorf("read repository HEAD: %w", err)
-	}
-	status, _, err := jr.runWorkspaceCommand(ctx, "git-status-runcheck-"+repository.ID, repository.WorkDir,
-		"git", []string{"status", "--porcelain"}, false, 1<<20)
-	if err != nil {
-		return "", false, fmt.Errorf("read repository worktree state: %w", err)
-	}
-	return strings.TrimSpace(head), strings.TrimSpace(status) != "", nil
 }

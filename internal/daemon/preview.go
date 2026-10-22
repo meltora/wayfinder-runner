@@ -143,17 +143,14 @@ func (jr *jobRunner) previewCommitSet(ctx context.Context) (map[string]string, e
 		if _, duplicate := commitSet[repository.ID]; duplicate {
 			return nil, fmt.Errorf("repository %q appears more than once", repository.ID)
 		}
-		commitSHA, dirty, err := jr.repositoryEvidence(ctx, repository)
+		result, err := jr.resolveAgentResult(ctx, repository, "preview evidence")
 		if err != nil {
 			return nil, fmt.Errorf("collect preview evidence for repository %q: %w", repository.ID, err)
 		}
-		if err := validation.GitCommitSHA("commit_sha", commitSHA); err != nil {
+		if err := validation.GitCommitSHA("commit_sha", result.commit); err != nil {
 			return nil, fmt.Errorf("repository %q: %w", repository.ID, err)
 		}
-		if dirty {
-			return nil, fmt.Errorf("repository %q worktree is dirty; commit changes before publishing a preview", repository.ID)
-		}
-		commitSet[repository.ID] = commitSHA
+		commitSet[repository.ID] = result.commit
 	}
 	return commitSet, nil
 }

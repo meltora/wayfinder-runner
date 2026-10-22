@@ -59,7 +59,7 @@ func TestLeftoverArtifactIsAbsentFromThePushedCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parent := buildWorkspaceGit(t, workDir, "rev-parse", sha+"^"); parent != authorizedSHA {
+	if parent := trustedGitForTest(t, jr.repositories[0].Trusted.gitDir, "rev-parse", sha+"^"); parent != authorizedSHA {
 		t.Fatalf("commit parent = %s", parent)
 	}
 	rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
@@ -94,18 +94,40 @@ func TestCommitWithOnlyLeftoverArtifactsCreatesNoCommit(t *testing.T) {
 	}
 }
 
-func TestCommitRefusesAnArtifactTheAgentCommittedItself(t *testing.T) {
-	jr, _, _ := pinnedBuildWorkspaceFixture(t)
+func TestAnArtifactTheAgentCommittedItselfIsExcludedFromTheResult(t *testing.T) {
+	jr, _, authorizedSHA := pinnedBuildWorkspaceFixture(t)
 	workDir, cleanup, err := jr.prepareWorkspace(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(cleanup)
 	writeFixtureFile(t, workDir, "shortstack-artifacts/coverage-summary.json", "{}", 0o644)
-	buildWorkspaceGit(t, workDir, "add", "-f", "shortstack-artifacts/coverage-summary.json")
+	writeFixtureFile(t, workDir, "implemented.txt", "approved change\n", 0o644)
+	buildWorkspaceGit(t, workDir, "add", "-f", "shortstack-artifacts/coverage-summary.json", "implemented.txt")
 	buildWorkspaceGit(t, workDir, "-c", "user.name=agent", "-c", "user.email=agent@example.test", "commit", "-m", "agent commit")
-	if _, err := jr.commitAgentChanges(context.Background(), jr.repositories[0]); err == nil || !strings.Contains(err.Error(), "shortstack-artifacts") {
-		t.Fatalf("committed artifact accepted: %v", err)
+	sha, err := jr.commitAgentChanges(context.Background(), jr.repositories[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := trustedGitForTest(t, jr.repositories[0].Trusted.gitDir, "ls-tree", "-r", "--name-only", sha)
+	if !strings.Contains(paths, "implemented.txt") || strings.Contains(paths, "shortstack-artifacts") {
+		t.Fatalf("result tree = %s", paths)
+	}
+	if parent := trustedGitForTest(t, jr.repositories[0].Trusted.gitDir, "rev-parse", sha+"^"); parent != authorizedSHA {
+		t.Fatalf("result parent = %s", parent)
+	}
+}
+
+func assertOnlyTheRunnerCommitReachedOrigin(t *testing.T, origin, branch, base string) {
+	t.Helper()
+	if !originHasBranch(t, origin, branch) {
+		t.Fatal("branch was not pushed")
+	}
+	if count := buildWorkspaceGit(t, origin, "rev-list", "--count", base+".."+branch); count != "1" {
+		t.Fatalf("origin received %s commits, want the single runner commit", count)
+	}
+	if history := buildWorkspaceGit(t, origin, "log", "--name-only", "--format=%an %s", base+".."+branch); strings.Contains(history, "shortstack-artifacts") || !strings.Contains(history, "our-runner") {
+		t.Fatalf("origin history = %s", history)
 	}
 }
 
@@ -134,7 +156,7 @@ func TestArtifactCommittedThenDeletedIsNeverPushed(t *testing.T) {
 	} {
 		for _, publishReviewReady := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/review-ready=%t", artifact, publishReviewReady), func(t *testing.T) {
-				jr, origin, _ := pinnedBuildWorkspaceFixture(t)
+				jr, origin, base := pinnedBuildWorkspaceFixture(t)
 				jr.job.PushBranch = true
 				workDir, cleanup, err := jr.prepareWorkspace(context.Background())
 				if err != nil {
@@ -145,19 +167,16 @@ func TestArtifactCommittedThenDeletedIsNeverPushed(t *testing.T) {
 				rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
 				rm.AllowLocal = true
 				state, _, err := jr.finalizeBuild(context.Background(), rm, publishReviewReady)
-				if err == nil || !strings.Contains(err.Error(), "shortstack-artifacts") {
-					t.Fatalf("finalize state=%s err=%v, want artifact refusal", state, err)
+				if err != nil || state != "succeeded" {
+					t.Fatalf("finalize state=%s err=%v", state, err)
 				}
-				if originHasBranch(t, origin, jr.repositories[0].Branch) {
-					t.Fatalf("branch with artifact history reached the origin:\n%s",
-						buildWorkspaceGit(t, origin, "log", "--name-only", "--format=%s", jr.repositories[0].Branch))
-				}
+				assertOnlyTheRunnerCommitReachedOrigin(t, origin, jr.repositories[0].Branch, base)
 			})
 		}
 	}
 }
 
-func TestPushBranchRefusesArtifactAnywhereInTheBranchHistory(t *testing.T) {
+func TestPushBranchRefusesAnAgentCommit(t *testing.T) {
 	for _, artifact := range []string{
 		"shortstack-artifacts/coverage-summary.json",
 		"deep/x/shortstack-artifacts/b/c.json",
@@ -174,11 +193,11 @@ func TestPushBranchRefusesArtifactAnywhereInTheBranchHistory(t *testing.T) {
 			rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
 			rm.AllowLocal = true
 			err = jr.pushBranch(context.Background(), jr.repositories[0], rm, sha)
-			if err == nil || !strings.Contains(err.Error(), "shortstack-artifacts") {
-				t.Fatalf("push err=%v, want artifact refusal", err)
+			if err == nil {
+				t.Fatal("push of an agent commit was accepted")
 			}
 			if originHasBranch(t, origin, jr.repositories[0].Branch) {
-				t.Fatal("branch with artifact history reached the origin")
+				t.Fatal("an agent commit reached the origin")
 			}
 		})
 	}
@@ -207,7 +226,7 @@ func TestArtifactLikeNamesOutsideTheDirectoryArePushed(t *testing.T) {
 	}
 }
 
-func TestArtifactIntroducedByAMergeCommitIsRefused(t *testing.T) {
+func TestArtifactIntroducedByAMergeCommitIsNotPublished(t *testing.T) {
 	jr, origin, _ := pinnedBuildWorkspaceFixture(t)
 	workDir, cleanup, err := jr.prepareWorkspace(context.Background())
 	if err != nil {
@@ -239,8 +258,13 @@ func TestArtifactIntroducedByAMergeCommitIsRefused(t *testing.T) {
 	if diff := buildWorkspaceGit(t, workDir, "diff", "--name-only", jr.repositories[0].BaseSHA, "HEAD"); strings.Contains(diff, "shortstack-artifacts") {
 		t.Fatalf("fixture leaves the artifact in the net diff:\n%s", diff)
 	}
-	if _, err := jr.commitAgentChanges(context.Background(), jr.repositories[0]); err == nil || !strings.Contains(err.Error(), "shortstack-artifacts") {
-		t.Fatalf("merge-introduced artifact accepted: %v", err)
+	sha, err := jr.commitAgentChanges(context.Background(), jr.repositories[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	trusted := jr.repositories[0].Trusted.gitDir
+	if history := trustedGitForTest(t, trusted, "log", "--name-only", "--format=%P", jr.repositories[0].BaseSHA+".."+sha); strings.Contains(history, "shortstack-artifacts") || !strings.Contains(history, "side-two.txt") {
+		t.Fatalf("result history = %s", history)
 	}
 	if originHasBranch(t, origin, branch) {
 		t.Fatal("branch reached the origin")
@@ -377,16 +401,14 @@ func TestReplaceRefCannotHideAnArtifactCommit(t *testing.T) {
 	buildWorkspaceGit(t, workDir, "-c", "user.name=agent", "-c", "user.email=agent@example.test", "replace", "--graft", head, base)
 	rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
 	rm.AllowLocal = true
-	if state, _, err := jr.finalizeBuild(context.Background(), rm, false); err == nil || !strings.Contains(err.Error(), "shortstack-artifacts") {
-		t.Fatalf("finalize state=%s err=%v, want artifact refusal", state, err)
+	if state, _, err := jr.finalizeBuild(context.Background(), rm, false); err != nil || state != "succeeded" {
+		t.Fatalf("finalize state=%s err=%v", state, err)
 	}
-	if originHasBranch(t, origin, jr.repositories[0].Branch) {
-		t.Fatal("branch with an artifact hidden by a replace ref reached the origin")
-	}
+	assertOnlyTheRunnerCommitReachedOrigin(t, origin, jr.repositories[0].Branch, base)
 }
 
-func TestArtifactAddedAndRemovedOnAMergedSideBranchIsRefused(t *testing.T) {
-	jr, origin, _ := pinnedBuildWorkspaceFixture(t)
+func TestArtifactAddedAndRemovedOnAMergedSideBranchIsNotPublished(t *testing.T) {
+	jr, origin, base := pinnedBuildWorkspaceFixture(t)
 	jr.job.PushBranch = true
 	workDir, cleanup, err := jr.prepareWorkspace(context.Background())
 	if err != nil {
@@ -404,12 +426,10 @@ func TestArtifactAddedAndRemovedOnAMergedSideBranchIsRefused(t *testing.T) {
 	buildWorkspaceGit(t, workDir, append(agent, "merge", "-q", "--no-edit", "side")...)
 	rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
 	rm.AllowLocal = true
-	if state, _, err := jr.finalizeBuild(context.Background(), rm, false); err == nil || !strings.Contains(err.Error(), "shortstack-artifacts") {
-		t.Fatalf("finalize state=%s err=%v, want artifact refusal", state, err)
+	if state, _, err := jr.finalizeBuild(context.Background(), rm, false); err != nil || state != "succeeded" {
+		t.Fatalf("finalize state=%s err=%v", state, err)
 	}
-	if originHasBranch(t, origin, branch) {
-		t.Fatal("branch with a side-branch artifact reached the origin")
-	}
+	assertOnlyTheRunnerCommitReachedOrigin(t, origin, branch, base)
 }
 
 func TestPushBranchChecksThePushedCommitRatherThanHEAD(t *testing.T) {
@@ -424,11 +444,11 @@ func TestPushBranchChecksThePushedCommitRatherThanHEAD(t *testing.T) {
 	buildWorkspaceGit(t, workDir, "checkout", "-q", "--detach", base)
 	rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
 	rm.AllowLocal = true
-	if err := jr.pushBranch(context.Background(), jr.repositories[0], rm, sha); err == nil || !strings.Contains(err.Error(), "shortstack-artifacts") {
-		t.Fatalf("push err=%v, want artifact refusal", err)
+	if err := jr.pushBranch(context.Background(), jr.repositories[0], rm, sha); err == nil {
+		t.Fatal("push of an agent commit was accepted")
 	}
 	if originHasBranch(t, origin, jr.repositories[0].Branch) {
-		t.Fatal("artifact-bearing commit reached the origin while HEAD was clean")
+		t.Fatal("an agent commit reached the origin while HEAD was clean")
 	}
 }
 

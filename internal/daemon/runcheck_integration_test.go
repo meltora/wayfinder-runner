@@ -108,7 +108,7 @@ func TestBuildJobRunCheckEndToEnd(t *testing.T) {
 	if iterative["source"] != "runner" || iterative["result"] != "passed" {
 		t.Fatalf("iterative event = %v", iterative)
 	}
-	if iterative["repository_id"] != "repo-rc" || iterative["commit_sha"] != base || iterative["worktree_dirty"] != true {
+	if iterative["repository_id"] != "repo-rc" || iterative["commit_sha"] == base || iterative["worktree_dirty"] != false {
 		t.Fatalf("iterative provenance = %v", iterative)
 	}
 	if terminal["result"] != "passed" || terminal["commit_sha"] == base {

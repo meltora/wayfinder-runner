@@ -28,20 +28,22 @@ func (jr *jobRunner) finalizeBuild(
 	job := jr.job
 	extra := map[string]any{}
 	commitSet := make(map[string]string, len(jr.repositories))
+	checkDirs := make(map[string]string, len(jr.repositories))
 	for _, repository := range jr.repositories {
-		sha, err := jr.commitAgentChanges(ctx, repository)
+		result, err := jr.publishAgentResult(ctx, repository)
 		if err != nil {
 			return "failed", nil, fmt.Errorf("commit %s: %w", repository.ID, err)
 		}
-		commitSet[repository.ID] = sha
+		commitSet[repository.ID] = result.commit
+		checkDirs[repository.ID] = result.dir
 		if repository.Primary {
-			extra["head_sha"] = sha
+			extra["head_sha"] = result.commit
 			extra["branch"] = repository.Branch
 		}
 	}
 	extra["commit_set"] = commitSet
 
-	checksPassed := jr.runRequiredChecks(ctx, commitSet)
+	checksPassed := jr.runRequiredChecks(ctx, commitSet, checkDirs)
 
 	for _, repository := range jr.repositories {
 		if err := jr.collectPatch(ctx, repository, commitSet[repository.ID]); err != nil {
@@ -69,65 +71,7 @@ func (jr *jobRunner) finalizeBuild(
 	return "succeeded", extra, nil
 }
 
-func (jr *jobRunner) commitAgentChanges(ctx context.Context, repository checkedOutRepository) (string, error) {
-	status, _, err := jr.runWorkspaceCommand(ctx, "git-status-"+repository.ID, repository.WorkDir,
-		"git", []string{"status", "--porcelain"}, false, 1<<20)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(status) != "" {
-		if _, _, err := jr.runWorkspaceCommand(ctx, "git-add-"+repository.ID, repository.WorkDir,
-			"git", []string{"add", "-A", "--", ".", runnerArtifactsPathspec}, false, 1<<20); err != nil {
-			return "", err
-		}
-		staged, _, err := jr.runWorkspaceCommand(ctx, "git-staged-"+repository.ID, repository.WorkDir,
-			"git", []string{"diff", "--cached", "--name-only"}, false, 1<<20)
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(staged) != "" {
-			msg := fmt.Sprintf("agent: implement %s %s", jr.job.Ticket.Key, jr.job.Ticket.Summary)
-			if _, _, err := jr.runWorkspaceCommand(ctx, "git-commit-"+repository.ID, repository.WorkDir,
-				"git", []string{"-c", "core.hooksPath=/dev/null", "-c", "user.name=our-runner",
-					"-c", "user.email=runner@localhost", "commit", "-m", msg}, false, 1<<20); err != nil {
-				return "", err
-			}
-		}
-	}
-	sha, _, err := jr.runWorkspaceCommand(ctx, "git-head-"+repository.ID, repository.WorkDir,
-		"git", []string{"rev-parse", "--verify", "HEAD^{commit}"}, false, 1<<20)
-	if err != nil {
-		return "", err
-	}
-	if err := jr.refuseCommittedRunnerArtifacts(ctx, repository, "HEAD"); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(sha), nil
-}
-
-func (jr *jobRunner) refuseCommittedRunnerArtifacts(ctx context.Context, repository checkedOutRepository, tip string) error {
-	if err := validation.GitCommitSHA("artifact_check_base_sha", repository.BaseSHA); err != nil {
-		return fmt.Errorf("refusing to publish repository %s: %w", repository.ID, err)
-	}
-	changed, truncated, err := jr.runWorkspaceCommand(ctx, "git-artifacts-"+repository.ID, repository.WorkDir,
-		"git", []string{"--no-replace-objects", "log", "-z", "-m", "--name-only", "--no-renames", "--format=",
-			repository.BaseSHA + ".." + tip}, false, 64<<20)
-	if err != nil {
-		return err
-	}
-	if truncated {
-		return fmt.Errorf("refusing to publish repository %s: branch history is too large to inspect", repository.ID)
-	}
-	for _, path := range strings.Split(changed, "\x00") {
-		path = strings.TrimLeft(path, "\n")
-		if runnerArtifactPath(path) {
-			return fmt.Errorf("refusing to publish %s/ content in repository %s", runnerArtifactsDirectory, repository.ID)
-		}
-	}
-	return nil
-}
-
-func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string]string) bool {
+func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet, checkDirs map[string]string) bool {
 	allOK := true
 	for _, checkID := range jr.job.RequiredChecks {
 		check, ok := jr.d.cfg.Checks[checkID]
@@ -149,6 +93,9 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string
 				"commit_set": commitSet, "phase": "terminal", "source": "runner",
 			})
 			continue
+		}
+		if dir := checkDirs[repository.ID]; dir != "" {
+			repository.WorkDir = dir
 		}
 		outcome := jr.executeConfiguredCheck(ctx, checkID, repository, check)
 		if outcome.Result != "passed" {
@@ -184,8 +131,12 @@ func (jr *jobRunner) collectPatch(ctx context.Context, repository checkedOutRepo
 	if err := validation.GitCommitSHA("patch_head_sha", sha); err != nil {
 		return err
 	}
-	diff, _, err := jr.runWorkspaceCommand(ctx, "git-diff-"+repository.ID, repository.WorkDir, "git",
-		[]string{"--no-pager", "diff", "--no-ext-diff", "--no-textconv", repository.BaseSHA + ".." + sha}, false, 64<<20)
+	if repository.Trusted == nil {
+		return agentResultRefusal(repository.ID, "the trusted result repository is not available")
+	}
+	raw, err := repository.Trusted.git(ctx, "--no-pager", "diff", "--no-ext-diff", "--no-textconv", "--no-color",
+		"--src-prefix=a/", "--dst-prefix=b/", "--ignore-submodules=none", repository.BaseSHA+".."+sha)
+	diff := string(raw)
 	if err != nil || strings.TrimSpace(diff) == "" {
 		return err
 	}
@@ -204,13 +155,13 @@ func (jr *jobRunner) pushBranch(ctx context.Context, repository checkedOutReposi
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
 		return fmt.Errorf("lease validation before push: %w", err)
 	}
-	if err := jr.refuseCommittedRunnerArtifacts(ctx, repository, sha); err != nil {
-		return err
-	}
 	if _, err := jr.pushCredential(repository.URL, time.Now()); err != nil {
 		return err
 	}
-	bundle, err := os.CreateTemp(jr.workDir, ".git-export-*.bundle")
+	if err := jr.refuseCommittedRunnerArtifacts(ctx, repository, sha); err != nil {
+		return err
+	}
+	bundle, err := os.CreateTemp(repository.Trusted.root, ".git-export-*.bundle")
 	if err != nil {
 		return err
 	}
@@ -222,8 +173,7 @@ func (jr *jobRunner) pushBranch(ctx context.Context, repository checkedOutReposi
 		return err
 	}
 	defer func() { _ = os.Remove(bundlePath) }()
-	if _, _, err := jr.runWorkspaceCommand(ctx, "git-bundle-"+repository.ID, repository.WorkDir,
-		"git", []string{"bundle", "create", bundlePath, repository.Branch}, false, 1<<20); err != nil {
+	if _, err := repository.Trusted.git(ctx, "bundle", "create", "--quiet", bundlePath, "refs/heads/"+repository.Branch); err != nil {
 		return err
 	}
 	if err := rm.ImportBundle(ctx, repository.URL, bundlePath, repository.Branch, sha); err != nil {
@@ -246,8 +196,11 @@ var errProviderCredentialUnavailable = errors.New("provider credential unavailab
 
 func buildFinalizationFailure(err error) jobOutcome {
 	message := "build finalization failed"
+	var resultErr *agentResultError
 	if errors.Is(err, errProviderCredentialUnavailable) {
 		message = "provider credential unavailable at push time"
+	} else if errors.As(err, &resultErr) {
+		message = resultErr.Error()
 	}
 	return jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureBuildFinalization, FailureMessage: message}
 }

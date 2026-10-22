@@ -110,7 +110,7 @@ func TestBuildPatchUsesExactAuthorizedBaseAfterBranchRefDisappears(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parent := buildWorkspaceGit(t, workDir, "rev-parse", "HEAD^"); parent != authorizedSHA {
+	if parent := trustedGitForTest(t, jr.repositories[0].Trusted.gitDir, "rev-parse", headSHA+"^"); parent != authorizedSHA {
 		t.Fatalf("implementation parent = %s, want %s", parent, authorizedSHA)
 	}
 	buildWorkspaceGit(t, workDir, "update-ref", "-d", "refs/heads/main")

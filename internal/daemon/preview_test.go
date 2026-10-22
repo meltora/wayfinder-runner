@@ -15,13 +15,14 @@ func previewFixture(t *testing.T) (*jobRunner, *capturedEvents, map[string]strin
 	jr, captured := testJobRunner(t)
 	want := make(map[string]string, 2)
 	for index, repositoryID := range []string{"primary", "secondary"} {
-		workDir := t.TempDir()
+		workDir := workspaceRepositoryDir(t, jr, repositoryID)
 		initRunCheckRepo(t, workDir)
 		jr.repositories = append(jr.repositories, checkedOutRepository{
 			ID: repositoryID, WorkDir: workDir, Primary: index == 0,
 		})
 		want[repositoryID] = gitHead(t, workDir)
 	}
+	attachTrustedRepositories(t, jr)
 	return jr, captured, want
 }
 
@@ -84,17 +85,42 @@ func TestPublishPreviewDerivesExactCleanRepositoryCommitSet(t *testing.T) {
 	}
 }
 
-func TestPublishPreviewRejectsDirtyRepository(t *testing.T) {
-	jr, captured, _ := previewFixture(t)
+func TestPublishPreviewOfADirtyRepositoryReportsTheResultCommit(t *testing.T) {
+	jr, captured, want := previewFixture(t)
 	if err := os.WriteFile(filepath.Join(jr.repositories[1].WorkDir, "dirty.txt"), []byte("dirty\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	args := previewArguments(t, map[string]any{"idempotency_key": "preview-dirty"})
-	if _, err := call(t, jr, "platform_publish_preview", args); err == nil || !strings.Contains(err.Error(), "worktree is dirty") {
+	if _, err := call(t, jr, "platform_publish_preview", args); err != nil {
 		t.Fatalf("dirty preview error = %v", err)
 	}
+	events := captured.byKind("preview")
+	if len(events) != 1 {
+		t.Fatalf("preview events = %v", events)
+	}
+	commitSet := events[0]["commit_set"].(map[string]string)
+	if commitSet["primary"] != want["primary"] || commitSet["secondary"] == want["secondary"] {
+		t.Fatalf("commit_set = %v, clean heads %v", commitSet, want)
+	}
+	paths := trustedGitForTest(t, jr.repositories[1].Trusted.gitDir, "ls-tree", "-r", "--name-only", commitSet["secondary"])
+	if !strings.Contains(paths, "dirty.txt") {
+		t.Fatalf("preview commit does not hold the edit: %s", paths)
+	}
+}
+
+func TestPublishPreviewRefusesAnAmbiguousResult(t *testing.T) {
+	jr, captured, _ := previewFixture(t)
+	checkout := jr.repositories[0].WorkDir
+	worktree := filepath.Join(jr.workDir, "agent-side")
+	agentGit(t, checkout, "worktree", "add", "-q", "-b", "agent-side", worktree)
+	writeAgentFile(t, worktree, "side.txt", "side\n")
+	writeAgentFile(t, checkout, "main.txt", "main\n")
+	args := previewArguments(t, map[string]any{"idempotency_key": "preview-ambiguous"})
+	if _, err := call(t, jr, "platform_publish_preview", args); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("ambiguous preview error = %v", err)
+	}
 	if events := captured.byKind("preview"); len(events) != 0 {
-		t.Fatalf("dirty preview emitted evidence: %v", events)
+		t.Fatalf("ambiguous preview emitted evidence: %v", events)
 	}
 }
 

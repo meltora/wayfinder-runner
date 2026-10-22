@@ -52,14 +52,15 @@ func gitHead(t *testing.T, dir string) string {
 func runCheckFixture(t *testing.T) (*jobRunner, *capturedEvents) {
 	t.Helper()
 	jr, cap := testJobRunner(t)
-	primaryDir := t.TempDir()
-	secondaryDir := t.TempDir()
+	primaryDir := workspaceRepositoryDir(t, jr, "primary")
+	secondaryDir := workspaceRepositoryDir(t, jr, "secondary")
 	initRunCheckRepo(t, primaryDir)
 	initRunCheckRepo(t, secondaryDir)
 	jr.repositories = []checkedOutRepository{
 		{ID: "primary", WorkDir: primaryDir, Primary: true},
 		{ID: "secondary", WorkDir: secondaryDir},
 	}
+	attachTrustedRepositories(t, jr)
 	jr.job.RequiredChecks = []string{"unit-check"}
 	jr.d.cfg.Checks = map[string]config.CheckConfig{
 		"unit-check": {Command: "true"},
@@ -175,7 +176,7 @@ func TestRunCheckRepositoryResolutionAndWorktreeEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = res.(map[string]any)
-	if m["result"] != "passed" || m["worktree_dirty"] != true {
+	if m["result"] != "passed" || m["worktree_dirty"] != false || m["commit_sha"] == head {
 		t.Fatalf("uncommitted change was not visible to the check: %v", m)
 	}
 
@@ -579,7 +580,7 @@ func TestRunCheckIterativeResultNeverSatisfiesTerminalChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	commitSet := map[string]string{"primary": gitHead(t, dir)}
-	if !jr.runRequiredChecks(context.Background(), commitSet) {
+	if !jr.runRequiredChecks(context.Background(), commitSet, nil) {
 		t.Fatal("terminal checks failed")
 	}
 	data, err := os.ReadFile(counter)

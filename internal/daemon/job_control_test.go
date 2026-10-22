@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +84,7 @@ func prepareControlJob(t *testing.T) (*jobRunner, *capturedEvents, *recordingPro
 		t.Fatalf("git commit: %v: %s", err, output)
 	}
 	jr.repositories = []checkedOutRepository{{ID: "repo-1", Branch: "main", WorkDir: repositoryDir, Primary: true}}
+	attachTrustedRepositories(t, jr)
 	process := &recordingProcess{}
 	jr.proc = process
 	jr.d.jobMu.Lock()
@@ -321,11 +323,12 @@ func TestControlRejectsWhenNoAttemptIsActive(t *testing.T) {
 	}
 }
 
-func TestRecoveryPatchDigestCoversTrackedAndUntrackedContent(t *testing.T) {
+func TestRecoveryCheckpointRecordsTheResultCommitOfDirtyFiles(t *testing.T) {
 	jr, _, _ := prepareControlJob(t)
 	repository := jr.repositories[0]
-	if clean, err := repositoryPatchDigest(context.Background(), repository.WorkDir); err != nil || clean != "" {
-		t.Fatalf("clean digest=%q err=%v", clean, err)
+	clean, err := jr.snapshotRepository(context.Background(), repository)
+	if err != nil || clean.CommitSHA != repository.StartSHA || clean.PatchDigestSHA256 != "" || clean.Branch != "main" {
+		t.Fatalf("clean snapshot=%+v err=%v", clean, err)
 	}
 	if err := os.WriteFile(filepath.Join(repository.WorkDir, "README.md"), []byte("modified\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -333,13 +336,20 @@ func TestRecoveryPatchDigestCoversTrackedAndUntrackedContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repository.WorkDir, "new.txt"), []byte("untracked\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	digest, err := repositoryPatchDigest(context.Background(), repository.WorkDir)
-	if err != nil || len(digest) != 64 {
-		t.Fatalf("dirty digest=%q err=%v", digest, err)
+	dirty, err := jr.snapshotRepository(context.Background(), repository)
+	if err != nil || dirty.CommitSHA == clean.CommitSHA || dirty.PatchDigestSHA256 != "" {
+		t.Fatalf("dirty snapshot=%+v err=%v", dirty, err)
 	}
-	repository.Branch = "other"
-	if _, err := snapshotRepository(context.Background(), repository); err == nil {
-		t.Fatal("snapshot accepted a mismatched branch")
+	paths := trustedGitForTest(t, repository.Trusted.gitDir, "ls-tree", "-r", "--name-only", dirty.CommitSHA)
+	if !strings.Contains(paths, "new.txt") {
+		t.Fatalf("checkpoint commit does not hold the untracked file: %s", paths)
+	}
+	if content := trustedGitForTest(t, repository.Trusted.gitDir, "show", dirty.CommitSHA+":README.md"); content != "modified" {
+		t.Fatalf("checkpoint README = %q", content)
+	}
+	repository.Branch = "bad..branch"
+	if _, err := jr.snapshotRepository(context.Background(), repository); err == nil {
+		t.Fatal("snapshot accepted an invalid branch")
 	}
 }
 

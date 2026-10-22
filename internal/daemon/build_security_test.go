@@ -61,7 +61,7 @@ func TestRequiredCheckRegistrationAndRepositorySelection(t *testing.T) {
 	jr.d.cfg.Checks = map[string]config.CheckConfig{
 		"wrong-repository": {Command: "true", RepositoryID: "not-in-job"},
 	}
-	if jr.runRequiredChecks(context.Background(), map[string]string{"primary": "abc"}) {
+	if jr.runRequiredChecks(context.Background(), map[string]string{"primary": "abc"}, nil) {
 		t.Fatal("invalid required checks passed")
 	}
 	if len(cap.byKind("test_results")) != 2 {
@@ -70,7 +70,8 @@ func TestRequiredCheckRegistrationAndRepositorySelection(t *testing.T) {
 }
 
 func TestCommitCleanRepositoryAndPushRequiresLease(t *testing.T) {
-	dir := t.TempDir()
+	jr, _ := testJobRunner(t)
+	dir := workspaceRepositoryDir(t, jr, "repo-1")
 	git := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
@@ -86,11 +87,12 @@ func TestCommitCleanRepositoryAndPushRequiresLease(t *testing.T) {
 	}
 	git("add", ".")
 	git("commit", "-m", "initial")
-	jr, _ := testJobRunner(t)
 	jr.d.cfg.Isolation = "direct"
-	repository := checkedOutRepository{ID: "repo-1", WorkDir: dir, Branch: "feature/test", URL: "https://example.test/repo.git", Primary: true, BaseSHA: gitHead(t, dir)}
+	jr.repositories = []checkedOutRepository{{ID: "repo-1", WorkDir: dir, Branch: "feature/test", URL: "https://example.test/repo.git", Primary: true, BaseSHA: gitHead(t, dir)}}
+	attachTrustedRepositories(t, jr)
+	repository := jr.repositories[0]
 	sha, err := jr.commitAgentChanges(context.Background(), repository)
-	if err != nil || len(sha) != 40 {
+	if err != nil || sha != repository.BaseSHA {
 		t.Fatalf("sha=%q err=%v", sha, err)
 	}
 	jr.d.leases.Release(jr.job.AttemptID)

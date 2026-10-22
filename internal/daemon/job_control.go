@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,7 +14,6 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/collector"
-	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/validation"
 )
 
@@ -198,7 +196,7 @@ func (jr *jobRunner) controlRecoveryCheckpoint(ctx context.Context, commandMessa
 		if index > 0 && repositories[index-1].ID == repository.ID {
 			return nil, fmt.Errorf("duplicate repository identity")
 		}
-		snapshot, err := snapshotRepository(ctx, repository)
+		snapshot, err := jr.snapshotRepository(ctx, repository)
 		if err != nil {
 			return nil, fmt.Errorf("snapshot repository %s: %w", repository.ID, err)
 		}
@@ -209,61 +207,20 @@ func (jr *jobRunner) controlRecoveryCheckpoint(ctx context.Context, commandMessa
 	return result, nil
 }
 
-func snapshotRepository(ctx context.Context, repository checkedOutRepository) (v1.RecoveryCheckpointRepository, error) {
-	commit, err := gitOutput(ctx, repository.WorkDir, "rev-parse", "HEAD")
-	if err != nil || validation.GitCommitSHA("commit_sha", commit) != nil {
-		return v1.RecoveryCheckpointRepository{}, fmt.Errorf("resolve exact commit")
-	}
-	branch, err := gitOutput(ctx, repository.WorkDir, "symbolic-ref", "--short", "HEAD")
-	if err != nil || branch != repository.Branch || validation.GitRef("branch", branch) != nil {
-		return v1.RecoveryCheckpointRepository{}, fmt.Errorf("resolve exact branch")
-	}
-	patchDigest, err := repositoryPatchDigest(ctx, repository.WorkDir)
+func (jr *jobRunner) snapshotRepository(ctx context.Context, repository checkedOutRepository) (v1.RecoveryCheckpointRepository, error) {
+	result, err := jr.resolveAgentResult(ctx, repository, "pause checkpoint")
 	if err != nil {
 		return v1.RecoveryCheckpointRepository{}, err
 	}
+	if validation.GitCommitSHA("commit_sha", result.commit) != nil {
+		return v1.RecoveryCheckpointRepository{}, fmt.Errorf("resolve exact commit")
+	}
+	if validation.GitRef("branch", repository.Branch) != nil {
+		return v1.RecoveryCheckpointRepository{}, fmt.Errorf("resolve exact branch")
+	}
 	return v1.RecoveryCheckpointRepository{
-		RepositoryID: repository.ID, Branch: branch, CommitSHA: commit, PatchDigestSHA256: patchDigest,
+		RepositoryID: repository.ID, Branch: repository.Branch, CommitSHA: result.commit,
 	}, nil
-}
-
-func repositoryPatchDigest(ctx context.Context, workDir string) (string, error) {
-	diff, err := gitOutputBytesLimited(ctx, workDir, maxCheckpointPatchBytes, "diff", "--binary", "--no-ext-diff", "HEAD")
-	if err != nil {
-		return "", err
-	}
-	untracked, err := gitOutputBytesLimited(ctx, workDir, maxCheckpointPatchBytes, "ls-files", "--others", "--exclude-standard", "-z")
-	if err != nil {
-		return "", err
-	}
-	if len(diff) == 0 && len(untracked) == 0 {
-		return "", nil
-	}
-	hash := sha256.New()
-	_, _ = hash.Write([]byte("runner-checkpoint-patch-v1\x00"))
-	_, _ = hash.Write(diff)
-	remaining := int64(maxCheckpointPatchBytes - len(diff))
-	for _, rawPath := range bytes.Split(untracked, []byte{0}) {
-		if len(rawPath) == 0 {
-			continue
-		}
-		path := string(rawPath)
-		file, err := safeio.OpenRegular(workDir, path)
-		if err != nil {
-			return "", err
-		}
-		contents, err := io.ReadAll(io.LimitReader(file, remaining+1))
-		_ = file.Close()
-		if err != nil || int64(len(contents)) > remaining {
-			return "", fmt.Errorf("checkpoint patch content exceeds %d-byte limit", maxCheckpointPatchBytes)
-		}
-		remaining -= int64(len(contents))
-		_, _ = hash.Write([]byte{0})
-		_, _ = hash.Write(rawPath)
-		_, _ = hash.Write([]byte{0})
-		_, _ = hash.Write(contents)
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {

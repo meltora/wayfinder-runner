@@ -124,4 +124,7 @@ func (jr *jobRunner) retireCompletedJob() {
 	if err := os.RemoveAll(jr.workDir); err != nil {
 		jr.logger.Warn("workdir cleanup", "err", err)
 	}
+	if err := removeTrustedResults(jr.d.cfg.StateDir, jr.workDir); err != nil {
+		jr.logger.Warn("trusted result cleanup", "err", err)
+	}
 }

@@ -587,9 +587,10 @@ func TestHumanInputRejectsInvalidDecisionContractFields(t *testing.T) {
 
 func TestRemainingAuthoritativeToolEvents(t *testing.T) {
 	jr, cap := testJobRunner(t)
-	previewDir := t.TempDir()
+	previewDir := workspaceRepositoryDir(t, jr, "primary")
 	initRunCheckRepo(t, previewDir)
 	jr.repositories = []checkedOutRepository{{ID: "primary", WorkDir: previewDir, Primary: true}}
+	attachTrustedRepositories(t, jr)
 	previewExpiry := time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano)
 	calls := []struct {
 		tool string

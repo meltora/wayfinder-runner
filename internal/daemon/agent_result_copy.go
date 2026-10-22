@@ -1,0 +1,309 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"path"
+	"sort"
+	"strings"
+	"syscall"
+)
+
+const maxAgentExcludeBytes = 1 << 20
+
+type agentSnapshot struct {
+	candidate    agentCandidate
+	skip         map[string]bool
+	excludeRel   string
+	start        string
+	repositoryID string
+}
+
+type candidateCopy struct {
+	trusted      *trustedResultRepository
+	target       *os.Root
+	oracle       *ignoreOracle
+	skip         map[string]bool
+	repositoryID string
+	label        string
+	entries      int
+	bytes        int64
+}
+
+func (t *trustedResultRepository) snapshot(ctx context.Context, workspace *os.Root, input agentSnapshot) (string, error) {
+	label := describeCandidate(input.candidate)
+	patterns, err := readOptionalWorkspaceFile(workspace, input.excludeRel, maxAgentExcludeBytes)
+	if err != nil {
+		return "", agentResultRefusal(input.repositoryID, "the checkout's .git/info/exclude is not a regular file within %d bytes", maxAgentExcludeBytes)
+	}
+	if err := writeTrustedExclude(t.gitDir, string(patterns)); err != nil {
+		return "", err
+	}
+	if err := os.RemoveAll(t.filesDir); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(t.filesDir, 0o700); err != nil {
+		return "", err
+	}
+	if _, err := t.git(ctx, "read-tree", input.start); err != nil {
+		return "", err
+	}
+	if err := t.copyCandidate(ctx, workspace, input, label); err != nil {
+		return "", err
+	}
+	if _, err := t.git(ctx, "add", "-A", "--", ".", runnerArtifactsPathspec); err != nil {
+		return "", err
+	}
+	sparseRel := path.Join(input.candidate.adminRel, "info", "sparse-checkout")
+	if err := t.restoreSparseDeletions(ctx, workspace, sparseRel, input.start, input.repositoryID, label); err != nil {
+		return "", err
+	}
+	tree, err := t.git(ctx, "write-tree")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(tree)), nil
+}
+
+func readOptionalWorkspaceFile(workspace *os.Root, rel string, limit int64) ([]byte, error) {
+	content, err := readWorkspaceFile(workspace, rel, limit)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return content, err
+}
+
+func (t *trustedResultRepository) copyCandidate(ctx context.Context, workspace *os.Root, input agentSnapshot, label string) error {
+	refuse := func(format string, args ...any) error {
+		return agentResultRefusal(input.repositoryID, label+" "+format, args...)
+	}
+	info, err := workspace.Lstat(input.candidate.relPath)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return refuse("is not a real directory")
+	}
+	source, err := workspace.OpenRoot(input.candidate.relPath)
+	if err != nil {
+		return refuse("could not be opened")
+	}
+	defer func() { _ = source.Close() }()
+	if !sameDirectory(source, info) {
+		return refuse("changed while it was read")
+	}
+	target, err := os.OpenRoot(t.filesDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = target.Close() }()
+	oracle, err := t.startIgnoreOracle(ctx, t.gitDir, t.filesDir, false)
+	if err != nil {
+		return err
+	}
+	copier := &candidateCopy{
+		trusted: t, target: target, oracle: oracle, skip: input.skip,
+		repositoryID: input.repositoryID, label: label,
+	}
+	copyErr := copier.directory(source, ".")
+	closeErr := oracle.close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
+func sameDirectory(root *os.Root, expected fs.FileInfo) bool {
+	opened, err := root.Stat(".")
+	return err == nil && opened.IsDir() && os.SameFile(expected, opened)
+}
+
+func (c *candidateCopy) refuse(format string, args ...any) error {
+	return agentResultRefusal(c.repositoryID, c.label+" "+format, args...)
+}
+
+func (c *candidateCopy) directory(dir *os.Root, rel string) error {
+	names, err := c.list(dir, rel)
+	if err != nil {
+		return err
+	}
+	var ordered, rest []string
+	for _, name := range names {
+		if rel == "." && name == ".git" {
+			continue
+		}
+		if strings.EqualFold(name, ".git") {
+			return c.refuse("contains a nested Git repository at %s", displayEntry(joinRel(rel, name)))
+		}
+		if name == ".gitignore" || name == ".gitattributes" {
+			ordered = append(ordered, name)
+		} else {
+			rest = append(rest, name)
+		}
+	}
+	for _, name := range append(ordered, rest...) {
+		if err := c.entry(dir, rel, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *candidateCopy) list(dir *os.Root, rel string) ([]string, error) {
+	handle, err := dir.Open(".")
+	if err != nil {
+		return nil, c.refuse("could not read %s", displayEntry(rel))
+	}
+	defer func() { _ = handle.Close() }()
+	var names []string
+	for {
+		batch, err := handle.ReadDir(1024)
+		for _, entry := range batch {
+			names = append(names, entry.Name())
+		}
+		if c.entries+len(names) > c.trusted.entryLimit {
+			return nil, c.refuse("has more than %d entries", c.trusted.entryLimit)
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, c.refuse("could not read %s", displayEntry(rel))
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func (c *candidateCopy) entry(dir *os.Root, rel, name string) error {
+	child := joinRel(rel, name)
+	c.entries++
+	if c.entries > c.trusted.entryLimit {
+		return c.refuse("has more than %d entries", c.trusted.entryLimit)
+	}
+	if c.skip[child] {
+		return nil
+	}
+	info, err := dir.Lstat(name)
+	if err != nil {
+		return c.refuse("changed while it was read at %s", displayEntry(child))
+	}
+	switch mode := info.Mode(); {
+	case mode&os.ModeSymlink != 0:
+		return c.symlink(dir, child, name)
+	case mode.IsDir():
+		return c.subdirectory(dir, child, name, info)
+	case mode.IsRegular():
+		return c.file(dir, child, name, info)
+	default:
+		ignored, err := c.oracle.ignored(child)
+		if err != nil || ignored {
+			return err
+		}
+		return c.refuse("contains a special file %s", displayEntry(child))
+	}
+}
+
+func (c *candidateCopy) subdirectory(parent *os.Root, child, name string, info fs.FileInfo) error {
+	if err := c.target.Mkdir(child, 0o755); err != nil {
+		return err
+	}
+	if c.trusted.gitlinks[child] {
+		return nil
+	}
+	ignored, err := c.oracle.ignored(child)
+	if err != nil {
+		return err
+	}
+	if ignored {
+		return c.target.Remove(child)
+	}
+	sub, err := parent.OpenRoot(name)
+	if err != nil {
+		return c.refuse("changed while it was read at %s", displayEntry(child))
+	}
+	defer func() { _ = sub.Close() }()
+	if !sameDirectory(sub, info) {
+		return c.refuse("changed while it was read at %s", displayEntry(child))
+	}
+	return c.directory(sub, child)
+}
+
+func (c *candidateCopy) symlink(dir *os.Root, child, name string) error {
+	destination, err := dir.Readlink(name)
+	if err != nil {
+		return c.refuse("changed while it was read at %s", displayEntry(child))
+	}
+	c.bytes += int64(len(destination))
+	if c.bytes > c.trusted.byteLimit {
+		return c.refuse("has more than %d bytes of file content", c.trusted.byteLimit)
+	}
+	if err := c.target.Symlink(destination, child); err != nil {
+		return err
+	}
+	ignored, err := c.oracle.ignored(child)
+	if err != nil {
+		return err
+	}
+	if ignored {
+		return c.target.Remove(child)
+	}
+	return nil
+}
+
+func (c *candidateCopy) file(dir *os.Root, child, name string, info fs.FileInfo) error {
+	if name != ".gitignore" && name != ".gitattributes" {
+		ignored, err := c.oracle.ignored(child)
+		if err != nil || ignored {
+			return err
+		}
+	}
+	remaining := c.trusted.byteLimit - c.bytes
+	if info.Size() > remaining {
+		return c.refuse("has more than %d bytes of file content", c.trusted.byteLimit)
+	}
+	source, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return c.refuse("changed while it was read at %s", displayEntry(child))
+	}
+	defer func() { _ = source.Close() }()
+	opened, err := source.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return c.refuse("changed while it was read at %s", displayEntry(child))
+	}
+	mode := fs.FileMode(0o644)
+	if info.Mode().Perm()&0o111 != 0 {
+		mode = 0o755
+	}
+	target, err := c.target.OpenFile(child, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, mode)
+	if err != nil {
+		return err
+	}
+	written, copyErr := io.Copy(target, io.LimitReader(source, remaining+1))
+	closeErr := target.Close()
+	c.bytes += written
+	if c.bytes > c.trusted.byteLimit {
+		return c.refuse("has more than %d bytes of file content", c.trusted.byteLimit)
+	}
+	if copyErr != nil {
+		return c.refuse("changed while it was read at %s", displayEntry(child))
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return c.target.Chmod(child, mode)
+}
+
+func joinRel(rel, name string) string {
+	if rel == "." {
+		return name
+	}
+	return rel + "/" + name
+}
+
+func displayEntry(rel string) string {
+	if safeWorkspacePath(rel) {
+		return rel
+	}
+	return "an entry with an unprintable name"
+}

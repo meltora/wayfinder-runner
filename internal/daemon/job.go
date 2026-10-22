@@ -81,10 +81,12 @@ type checkedOutRepository struct {
 	URL         string
 	Base        string
 	BaseSHA     string
+	StartSHA    string
 	Branch      string
 	WorkDir     string
 	Primary     bool
 	Fingerprint string
+	Trusted     *trustedResultRepository
 }
 
 type toolCallMemo struct {
@@ -294,6 +296,7 @@ func cleanupOrphanedJobState(stateDir string) error {
 		dir, prefix string
 	}{
 		{filepath.Join(stateDir, "jobs"), "job-"},
+		{filepath.Join(stateDir, trustedResultsDirectory), "job-"},
 		{filepath.Join(stateDir, "job-homes"), "home-"},
 		{filepath.Join(stateDir, "sockets"), "job-"},
 		{filepath.Join(stateDir, "tmux"), "job-"},
@@ -525,6 +528,16 @@ func (jr *jobRunner) run() {
 				jr.logger.Warn("job home cleanup", "err", err)
 			}
 		}()
+		if err := isolation.WriteAgentGitConfig(jobHome); err != nil {
+			finish(
+				jr.startupFailureOutcome(
+					v1.JobFailureWorkspacePreparation,
+					"prepare isolated job home",
+				),
+				nil,
+			)
+			return
+		}
 		isoPolicy.JobHome = jobHome
 	}
 	composition := compositionStartContext{
@@ -757,9 +770,15 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 	cleanup := func() {
 		for i := len(jr.repositories) - 1; i >= 0; i-- {
 			repository := jr.repositories[i]
+			if err := removeAgentWorktrees(jr.workDir, repository.WorkDir); err != nil {
+				jr.logger.Warn("agent worktree cleanup", "repository", repository.ID, "err", err)
+			}
 			if err := rm.RemoveWorkspace(repository.WorkDir); err != nil {
 				jr.logger.Warn("workspace cleanup", "repository", repository.ID, "err", err)
 			}
+		}
+		if err := removeTrustedResults(d.cfg.StateDir, jr.workDir); err != nil {
+			jr.logger.Warn("trusted result cleanup", "err", err)
 		}
 	}
 
@@ -832,9 +851,18 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 			_ = rm.RemoveWorkspace(wtDir)
 			return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, err)
 		}
+		var trusted *trustedResultRepository
+		if job.Kind == v1.JobKindBuild {
+			trusted, err = jr.prepareTrustedResultRepository(ctx, rm, ref.RepositoryID, repository.URL, startSHA)
+			if err != nil {
+				cleanup()
+				_ = rm.RemoveWorkspace(wtDir)
+				return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, err)
+			}
+		}
 		runtimeRepository := checkedOutRepository{
-			ID: ref.RepositoryID, URL: repository.URL, Base: base, BaseSHA: ref.BaseSHA,
-			Branch: branch, WorkDir: wtDir, Primary: ref.Primary, Fingerprint: fingerprint,
+			ID: ref.RepositoryID, URL: repository.URL, Base: base, BaseSHA: ref.BaseSHA, StartSHA: startSHA,
+			Branch: branch, WorkDir: wtDir, Primary: ref.Primary, Fingerprint: fingerprint, Trusted: trusted,
 		}
 		jr.repositories = append(jr.repositories, runtimeRepository)
 		if ref.Primary {
