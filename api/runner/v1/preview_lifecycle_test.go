@@ -72,37 +72,71 @@ func TestPreviewLifecycleResultHasNoGenericBody(t *testing.T) {
 }
 
 func TestPreviewLifecycleCanonicalDigestVectorMatchesControlPlane(t *testing.T) {
-	operation := PreviewLifecycleOperation{
-		PreviewLifecycleOperationAuthority: PreviewLifecycleOperationAuthority{
-			SchemaVersion: 1, PreviewLifecycleEffectID: "preview-lifecycle-effect-1", PreviewLifecycleEffectRevision: 1,
-			PreviewLifecycleOperationID: "preview-lifecycle-operation-" + strings.Repeat("4", 64),
-			OrganizationID:              "organization-1", ProjectID: "project-1", WorkflowRunID: "workflow-run-1",
-			PreviewEvidenceID: "preview-evidence-1", PreviewObservationID: "preview-observation-1",
-			PreviewObservationDigest: strings.Repeat("2", 64), ExecutionManifestID: "execution-manifest-1",
-			ExecutionManifestDigest: strings.Repeat("3", 64), Action: PreviewLifecycleExtend,
-			IdempotencyKey: "preview-lifecycle-" + strings.Repeat("5", 64),
-			LeaseID:        "preview-lifecycle-lease-1", FencingToken: 7,
-			LeaseExpiresAt: time.Date(2030, 8, 22, 12, 5, 0, 0, time.UTC),
+	ms := int(time.Millisecond)
+	cases := map[string]struct {
+		original, current, desired, lease   time.Time
+		resourceBinding, operation, command string
+	}{
+		"whole seconds": {
+			time.Date(2030, 8, 21, 12, 0, 0, 0, time.UTC), time.Date(2030, 8, 22, 12, 0, 0, 0, time.UTC),
+			time.Date(2030, 8, 23, 12, 0, 0, 0, time.UTC), time.Date(2030, 8, 22, 12, 5, 0, 0, time.UTC),
+			"c70b27b9663ff6c907ee163addb841d7528cba987fe3731d6aa1c96702260415",
+			"9247a48020c5ce346dc703a4af10cc1675c78abf26ea015d011f7b65a67dafa6",
+			"ea0fc3571f79a8ebad6a883a2427079448fe5235c202091452e6b67420d35748",
 		},
-		Blueprint:  PreviewObservationBlueprint{BlueprintID: "blueprint-1", Version: "2026.08.1", Digest: strings.Repeat("1", 64)},
-		PreviewURL: "https://preview.example.test/",
-		CommitSet: []PreviewObservationCommit{
-			{RepositoryID: "repository-a", CommitSHA: strings.Repeat("a", 40)},
-			{RepositoryID: "repository-b", CommitSHA: strings.Repeat("b", 40)},
+		"zero-ending millisecond fractions": {
+			time.Date(2030, 8, 21, 12, 0, 0, 520*ms, time.UTC), time.Date(2030, 8, 22, 12, 0, 0, 500*ms, time.UTC),
+			time.Date(2030, 8, 23, 12, 0, 0, 100*ms, time.UTC), time.Date(2030, 8, 22, 12, 5, 0, 520*ms, time.UTC),
+			"f0c683d6f02ddb02982b0ac78795350f1b2943325e6f9eaeb2d1ed15e7a53e52",
+			"58c81e6395ef43f1e44385a95fe7a19534f7e36cbf94dd043a0d154b66e2c1b8",
+			"da63a3c987b180eae64704e1e48f58d5b4ec623526751127d588cdfff3d77691",
 		},
-		OriginalExpiresAt:         time.Date(2030, 8, 21, 12, 0, 0, 0, time.UTC),
-		CurrentEffectiveExpiresAt: time.Date(2030, 8, 22, 12, 0, 0, 0, time.UTC),
 	}
-	desired := time.Date(2030, 8, 23, 12, 0, 0, 0, time.UTC)
-	operation.DesiredExpiresAt = &desired
-	operation.CommitSetDigest = PreviewLifecycleCommitSetDigest(operation.CommitSet)
-	operation.ResourceBindingDigest = PreviewLifecycleResourceBindingDigest(operation)
-	operation.OperationDigest = PreviewLifecycleOperationDigest(operation)
-	operation.CommandDigest = PreviewLifecycleCommandDigest(operation)
-	if operation.CommitSetDigest != "cf63268a5326a55193214033aab6908b3700dc9beea53426598b1fd929a8d361" ||
-		operation.ResourceBindingDigest != "937c1d220165ba5a79c6da15ba356909f400caf4415b37bcd8a03ced0d2f80bc" ||
-		operation.OperationDigest != "d800b9695da7ed236bcc3c5163de59564ad8bb356482a8eb6555f0386abf405e" ||
-		operation.CommandDigest != "31d7fb6c3f79494579579cb50599d2f64c90d997f6a6d6c42034b3269312ff8e" {
-		t.Fatalf("digest vector mismatch: %+v", operation)
+	for name, vector := range cases {
+		t.Run(name, func(t *testing.T) {
+			desired := vector.desired
+			operation := PreviewLifecycleOperation{
+				PreviewLifecycleOperationAuthority: PreviewLifecycleOperationAuthority{
+					SchemaVersion: 1, PreviewLifecycleEffectID: "preview-lifecycle-effect-1", PreviewLifecycleEffectRevision: 1,
+					PreviewLifecycleOperationID: "preview-lifecycle-operation-" + strings.Repeat("4", 64),
+					OrganizationID:              "organization-1", ProjectID: "project-1", WorkflowRunID: "workflow-run-1",
+					PreviewEvidenceID: "preview-evidence-1", PreviewObservationID: "preview-observation-1",
+					PreviewObservationDigest: strings.Repeat("2", 64), ExecutionManifestID: "execution-manifest-1",
+					ExecutionManifestDigest: strings.Repeat("3", 64), Action: PreviewLifecycleExtend,
+					IdempotencyKey: "preview-lifecycle-" + strings.Repeat("5", 64),
+					LeaseID:        "preview-lifecycle-lease-1", FencingToken: 7,
+					LeaseExpiresAt: vector.lease,
+				},
+				Blueprint:  PreviewObservationBlueprint{BlueprintID: "blueprint-1", Version: "2026.08.1", Digest: strings.Repeat("1", 64)},
+				PreviewURL: "https://preview.example.test/",
+				CommitSet: []PreviewObservationCommit{
+					{RepositoryID: "repository-a", CommitSHA: strings.Repeat("a", 40)},
+					{RepositoryID: "repository-b", CommitSHA: strings.Repeat("b", 40)},
+				},
+				OriginalExpiresAt:         vector.original,
+				CurrentEffectiveExpiresAt: vector.current,
+				DesiredExpiresAt:          &desired,
+			}
+			operation.CommitSetDigest = PreviewLifecycleCommitSetDigest(operation.CommitSet)
+			operation.ResourceBindingDigest = PreviewLifecycleResourceBindingDigest(operation)
+			operation.OperationDigest = PreviewLifecycleOperationDigest(operation)
+			operation.CommandDigest = PreviewLifecycleCommandDigest(operation)
+			if operation.CommitSetDigest != "cf63268a5326a55193214033aab6908b3700dc9beea53426598b1fd929a8d361" ||
+				operation.ResourceBindingDigest != vector.resourceBinding ||
+				operation.OperationDigest != vector.operation ||
+				operation.CommandDigest != vector.command {
+				t.Fatalf("digest vector mismatch: %+v", operation)
+			}
+			shifted := operation
+			shifted.LeaseExpiresAt = operation.LeaseExpiresAt.Add(time.Millisecond)
+			if PreviewLifecycleCommandDigest(shifted) == vector.command {
+				t.Fatal("a lease one millisecond away kept the command digest")
+			}
+			shifted = operation
+			shifted.OriginalExpiresAt = operation.OriginalExpiresAt.Add(time.Millisecond)
+			if PreviewLifecycleResourceBindingDigest(shifted) == vector.resourceBinding {
+				t.Fatal("an original expiry one millisecond away kept the resource binding digest")
+			}
+		})
 	}
 }

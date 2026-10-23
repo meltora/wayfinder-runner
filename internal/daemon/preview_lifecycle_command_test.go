@@ -263,6 +263,25 @@ func TestPreviewLifecycleCrashRedeliveryReplaysSameIdempotentEffect(t *testing.T
 	}
 }
 
+func TestPreviewLifecycleResultObservedAtHasControlPlaneMillisecondPrecision(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	command := validPreviewLifecycleCommand(v1.PreviewLifecycleDestroy)
+	jr.d.previewLifecycleController = &fakePreviewLifecycleController{outcome: successfulPreviewLifecycleOutcome(*command.PreviewLifecycle)}
+	var event v1.PreviewLifecycleResultEvent
+	jr.d.eventSink = func(_ context.Context, payload any) error {
+		event = payload.(v1.PreviewLifecycleResultEvent)
+		return nil
+	}
+	before := time.Now().UTC().Truncate(time.Millisecond)
+	if err := jr.d.executePreviewLifecycle(context.Background(), previewLifecycleCommandID(), *command.PreviewLifecycle); err != nil {
+		t.Fatal(err)
+	}
+	if event.ObservedAt.IsZero() || event.ObservedAt.Nanosecond()%int(time.Millisecond) != 0 ||
+		event.ObservedAt.Before(before) || event.ObservedAt.Location() != time.UTC {
+		t.Fatalf("observed_at=%s is not a UTC millisecond instant at or after %s", event.ObservedAt.Format(time.RFC3339Nano), before)
+	}
+}
+
 func TestPreviewLifecycleLateSuccessBecomesUncertain(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	command := validPreviewLifecycleCommand(v1.PreviewLifecycleDestroy)

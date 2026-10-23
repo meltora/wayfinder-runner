@@ -1,12 +1,84 @@
 package validation
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 )
+
+func controlPlanePreviewLifecycleCommandJSON(original, current, desired, lease string) string {
+	return `{
+		"schema_version": 1,
+		"preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+		"preview_lifecycle_effect_revision": 1,
+		"preview_lifecycle_operation_id": "preview-lifecycle-operation-` + strings.Repeat("4", 64) + `",
+		"organization_id": "organization-1",
+		"project_id": "project-1",
+		"workflow_run_id": "workflow-run-1",
+		"preview_evidence_id": "preview-evidence-1",
+		"preview_observation_id": "preview-observation-1",
+		"preview_observation_digest": "` + strings.Repeat("2", 64) + `",
+		"execution_manifest_id": "execution-manifest-1",
+		"execution_manifest_digest": "` + strings.Repeat("3", 64) + `",
+		"blueprint": {"blueprint_id": "blueprint-1", "version": "2026.08.1", "digest": "` + strings.Repeat("1", 64) + `"},
+		"preview_url": "https://preview.example.test/",
+		"commit_set": [
+			{"repository_id": "repository-a", "commit_sha": "` + strings.Repeat("a", 40) + `"},
+			{"repository_id": "repository-b", "commit_sha": "` + strings.Repeat("b", 40) + `"}
+		],
+		"commit_set_digest": "cf63268a5326a55193214033aab6908b3700dc9beea53426598b1fd929a8d361",
+		"original_expires_at": "` + original + `",
+		"current_effective_expires_at": "` + current + `",
+		"action": "extend",
+		"desired_expires_at": "` + desired + `",
+		"idempotency_key": "preview-lifecycle-` + strings.Repeat("5", 64) + `",
+		"resource_binding_digest": "f0c683d6f02ddb02982b0ac78795350f1b2943325e6f9eaeb2d1ed15e7a53e52",
+		"operation_digest": "58c81e6395ef43f1e44385a95fe7a19534f7e36cbf94dd043a0d154b66e2c1b8",
+		"command_digest": "da63a3c987b180eae64704e1e48f58d5b4ec623526751127d588cdfff3d77691",
+		"lease_id": "preview-lifecycle-lease-1",
+		"fencing_token": 7,
+		"lease_expires_at": "` + lease + `"
+	}`
+}
+
+func TestPreviewLifecycleOperationAcceptsControlPlaneMillisecondTimestamps(t *testing.T) {
+	cases := map[string]struct {
+		original, current, desired, lease string
+		accepted                          bool
+	}{
+		"exact control-plane text": {
+			"2030-08-21T12:00:00.520Z", "2030-08-22T12:00:00.500Z", "2030-08-23T12:00:00.100Z", "2030-08-22T12:05:00.520Z", true,
+		},
+		"lease one millisecond away": {
+			"2030-08-21T12:00:00.520Z", "2030-08-22T12:00:00.500Z", "2030-08-23T12:00:00.100Z", "2030-08-22T12:05:00.519Z", false,
+		},
+		"original expiry one millisecond away": {
+			"2030-08-21T12:00:00.521Z", "2030-08-22T12:00:00.500Z", "2030-08-23T12:00:00.100Z", "2030-08-22T12:05:00.520Z", false,
+		},
+		"desired expiry one millisecond away": {
+			"2030-08-21T12:00:00.520Z", "2030-08-22T12:00:00.500Z", "2030-08-23T12:00:00.101Z", "2030-08-22T12:05:00.520Z", false,
+		},
+	}
+	for name, command := range cases {
+		t.Run(name, func(t *testing.T) {
+			var operation v1.PreviewLifecycleOperation
+			raw := controlPlanePreviewLifecycleCommandJSON(command.original, command.current, command.desired, command.lease)
+			if err := json.Unmarshal([]byte(raw), &operation); err != nil {
+				t.Fatalf("decode control-plane command: %v", err)
+			}
+			err := PreviewLifecycleOperation(operation)
+			if command.accepted && err != nil {
+				t.Fatalf("control-plane command rejected: %v", err)
+			}
+			if !command.accepted && err == nil {
+				t.Fatal("tampered control-plane command accepted")
+			}
+		})
+	}
+}
 
 func validPreviewLifecycleOperation(action v1.PreviewLifecycleAction) v1.PreviewLifecycleOperation {
 	now := time.Date(2030, 8, 14, 12, 0, 0, 0, time.UTC)

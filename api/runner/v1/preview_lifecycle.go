@@ -84,7 +84,7 @@ func PreviewLifecycleResourceBindingDigest(operation PreviewLifecycleOperation) 
 		"preview_url":         operation.PreviewURL,
 		"commit_set":          previewLifecycleCanonicalCommits(operation.CommitSet),
 		"commit_set_digest":   operation.CommitSetDigest,
-		"original_expires_at": operation.OriginalExpiresAt,
+		"original_expires_at": previewLifecycleCanonicalTime(operation.OriginalExpiresAt),
 	})
 }
 
@@ -112,14 +112,14 @@ func PreviewLifecycleOperationDigest(operation PreviewLifecycleOperation) string
 		"preview_url":                  operation.PreviewURL,
 		"commit_set":                   previewLifecycleCanonicalCommits(operation.CommitSet),
 		"commit_set_digest":            operation.CommitSetDigest,
-		"original_expires_at":          operation.OriginalExpiresAt,
-		"current_effective_expires_at": operation.CurrentEffectiveExpiresAt,
+		"original_expires_at":          previewLifecycleCanonicalTime(operation.OriginalExpiresAt),
+		"current_effective_expires_at": previewLifecycleCanonicalTime(operation.CurrentEffectiveExpiresAt),
 		"action":                       operation.Action,
 		"idempotency_key":              operation.IdempotencyKey,
 		"resource_binding_digest":      operation.ResourceBindingDigest,
 	}
 	if operation.DesiredExpiresAt != nil {
-		material["desired_expires_at"] = *operation.DesiredExpiresAt
+		material["desired_expires_at"] = previewLifecycleCanonicalTime(*operation.DesiredExpiresAt)
 	}
 	return previewLifecycleCanonicalDigest(material)
 }
@@ -132,8 +132,12 @@ func PreviewLifecycleCommandDigest(operation PreviewLifecycleOperation) string {
 		"idempotency_key":                operation.IdempotencyKey,
 		"lease_id":                       operation.LeaseID,
 		"fencing_token":                  operation.FencingToken,
-		"lease_expires_at":               operation.LeaseExpiresAt,
+		"lease_expires_at":               previewLifecycleCanonicalTime(operation.LeaseExpiresAt),
 	})
+}
+
+func previewLifecycleCanonicalTime(value time.Time) string {
+	return value.UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
 func previewLifecycleCanonicalCommits(commits []PreviewObservationCommit) []map[string]any {

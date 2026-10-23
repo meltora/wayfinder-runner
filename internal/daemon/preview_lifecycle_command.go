@@ -56,7 +56,7 @@ func (d *Daemon) executePreviewLifecycle(
 	lifecycleCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
 	outcome := d.previewLifecycleController.Apply(lifecycleCtx, operation)
 	cancel()
-	observedAt := time.Now().UTC()
+	observedAt := time.Now().UTC().Truncate(time.Millisecond)
 	if observedAt.After(operation.LeaseExpiresAt) {
 		observedAt = operation.LeaseExpiresAt
 		outcome = v1.PreviewLifecycleResultOutcome{
