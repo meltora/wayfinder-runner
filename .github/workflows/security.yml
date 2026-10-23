@@ -1,0 +1,58 @@
+name: Security scans
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install govulncheck
+        env:
+          GOTOOLCHAIN: auto
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Scan reachable vulnerabilities
+        run: govulncheck ./...
+
+  gosec:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install gosec
+        env:
+          GOTOOLCHAIN: auto
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+      - name: Scan source
+        run: >-
+          gosec -quiet -exclude-generated
+          -exclude-rules="internal/capability/capability\.go$:G115;internal/daemon/configuration_reload\.go$:G404;internal/daemon/worktree_fingerprint\.go$:G122,G204,G304;internal/identity/pending\.go$:G304;internal/daemon/agent_pack_view\.go$:G304;internal/daemon/agent_pack_composition\.go$:G304;cmd/our-runner/enrollment_recovery\.go$:G304;internal/daemon/work_intake_proposal_generation\.go$:G302;cmd/agentpack/trust_set\.go$:G302"
+          ./...

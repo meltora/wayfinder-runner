@@ -94,6 +94,58 @@ func TestEnabledSparseCheckoutKeepsOutOfConeFiles(t *testing.T) {
 	})
 }
 
+func TestSparseCheckoutRefusesOutOfConeTypeChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(t *testing.T, dir string)
+		want   string
+	}{
+		{
+			name: "a file replaced by a directory",
+			change: func(t *testing.T, dir string) {
+				writeAgentFile(t, dir, "docs/guide.txt/inner.txt", "agent\n")
+			},
+			want: "replaces docs/guide.txt, which is outside the sparse-checkout cone",
+		},
+		{
+			name: "a directory replaced by a file",
+			change: func(t *testing.T, dir string) {
+				if err := os.RemoveAll(filepath.Join(dir, "docs")); err != nil {
+					t.Fatal(err)
+				}
+				writeAgentFile(t, dir, "docs", "agent\n")
+			},
+			want: "replaces docs/guide.txt, which is outside the sparse-checkout cone",
+		},
+	} {
+		t.Run(tc.name+" in the checkout", func(t *testing.T) {
+			f := newSparseResultTest(t)
+			agentGit(t, f.checkout, "sparse-checkout", "set", "--cone", "src")
+			tc.change(t, f.checkout)
+			assertRefused(t, f, tc.want)
+		})
+		t.Run(tc.name+" in a worktree", func(t *testing.T) {
+			f := newSparseResultTest(t)
+			wt := f.addWorktree(t, ".claude/worktrees/s", "agent-s")
+			agentGit(t, wt, "sparse-checkout", "set", "--cone", "src")
+			tc.change(t, wt)
+			assertRefused(t, f, tc.want)
+		})
+	}
+	t.Run("a plain out-of-cone deletion is still restored next to an in-cone directory", func(t *testing.T) {
+		f := newSparseResultTest(t)
+		agentGit(t, f.checkout, "sparse-checkout", "set", "--cone", "src")
+		writeAgentFile(t, f.checkout, "src/docs/guide.txt/inner.txt", "agent\n")
+
+		sha := f.publish(t)
+
+		paths := f.trustedPaths(t, sha)
+		if !slices.Contains(paths, "docs/guide.txt") || !slices.Contains(paths, "src/docs/guide.txt/inner.txt") {
+			t.Fatalf("paths = %v", paths)
+		}
+	})
+}
+
 func TestSparseCheckoutEnabledReadsConfigAsData(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

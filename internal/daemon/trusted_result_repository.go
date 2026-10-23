@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/example/app-runner/internal/repo"
+	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/scanner"
 	"github.com/example/app-runner/internal/validation"
 )
@@ -46,19 +47,26 @@ var trustedRepositoryConfig = [][2]string{
 }
 
 type trustedResultRepository struct {
-	root           string
-	gitDir         string
-	filesDir       string
-	sparseGitDir   string
-	sparseTree     string
-	date           string
-	entryLimit     int
-	byteLimit      int64
-	depthLimit     int
-	pathLimit      int
-	resolveTimeout time.Duration
-	gitlinks       map[string]bool
-	mu             sync.Mutex
+	root               string
+	gitDir             string
+	filesDir           string
+	sparseGitDir       string
+	sparseTree         string
+	date               string
+	entryLimit         int
+	byteLimit          int64
+	depthLimit         int
+	pathLimit          int
+	resolveTimeout     time.Duration
+	gitlinks           map[string]bool
+	gitlinkCommits     map[string]string
+	declaredSubmodules map[string]bool
+	racyWindow         time.Duration
+	cacheLimit         int
+	caches             map[string]*candidateCache
+	cacheClock         uint64
+	cacheSerial        int
+	mu                 sync.Mutex
 }
 
 type trustedGitOptions struct {
@@ -103,6 +111,8 @@ func configureTrustedResultRepository(ctx context.Context, dest, startSHA string
 		depthLimit:     maxAgentResultDepth,
 		pathLimit:      maxAgentResultPathBytes,
 		resolveTimeout: agentResultResolveTimeout,
+		racyWindow:     candidateRacyWindow,
+		cacheLimit:     maxCandidateCaches,
 	}
 	for _, setting := range trustedRepositoryConfig {
 		if _, err := trusted.gitAt(ctx, trustedGitOptions{gitDir: trusted.gitDir}, "config", setting[0], setting[1]); err != nil {
@@ -129,11 +139,21 @@ func configureTrustedResultRepository(ctx context.Context, dest, startSHA string
 	if err != nil || strings.TrimSpace(string(resolved)) != startSHA {
 		return nil, fmt.Errorf("trusted result repository does not contain the start commit")
 	}
-	gitlinks, err := trusted.treeGitlinks(ctx, startSHA)
+	commits, err := trusted.treeGitlinkCommits(ctx, startSHA)
 	if err != nil {
 		return nil, err
 	}
-	trusted.gitlinks = gitlinks
+	declared, err := trusted.submodulePaths(ctx, startSHA)
+	if err != nil {
+		return nil, err
+	}
+	trusted.gitlinks, trusted.gitlinkCommits, trusted.declaredSubmodules = map[string]bool{}, commits, map[string]bool{}
+	for gitlink := range commits {
+		trusted.gitlinks[gitlink] = true
+		if declared[gitlink] {
+			trusted.declaredSubmodules[gitlink] = true
+		}
+	}
 	return trusted, nil
 }
 
@@ -151,15 +171,28 @@ func writeTrustedExclude(gitDir, agentPatterns string) error {
 }
 
 func (t *trustedResultRepository) treeGitlinks(ctx context.Context, commit string) (map[string]bool, error) {
+	commits, err := t.treeGitlinkCommits(ctx, commit)
+	if err != nil {
+		return nil, err
+	}
+	gitlinks := make(map[string]bool, len(commits))
+	for gitlink := range commits {
+		gitlinks[gitlink] = true
+	}
+	return gitlinks, nil
+}
+
+func (t *trustedResultRepository) treeGitlinkCommits(ctx context.Context, commit string) (map[string]string, error) {
 	listing, err := t.git(ctx, "ls-tree", "-r", "-z", "--full-tree", commit)
 	if err != nil {
 		return nil, err
 	}
-	gitlinks := map[string]bool{}
+	gitlinks := map[string]string{}
 	for _, record := range strings.Split(string(listing), "\x00") {
 		header, path, ok := strings.Cut(record, "\t")
-		if ok && strings.HasPrefix(header, gitlinkMode+" ") {
-			gitlinks[path] = true
+		fields := strings.Fields(header)
+		if ok && len(fields) == 3 && fields[0] == gitlinkMode {
+			gitlinks[path] = fields[2]
 		}
 	}
 	return gitlinks, nil
@@ -264,5 +297,24 @@ func (t *trustedResultRepository) updateBranch(ctx context.Context, branch, comm
 }
 
 func removeTrustedResults(stateDir, workDir string) error {
-	return os.RemoveAll(trustedResultsRoot(stateDir, workDir))
+	return errors.Join(
+		removeRunnerTree(trustedResultsRoot(stateDir, workDir)),
+		removeRunnerTree(checkWorkspaceRoot(stateDir, workDir)),
+	)
+}
+
+func removeRunnerTree(target string) error {
+	info, err := os.Lstat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		if err := safeio.MakeTreeRemovable(target); err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(target)
 }

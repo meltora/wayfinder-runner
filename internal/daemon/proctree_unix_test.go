@@ -22,7 +22,7 @@ func TestRunWorkspaceCommandKillsDescendantProcesses(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	_, _, err := jr.runWorkspaceCommand(ctx, "proctree-descendant", dir, "/bin/sh",
+	_, _, err := jr.runWorkspaceCommand(ctx, "proctree-descendant", dir, dir, "/bin/sh",
 		[]string{"-c", "sleep 5; touch \"" + sentinel + "\""}, false, 1<<20)
 	elapsed := time.Since(start)
 	if err == nil {

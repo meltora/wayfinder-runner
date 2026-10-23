@@ -20,7 +20,7 @@ type checkOutcome struct {
 	Duration  time.Duration
 }
 
-func (jr *jobRunner) executeConfiguredCheck(ctx context.Context, checkID string, repository checkedOutRepository, check config.CheckConfig) checkOutcome {
+func (jr *jobRunner) executeConfiguredCheck(ctx context.Context, checkID, root, dir string, check config.CheckConfig) checkOutcome {
 	timeout := 10 * time.Minute
 	if check.TimeoutSeconds > 0 {
 		timeout = time.Duration(check.TimeoutSeconds) * time.Second
@@ -28,7 +28,7 @@ func (jr *jobRunner) executeConfiguredCheck(ctx context.Context, checkID string,
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	start := time.Now()
-	out, capped, runErr := jr.runWorkspaceCommand(checkCtx, "check-"+checkID, repository.WorkDir,
+	out, capped, runErr := jr.runWorkspaceCommand(checkCtx, "check-"+checkID, root, dir,
 		check.Command, check.Args, true, 1<<20)
 	outcome := checkOutcome{
 		Result:    "passed",

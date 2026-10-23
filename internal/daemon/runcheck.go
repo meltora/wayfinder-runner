@@ -99,20 +99,22 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 	}
 	runCtx, stopLeaseWatch := jr.leaseMonitoredContext(ctx)
 	defer stopLeaseWatch()
-	resultRepository, err := jr.checkRepositoryForResult(runCtx, repository)
+	results, err := jr.checkResults(runCtx, nil, "check run")
 	if err != nil {
 		return nil, err
 	}
-	outcome := jr.executeConfiguredCheck(runCtx, checkID, resultRepository, check)
+	outcome, err := jr.runInCheckWorkspace(runCtx, check, results, func(location checkLocation) checkOutcome {
+		return jr.executeConfiguredCheck(runCtx, checkID, location.root, location.dirs[repository.ID], check)
+	})
+	if err != nil {
+		return nil, errors.New(checkWorkspaceMessage(err))
+	}
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
 		return nil, fmt.Errorf("lease validation after check execution: %w", err)
 	}
 	evidenceCtx, evidenceCancel := context.WithTimeout(jr.ctx, 30*time.Second)
 	defer evidenceCancel()
-	commitSHA, dirty, err := jr.checkEvidence(evidenceCtx, repository)
-	if err != nil {
-		return nil, err
-	}
+	commitSHA, dirty := results[repository.ID].commit, false
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
 		return nil, fmt.Errorf("lease validation before check evidence: %w", err)
 	}

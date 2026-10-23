@@ -8,14 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/journal"
-	"github.com/example/app-runner/internal/repo"
 	"github.com/example/app-runner/internal/validation"
 )
 
@@ -321,19 +319,21 @@ func (jr *jobRunner) verifyPlanRepositoryAuthority(ctx context.Context) ([]v1.Pl
 		len(jr.repositories) != len(jr.verifiedPlanRepositories) {
 		return nil, fmt.Errorf("plan repository authority is not the verified command set")
 	}
-	manager := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
 	for index, authority := range jr.verifiedPlanRepositories {
 		repository := jr.repositories[index]
 		if repository.ID != authority.RepositoryID || repository.Base != authority.BaseBranch ||
 			repository.Primary != authority.Primary || repository.Branch != "" {
 			return nil, fmt.Errorf("plan repository checkout identity does not match command authority")
 		}
-		head, err := manager.HeadSHA(ctx, repository.WorkDir)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		head, err := planCheckoutHead(repository.WorkDir)
 		if err != nil || head != authority.BaseSHA {
 			return nil, fmt.Errorf("plan repository checkout mismatch for %s", authority.RepositoryID)
 		}
-		status, err := manager.Git(ctx, repository.WorkDir, "status", "--porcelain=v1", "--untracked-files=all")
-		if err != nil || status != "" {
+		baseline, err := planCheckoutBaseline(repository.WorkDir)
+		if err != nil || repository.PlanBaseline == "" || baseline != repository.PlanBaseline {
 			return nil, fmt.Errorf("plan repository checkout mismatch for %s", authority.RepositoryID)
 		}
 	}

@@ -29,7 +29,7 @@ func TestWorkspaceCommandUsesBoundedCredentialFreeEnvironment(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	jr.d.cfg.Isolation = "direct"
 	t.Setenv("CHECK_PRIVATE_SECRET", "must-not-leak")
-	out, _, err := jr.runWorkspaceCommand(context.Background(), "environment", t.TempDir(), "/bin/sh",
+	out, _, err := jr.runWorkspaceCommand(context.Background(), "environment", jr.workDir, t.TempDir(), "/bin/sh",
 		[]string{"-c", `printf '%s' "${CHECK_PRIVATE_SECRET-unset}"; printf '0123456789'`}, false, 8)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestWorkspaceCommandUsesBoundedCredentialFreeEnvironment(t *testing.T) {
 	if strings.Contains(out, "must-not-leak") || !strings.Contains(out, "truncated") {
 		t.Fatalf("output=%q", out)
 	}
-	if _, _, err := jr.runWorkspaceCommand(context.Background(), "failure", t.TempDir(), "/bin/sh", []string{"-c", "exit 7"}, false, 1024); err == nil {
+	if _, _, err := jr.runWorkspaceCommand(context.Background(), "failure", jr.workDir, t.TempDir(), "/bin/sh", []string{"-c", "exit 7"}, false, 1024); err == nil {
 		t.Fatal("failing command reported success")
 	}
 }

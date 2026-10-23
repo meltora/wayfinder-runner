@@ -245,6 +245,21 @@ func TestValidateRejectsInvalidProductionSettings(t *testing.T) {
 		"check command":    func(c *Config) { c.Checks = map[string]CheckConfig{"unit": {}} },
 		"check timeout":    func(c *Config) { c.Checks = map[string]CheckConfig{"unit": {Command: "go", TimeoutSeconds: 2000}} },
 		"check repository": func(c *Config) { c.Checks = map[string]CheckConfig{"unit": {Command: "go", RepositoryID: "missing"}} },
+		"check dependency path": func(c *Config) {
+			c.Checks = map[string]CheckConfig{"unit": {Command: "go", DependencyDirectories: []string{"a/node_modules"}}}
+		},
+		"check dependency parent": func(c *Config) {
+			c.Checks = map[string]CheckConfig{"unit": {Command: "go", DependencyDirectories: []string{".."}}}
+		},
+		"check dependency git": func(c *Config) {
+			c.Checks = map[string]CheckConfig{"unit": {Command: "go", DependencyDirectories: []string{".GIT"}}}
+		},
+		"check dependency empty": func(c *Config) {
+			c.Checks = map[string]CheckConfig{"unit": {Command: "go", DependencyDirectories: []string{""}}}
+		},
+		"check dependency count": func(c *Config) {
+			c.Checks = map[string]CheckConfig{"unit": {Command: "go", DependencyDirectories: make([]string, 17)}}
+		},
 	}
 	for name, mutate := range cases {
 		name, mutate := name, mutate
@@ -271,7 +286,11 @@ func TestValidateCompleteProductionConfiguration(t *testing.T) {
 	cfg.AgentPackPublicKeys = map[string]string{"platform-v1": key}
 	cfg.AllowedArtifactOrigins = []string{"https://artifacts.example.com"}
 	cfg.Repositories = map[string]RepositoryConfig{"web": {URL: "ssh://git@git.example.com/company/web.git"}}
-	cfg.Checks = map[string]CheckConfig{"unit": {Command: "go", Args: []string{"test", "./..."}, TimeoutSeconds: 300, RepositoryID: "web"}}
+	cfg.Checks = map[string]CheckConfig{
+		"unit": {Command: "go", Args: []string{"test", "./..."}, TimeoutSeconds: 300, RepositoryID: "web"},
+		"lint": {Command: "pnpm", Args: []string{"lint"}, DependencyDirectories: []string{"node_modules", ".venv"}},
+		"none": {Command: "make", DependencyDirectories: []string{}},
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("complete config rejected: %v", err)
 	}
@@ -321,7 +340,7 @@ func TestNormalizeCopiesMutableFields(t *testing.T) {
 		Labels:                 map[string]string{"pool": "one"},
 		AgentPackPublicKeys:    map[string]string{"key": "value"},
 		Repositories:           map[string]RepositoryConfig{"repo": {URL: "https://git.example.com/repo"}},
-		Checks:                 map[string]CheckConfig{"unit": {Command: "go", Args: []string{"test"}}},
+		Checks:                 map[string]CheckConfig{"unit": {Command: "go", Args: []string{"test"}, DependencyDirectories: []string{"node_modules"}}},
 		AllowedArtifactOrigins: []string{"https://artifacts.example.com"},
 		SourcePublicationInstallations: map[string]SourcePublicationInstallationConfig{
 			"github-main": {Provider: "github", APIBaseURL: "https://api.github.com", TokenFile: "/run/secrets/github-main"},
@@ -334,11 +353,13 @@ func TestNormalizeCopiesMutableFields(t *testing.T) {
 	out.Repositories["repo"] = RepositoryConfig{URL: "changed"}
 	check := out.Checks["unit"]
 	check.Args[0] = "changed"
+	check.DependencyDirectories[0] = "changed"
 	out.AllowedArtifactOrigins[0] = "changed"
 	out.SourcePublicationInstallations["github-main"] = SourcePublicationInstallationConfig{Provider: "github", TokenFile: "/changed"}
 	if in.ProviderBinaries["codex"] != "/bin/codex" || in.Labels["pool"] != "one" ||
 		in.AgentPackPublicKeys["key"] != "value" || in.Repositories["repo"].URL != "https://git.example.com/repo" ||
-		in.Checks["unit"].Args[0] != "test" || in.AllowedArtifactOrigins[0] != "https://artifacts.example.com" ||
+		in.Checks["unit"].Args[0] != "test" || in.Checks["unit"].DependencyDirectories[0] != "node_modules" ||
+		in.AllowedArtifactOrigins[0] != "https://artifacts.example.com" ||
 		in.SourcePublicationInstallations["github-main"].TokenFile != "/run/secrets/github-main" {
 		t.Fatal("Normalize mutated the caller's configuration")
 	}

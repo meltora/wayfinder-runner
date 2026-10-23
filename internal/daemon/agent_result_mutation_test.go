@@ -79,8 +79,23 @@ func TestGitlinkRefusalFailsClosed(t *testing.T) {
 	if err := refuseCommittedGitlinks(context.Background(), repository, f.base); err == nil {
 		t.Fatal("an invalid base was accepted")
 	}
-	if !rawDiffAddsGitlink("garbage\x00path\x00") {
+	if !rawDiffAddsGitlink("garbage\x00path\x00", nil) {
 		t.Fatal("malformed diff output was accepted")
+	}
+	declared := map[string]bool{"lib": true}
+	pointerChange := ":160000 160000 " + strings.Repeat("a", 40) + " " + strings.Repeat("b", 40) + " M\x00"
+	if rawDiffAddsGitlink(pointerChange+"lib\x00", declared) {
+		t.Fatal("a declared submodule pointer change was refused")
+	}
+	if !rawDiffAddsGitlink(pointerChange+"other\x00", declared) {
+		t.Fatal("an undeclared gitlink pointer change was accepted")
+	}
+	added := ":000000 160000 " + strings.Repeat("0", 40) + " " + strings.Repeat("b", 40) + " A\x00lib\x00"
+	if !rawDiffAddsGitlink(added, declared) {
+		t.Fatal("a gitlink added over the base was accepted")
+	}
+	if !rawDiffAddsGitlink(":160000 160000 "+strings.Repeat("a", 40)+" "+strings.Repeat("b", 40)+" M\x00", declared) {
+		t.Fatal("a header without a path was accepted")
 	}
 }
 

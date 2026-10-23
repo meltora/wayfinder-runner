@@ -62,9 +62,13 @@ func configurePlanPublicationRepositories(t *testing.T, jr *jobRunner) []v1.JobR
 	jr.job.Kind = v1.JobKindPlan
 	jr.job.Repositories = append([]v1.JobRepository(nil), repositories...)
 	jr.verifiedPlanRepositories = append([]v1.JobRepository(nil), repositories...)
+	baseline, err := planCheckoutBaseline(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	jr.repositories = []checkedOutRepository{
-		{ID: "repository-1", Base: "main", WorkDir: dir, Primary: true},
-		{ID: "repository-2", Base: "release", WorkDir: dir},
+		{ID: "repository-1", Base: "main", WorkDir: dir, Primary: true, PlanBaseline: baseline},
+		{ID: "repository-2", Base: "release", WorkDir: dir, PlanBaseline: baseline},
 	}
 	return repositories
 }

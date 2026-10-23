@@ -55,7 +55,9 @@ type jobRunner struct {
 	decisions          map[string]chan v1.CommandPayload
 	deliveredDecisions map[string]decisionAnswer
 
-	checkMu sync.Mutex
+	checkMu        sync.Mutex
+	checkSpaceOnce sync.Once
+	checkSpace     *checkWorkspace
 
 	reviewReadyMu      sync.Mutex
 	reviewReadyIntent  *reviewReadyIntent
@@ -77,16 +79,17 @@ type jobRunner struct {
 }
 
 type checkedOutRepository struct {
-	ID          string
-	URL         string
-	Base        string
-	BaseSHA     string
-	StartSHA    string
-	Branch      string
-	WorkDir     string
-	Primary     bool
-	Fingerprint string
-	Trusted     *trustedResultRepository
+	ID           string
+	URL          string
+	Base         string
+	BaseSHA      string
+	StartSHA     string
+	Branch       string
+	WorkDir      string
+	Primary      bool
+	Fingerprint  string
+	PlanBaseline string
+	Trusted      *trustedResultRepository
 }
 
 type toolCallMemo struct {
@@ -294,13 +297,14 @@ func cleanupOrphanedJobState(stateDir string) error {
 	var errs []error
 	for _, target := range []struct {
 		dir, prefix string
+		locked      bool
 	}{
-		{filepath.Join(stateDir, "jobs"), "job-"},
-		{filepath.Join(stateDir, trustedResultsDirectory), "job-"},
-		{filepath.Join(stateDir, "job-homes"), "home-"},
-		{filepath.Join(stateDir, "sockets"), "job-"},
-		{filepath.Join(stateDir, "tmux"), "job-"},
-		{filepath.Join(stateDir, "supervisor"), ".herdr-exit-"},
+		{filepath.Join(stateDir, "jobs"), "job-", false},
+		{filepath.Join(stateDir, trustedResultsDirectory), "job-", true},
+		{filepath.Join(stateDir, "job-homes"), "home-", false},
+		{filepath.Join(stateDir, "sockets"), "job-", false},
+		{filepath.Join(stateDir, "tmux"), "job-", false},
+		{filepath.Join(stateDir, "supervisor"), ".herdr-exit-", false},
 	} {
 		entries, err := os.ReadDir(target.dir)
 		if os.IsNotExist(err) {
@@ -315,7 +319,11 @@ func cleanupOrphanedJobState(stateDir string) error {
 				continue
 			}
 			path := filepath.Join(target.dir, entry.Name())
-			if err := os.RemoveAll(path); err != nil {
+			remove := os.RemoveAll
+			if target.locked {
+				remove = removeRunnerTree
+			}
+			if err := remove(path); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -851,6 +859,14 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 			_ = rm.RemoveWorkspace(wtDir)
 			return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, err)
 		}
+		var planBaseline string
+		if job.Kind == v1.JobKindPlan {
+			if planBaseline, err = planCheckoutBaseline(wtDir); err != nil {
+				cleanup()
+				_ = rm.RemoveWorkspace(wtDir)
+				return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, err)
+			}
+		}
 		var trusted *trustedResultRepository
 		if job.Kind == v1.JobKindBuild {
 			trusted, err = jr.prepareTrustedResultRepository(ctx, rm, ref.RepositoryID, repository.URL, startSHA)
@@ -863,6 +879,7 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 		runtimeRepository := checkedOutRepository{
 			ID: ref.RepositoryID, URL: repository.URL, Base: base, BaseSHA: ref.BaseSHA, StartSHA: startSHA,
 			Branch: branch, WorkDir: wtDir, Primary: ref.Primary, Fingerprint: fingerprint, Trusted: trusted,
+			PlanBaseline: planBaseline,
 		}
 		jr.repositories = append(jr.repositories, runtimeRepository)
 		if ref.Primary {

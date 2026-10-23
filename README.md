@@ -191,7 +191,18 @@ checks:
     args: [test, --, --runInBand]
     timeout_seconds: 900
     repository_id: web-app
+    dependency_directories: [node_modules]
 ```
+
+Checks never run in the agent's directory. Before every check, on demand or
+terminal, the runner rebuilds a check workspace under
+`job-results/<job>.checks` from the published commit of every job repository,
+so files ignored by Git, the agent's `.git` metadata, and anything a previous
+check wrote are absent. Only Git-ignored directories whose name is listed in
+`dependency_directories` are carried over from the agent's result (default
+`[node_modules]`; `[]` carries none), copied incrementally and bounded to
+1,000,000 entries and 4 GiB. A check therefore cannot change the agent's files,
+and its result names the commit it actually tested.
 
 For GitHub repositories, configure an HTTPS URL on the runner's GitHub Git host
 (for example `https://github.com/company/web-app.git`) and let the platform's

@@ -28,14 +28,14 @@ func (jr *jobRunner) finalizeBuild(
 	job := jr.job
 	extra := map[string]any{}
 	commitSet := make(map[string]string, len(jr.repositories))
-	checkDirs := make(map[string]string, len(jr.repositories))
+	results := make(map[string]agentResult, len(jr.repositories))
 	for _, repository := range jr.repositories {
 		result, err := jr.publishAgentResult(ctx, repository)
 		if err != nil {
 			return "failed", nil, fmt.Errorf("commit %s: %w", repository.ID, err)
 		}
 		commitSet[repository.ID] = result.commit
-		checkDirs[repository.ID] = result.dir
+		results[repository.ID] = result
 		if repository.Primary {
 			extra["head_sha"] = result.commit
 			extra["branch"] = repository.Branch
@@ -43,7 +43,7 @@ func (jr *jobRunner) finalizeBuild(
 	}
 	extra["commit_set"] = commitSet
 
-	checksPassed := jr.runRequiredChecks(ctx, commitSet, checkDirs)
+	checksPassed := jr.runRequiredChecks(ctx, commitSet, results)
 
 	for _, repository := range jr.repositories {
 		if err := jr.collectPatch(ctx, repository, commitSet[repository.ID]); err != nil {
@@ -71,7 +71,7 @@ func (jr *jobRunner) finalizeBuild(
 	return "succeeded", extra, nil
 }
 
-func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet, checkDirs map[string]string) bool {
+func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string]string, results map[string]agentResult) bool {
 	allOK := true
 	for _, checkID := range jr.job.RequiredChecks {
 		check, ok := jr.d.cfg.Checks[checkID]
@@ -94,10 +94,7 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet, checkDirs
 			})
 			continue
 		}
-		if dir := checkDirs[repository.ID]; dir != "" {
-			repository.WorkDir = dir
-		}
-		outcome := jr.executeConfiguredCheck(ctx, checkID, repository, check)
+		outcome := jr.requiredCheckOutcome(ctx, checkID, repository, check, results)
 		if outcome.Result != "passed" {
 			allOK = false
 		}
@@ -276,7 +273,16 @@ func (jr *jobRunner) checkRepository(id string) (checkedOutRepository, bool) {
 	return checkedOutRepository{}, false
 }
 
-func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, dir, command string, args []string, configuredNetwork bool, outputLimit int) (string, bool, error) {
+func (jr *jobRunner) commandPolicy(dir, root, home, attempt string, configuredNetwork bool) isolation.Policy {
+	return isolation.Policy{
+		MemoryMB: jr.d.cfg.JobMemoryMB, CPUs: jr.d.cfg.JobCPUs, PIDs: jr.d.cfg.JobPIDs,
+		NetworkNone: !configuredNetwork || jr.d.cfg.JobNetwork == "none", NetworkName: jr.d.cfg.JobNetworkName,
+		ReadOnlyFS: true, WorkDir: dir, WorkspaceRoot: root, JobHome: home,
+		Image: jr.d.cfg.JobImage, RunnerID: jr.d.runnerID, AttemptID: attempt,
+	}
+}
+
+func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, root, dir, command string, args []string, configuredNetwork bool, outputLimit int) (string, bool, error) {
 	wrappedCommand := command
 	wrappedArgs := append([]string(nil), args...)
 	workDir := dir
@@ -306,12 +312,7 @@ func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, dir, comm
 			}
 			return homeErr
 		}
-		policy := isolation.Policy{
-			MemoryMB: jr.d.cfg.JobMemoryMB, CPUs: jr.d.cfg.JobCPUs, PIDs: jr.d.cfg.JobPIDs,
-			NetworkNone: !configuredNetwork || jr.d.cfg.JobNetwork == "none", NetworkName: jr.d.cfg.JobNetworkName,
-			ReadOnlyFS: true, WorkDir: dir, WorkspaceRoot: jr.workDir, JobHome: home,
-			Image: jr.d.cfg.JobImage, RunnerID: jr.d.runnerID, AttemptID: containerAttempt,
-		}
+		policy := jr.commandPolicy(dir, root, home, containerAttempt, configuredNetwork)
 		wrappedCommand, wrappedArgs, err = iso.Wrap(command, wrappedArgs, policy)
 		if err != nil {
 			_ = cleanup()

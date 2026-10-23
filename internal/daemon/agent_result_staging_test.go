@@ -109,11 +109,11 @@ func TestTrustedStepRefusalMapsFailures(t *testing.T) {
 func TestSnapshotFilesystemFailureIsATypedRefusalWithoutHostPaths(t *testing.T) {
 	f := newAgentResultTest(t)
 	trusted := f.repository().Trusted
-	writeAgentFile(t, trusted.filesDir, "stale/leftover.txt", "stale\n")
-	if err := os.Chmod(trusted.filesDir, 0o500); err != nil {
+	candidates := filepath.Join(trusted.root, candidateCachesDir)
+	if err := os.Mkdir(candidates, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(trusted.filesDir, 0o700) })
+	t.Cleanup(func() { _ = os.Chmod(candidates, 0o700) })
 	writeAgentFile(t, f.checkout, "feature.txt", "real\n")
 
 	_, err := f.jr.resolveAgentResult(context.Background(), f.repository(), "build result")

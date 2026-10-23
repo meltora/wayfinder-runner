@@ -60,6 +60,9 @@ labels:
 #     args: [test, --, --runInBand]
 #     timeout_seconds: 900
 #     repository_id: web-app
+#     # Git-ignored directories carried into the published check workspace.
+#     # Omit for [node_modules]; [] carries none.
+#     dependency_directories: [node_modules]
 
 # Preview observation is a daemon-owned HTTPS operation, never an agent-provided
 # request. The blueprint identity and complete health-check inventory must match

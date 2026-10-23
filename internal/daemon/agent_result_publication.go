@@ -57,13 +57,13 @@ func refuseCommittedGitlinks(ctx context.Context, repository checkedOutRepositor
 	if err != nil {
 		return err
 	}
-	if rawDiffAddsGitlink(string(raw)) {
+	if rawDiffAddsGitlink(string(raw), repository.Trusted.declaredSubmodules) {
 		return agentResultRefusal(repository.ID, "the result adds or changes a gitlink")
 	}
 	return nil
 }
 
-func rawDiffAddsGitlink(raw string) bool {
+func rawDiffAddsGitlink(raw string, declared map[string]bool) bool {
 	fields := strings.Split(raw, "\x00")
 	for index := 0; index < len(fields); index += 2 {
 		header := strings.TrimLeft(fields[index], "\n")
@@ -71,7 +71,13 @@ func rawDiffAddsGitlink(raw string) bool {
 			break
 		}
 		modes := strings.Fields(strings.TrimPrefix(header, ":"))
-		if !strings.HasPrefix(header, ":") || len(modes) < 2 || modes[1] == gitlinkMode {
+		if !strings.HasPrefix(header, ":") || len(modes) < 2 || index+1 >= len(fields) {
+			return true
+		}
+		if modes[1] != gitlinkMode {
+			continue
+		}
+		if modes[0] != gitlinkMode || !declared[fields[index+1]] {
 			return true
 		}
 	}

@@ -30,11 +30,12 @@ func agentResultAmbiguity(repositoryID, format string, args ...any) error {
 }
 
 type agentCandidate struct {
-	source   string
-	relPath  string
-	adminRel string
-	tree     string
-	changes  map[string]string
+	source      string
+	relPath     string
+	adminRel    string
+	tree        string
+	changes     map[string]string
+	ignoredDirs []string
 }
 
 type agentResult struct {
@@ -88,22 +89,26 @@ func (jr *jobRunner) resolveWithinBound(ctx context.Context, trusted *trustedRes
 	for index := range candidates {
 		candidate := &candidates[index]
 		label := describeCandidate(*candidate)
-		tree, err := trusted.snapshot(ctx, workspace, agentSnapshot{
+		outcome, err := trusted.snapshot(ctx, workspace, agentSnapshot{
 			candidate: *candidate, skip: nestedCandidates(candidates, candidate.relPath),
 			excludeRel: excludeRel, commonGitRel: commonGitRel, start: start, repositoryID: repository.ID,
+			workspaceRoot: jr.workDir,
 		})
 		if err != nil {
 			return agentResult{}, trusted.stepRefusal(ctx, repository.ID, label, err)
 		}
-		changes, err := trusted.changeSet(ctx, start, tree)
+		changes, err := trusted.changeSet(ctx, start, outcome.tree)
 		if err != nil {
 			return agentResult{}, trusted.stepRefusal(ctx, repository.ID, label, err)
 		}
-		candidate.tree, candidate.changes = tree, changes
+		candidate.tree, candidate.changes, candidate.ignoredDirs = outcome.tree, changes, outcome.ignoredDirs
 	}
 	winner, err := selectAgentResult(repository.ID, candidates)
 	if err != nil {
 		return agentResult{}, err
+	}
+	if err := trusted.refuseRawLFSContent(ctx, repository.ID, describeCandidate(winner), winner); err != nil {
+		return agentResult{}, trusted.stepRefusal(ctx, repository.ID, describeCandidate(winner), err)
 	}
 	result := agentResult{candidate: winner, commit: start, dir: filepath.Join(jr.workDir, filepath.FromSlash(winner.relPath))}
 	if len(winner.changes) > 0 {

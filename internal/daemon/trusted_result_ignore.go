@@ -18,11 +18,16 @@ type ignoreOracle struct {
 }
 
 func (t *trustedResultRepository) startIgnoreOracle(ctx context.Context, gitDir, workTree string, noIndex bool) (*ignoreOracle, error) {
+	return t.startOracle(ctx, trustedGitOptions{gitDir: gitDir, workTree: workTree}, noIndex)
+}
+
+func (t *trustedResultRepository) startOracle(ctx context.Context, options trustedGitOptions, noIndex bool) (*ignoreOracle, error) {
 	args := []string{"check-ignore", "--stdin", "-z", "-v", "-n"}
 	if noIndex {
 		args = append(args, "--no-index")
 	}
-	command := t.command(ctx, trustedGitOptions{gitDir: gitDir, workTree: workTree, env: []string{"GIT_FLUSH=1"}}, args...)
+	options.env = append(append([]string{}, options.env...), "GIT_FLUSH=1")
+	command := t.command(ctx, options, args...)
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		return nil, err
