@@ -87,6 +87,26 @@ func TestProviderReviewFeedbackContentLeaseCrossingFailsClosed(t *testing.T) {
 	}
 }
 
+func TestProviderReviewFeedbackContentResultObservedAtHasControlPlaneMillisecondPrecision(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	command := validProviderReviewFeedbackContentCommand()
+	jr.d.providerReviewFeedbackContentReader = &fakeProviderReviewFeedbackContentReader{outcome: successfulFeedbackContent(command.ProviderReviewFeedbackContent.ExpectedHeadSHA)}
+	var event v1.ProviderReviewFeedbackContentResultEvent
+	jr.d.eventSink = func(_ context.Context, payload any) error {
+		event = payload.(v1.ProviderReviewFeedbackContentResultEvent)
+		return nil
+	}
+	before := time.Now().UTC().Truncate(time.Millisecond)
+	if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: "provider-review-feedback-content-command-" + strings.Repeat("f", 64)}, command); err != nil {
+		t.Fatal(err)
+	}
+	if event.Outcome.Kind != v1.ProviderReviewFeedbackContentSucceeded || event.ObservedAt.IsZero() ||
+		event.ObservedAt.Nanosecond()%int(time.Millisecond) != 0 || event.ObservedAt.Before(before) ||
+		event.ObservedAt.Location() != time.UTC {
+		t.Fatalf("observed_at=%s kind=%s is not a UTC millisecond instant at or after %s", event.ObservedAt.Format(time.RFC3339Nano), event.Outcome.Kind, before)
+	}
+}
+
 func TestProviderReviewFeedbackContentRejectsCrossCapabilitySmuggling(t *testing.T) {
 	command := validProviderReviewFeedbackContentCommand()
 	command.ProviderReviewObservation = &v1.ProviderReviewObservationOperation{}

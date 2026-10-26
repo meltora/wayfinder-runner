@@ -54,7 +54,7 @@ func (d *Daemon) executeReviewerIdentityVerification(
 	verificationCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
 	defer cancel()
 	outcome := verifier.VerifyReviewerIdentity(verificationCtx, operation, providerCredential)
-	observedAt := time.Now().UTC()
+	observedAt := time.Now().UTC().Truncate(time.Millisecond)
 	if observedAt.After(operation.LeaseExpiresAt) {
 		observedAt = operation.LeaseExpiresAt
 		outcome = v1.ReviewerIdentityVerificationResultOutcome{

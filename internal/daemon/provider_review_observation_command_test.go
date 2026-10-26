@@ -118,6 +118,41 @@ func TestProviderReviewObservationLeaseCrossingBecomesRetryable(t *testing.T) {
 		t.Fatalf("event=%#v", event)
 	}
 }
+func TestProviderReviewObservationResultObservedAtHasControlPlaneMillisecondPrecision(t *testing.T) {
+	for name, completion := range map[string]bool{"review_cycle": false, "completion_revalidation": true} {
+		t.Run(name, func(t *testing.T) {
+			jr, _ := testJobRunner(t)
+			command := validProviderReviewObservationCommand()
+			outcome := successfulProviderReviewObservationOutcome(command.ProviderReviewObservation.ExpectedHeadSHA)
+			if completion {
+				command.ProviderReviewObservation.SchemaVersion = v1.ProviderReviewObservationCompletionVersion
+				command.ProviderReviewObservation.Purpose = v1.ProviderReviewObservationCompletionRevalidation
+				command.ProviderReviewObservation.ExpectedTargetBranch = "main"
+				outcome.RequestState = v1.ProviderReviewObservationRequestMerged
+				outcome.MergeCommitSHA, outcome.TargetBranch, outcome.TargetHeadSHA = strings.Repeat("a", 40), "main", strings.Repeat("b", 40)
+				outcome.MergeCommitReachableFromTarget, outcome.MergedByProviderAccountID = true, "42"
+				outcome.MergedAt = time.Now().UTC().Add(-2 * time.Minute)
+				outcome.ProviderUpdatedAt = outcome.MergedAt.Add(time.Minute)
+			}
+			jr.d.providerReviewObserver = &fakeProviderReviewObserver{outcome: outcome}
+			var event v1.ProviderReviewObservationResultEvent
+			jr.d.eventSink = func(_ context.Context, payload any) error {
+				event = payload.(v1.ProviderReviewObservationResultEvent)
+				return nil
+			}
+			before := time.Now().UTC().Truncate(time.Millisecond)
+			if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: "provider-review-observation-command-" + strings.Repeat("e", 64)}, command); err != nil {
+				t.Fatal(err)
+			}
+			if event.Kind != v1.EventProviderReviewObservationResult || event.ObservedAt.IsZero() ||
+				event.ObservedAt.Nanosecond()%int(time.Millisecond) != 0 || event.ObservedAt.Before(before) ||
+				event.ObservedAt.Location() != time.UTC {
+				t.Fatalf("observed_at=%s kind=%s is not a UTC millisecond instant at or after %s", event.ObservedAt.Format(time.RFC3339Nano), event.Kind, before)
+			}
+		})
+	}
+}
+
 func TestProviderReviewObservationDurableDuplicateReplaysWithoutRefetch(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	command := validProviderReviewObservationCommand()

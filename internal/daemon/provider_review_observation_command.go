@@ -49,7 +49,7 @@ func (d *Daemon) executeProviderReviewObservation(ctx context.Context, id string
 	} else {
 		outcome = observer.ObserveProviderReviews(observeCtx, op, providerCredential)
 	}
-	observed := time.Now().UTC()
+	observed := time.Now().UTC().Truncate(time.Millisecond)
 	if observed.After(op.LeaseExpiresAt) {
 		observed = op.LeaseExpiresAt
 		outcome = v1.ProviderReviewObservationResultOutcome{Kind: v1.ProviderReviewObservationRetryable, Code: v1.ProviderReviewObservationProviderUnavailable}

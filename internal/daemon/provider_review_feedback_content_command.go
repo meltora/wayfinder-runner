@@ -51,7 +51,7 @@ func (d *Daemon) executeProviderReviewFeedbackContent(ctx context.Context, id st
 	} else {
 		outcome = reader.FetchProviderReviewFeedbackContent(fetchCtx, op, providerCredential)
 	}
-	observed := time.Now().UTC()
+	observed := time.Now().UTC().Truncate(time.Millisecond)
 	if observed.Before(op.EvidenceObservedAt) {
 		observed = op.EvidenceObservedAt
 	}

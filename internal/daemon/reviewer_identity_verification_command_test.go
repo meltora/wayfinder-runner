@@ -165,6 +165,34 @@ func TestReviewerIdentityVerificationCommandEmitsOneDurableNormalizedResult(t *t
 	}
 }
 
+func TestReviewerIdentityVerificationResultObservedAtHasControlPlaneMillisecondPrecision(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	command := validReviewerIdentityVerificationCommand()
+	jr.d.reviewerIdentityVerifier = &fakeReviewerIdentityVerifier{
+		outcome: v1.ReviewerIdentityVerificationResultOutcome{
+			Kind:             v1.ReviewerIdentityVerificationSucceeded,
+			ProviderUsername: "octocat", AssignmentPrincipal: "octocat",
+			Repositories: []v1.ReviewerIdentityRepositoryEvidence{
+				{RepositoryID: "repository-1", RepositoryExternalID: "101", EffectiveReviewerAccess: v1.ReviewerIdentityEligible},
+			},
+		},
+	}
+	var event v1.ReviewerIdentityVerificationResultEvent
+	jr.d.eventSink = func(_ context.Context, payload any) error {
+		event = payload.(v1.ReviewerIdentityVerificationResultEvent)
+		return nil
+	}
+	before := time.Now().UTC().Truncate(time.Millisecond)
+	if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: "reviewer-identity-verification-command-" + strings.Repeat("f", 64)}, command); err != nil {
+		t.Fatal(err)
+	}
+	if event.Outcome.Kind != v1.ReviewerIdentityVerificationSucceeded || event.ObservedAt.IsZero() ||
+		event.ObservedAt.Nanosecond()%int(time.Millisecond) != 0 || event.ObservedAt.Before(before) ||
+		event.ObservedAt.Location() != time.UTC {
+		t.Fatalf("observed_at=%s kind=%s is not a UTC millisecond instant at or after %s", event.ObservedAt.Format(time.RFC3339Nano), event.Outcome.Kind, before)
+	}
+}
+
 func TestReviewerIdentityVerificationRejectsExpiredAuthorityBeforeProviderCall(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	command := validReviewerIdentityVerificationCommand()
