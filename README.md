@@ -598,7 +598,10 @@ com.ourplatform.egress-policy=<configured egress_policy_id>
 ```
 
 These mutable Docker labels are not proof of effective egress enforcement.
-Prompt-only work-intake consultation also requires a root-authenticated policy
+`our-runner doctor` therefore reports a restricted network whose topology and
+labels match as `restricted-egress` Warn ("labels are not proof that egress is
+enforced on this host"), which does not change its exit code; a missing network,
+a label mismatch or an ineligible topology is a Fail. Prompt-only work-intake consultation also requires a root-authenticated policy
 agent at `egress_policy_verifier_socket` (default
 `/run/our-runner-egress/policy.sock`). Immediately before a provider start, the
 runner acquires a nonce-bound enforcement lease over that authenticated Unix
@@ -740,9 +743,20 @@ directory until a code has been accepted. Without a terminal, pass
 before and apply no format check.
 
 The dashboard owns only `isolation`, `allow_unsafe_direct`, `provider`,
-`job_image`, `job_network`, `job_memory_mb`, `job_cpus`, `job_pids`, `labels`,
-`repositories` and `source_publication_installations` (GitHub entries without
-`token_file`). A delivered `agent_pack_public_keys` map and envelope
+`job_image`, `job_network`, `job_network_name`, `egress_policy_id`,
+`job_memory_mb`, `job_cpus`, `job_pids`, `labels`, `repositories` and
+`source_publication_installations` (GitHub entries without `token_file`). The
+dashboard delivers `job_network_name` and `egress_policy_id` only together with
+`job_network: restricted` and Docker isolation; each is 1 to 128 letters,
+digits, `.`, `_` or `-` starting with a letter or digit, and the network name
+may not be `host`, `bridge`, `none` or `default`. The dashboard can only name a
+network: at start the runner still checks that the host administrator created
+it with the eligible topology and the labels for the same policy ID, and refuses
+to start otherwise. All three network keys need a restart to change. A runner
+build older than this support rejects a document carrying either key ("config
+contains key ..., which the control plane does not own") and keeps its running
+configuration. `egress_policy_verifier_socket` and `work_intake_proposal` stay
+host-owned. A delivered `agent_pack_public_keys` map and envelope
 `pack_key_fingerprints` map are still accepted for compatibility and ignored;
 Agent Pack trust comes only from the platform trusted key set. A delivered
 document with any other key is rejected as a whole. The host keeps
@@ -752,8 +766,9 @@ document with any other key is rejected as a whole. The host keeps
 `<state-dir>/runner.remote.json`. Both files are written with mode 0600 only after
 the merged configuration passes the same validation as `config.yaml`.
 
-`configure` shows the runner ID, isolation, provider, job image, repository
-counts, then asks only for local values: the provider environment variable for
+`configure` shows the runner ID, isolation, provider, job image, the job network
+(`none`, or the restricted Docker network and egress policy ID that `start`
+checks against the network labels), repository counts, then asks only for local values: the provider environment variable for
 the selected provider (`CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for
 Codex), an optional provider binary path, and, when the dashboard selected direct
 isolation, a typed `direct` confirmation. Without a terminal, pass

@@ -63,10 +63,15 @@ func TestRestrictedNetworkVerification(t *testing.T) {
 		return attestation, nil
 	}
 	opts := Options{JobNetwork: "restricted", JobNetworkName: "egress", EgressPolicyID: "policy-v1"}
-	if c := checkRestrictedNetwork(context.Background(), opts); c.Status != OK || !called {
-		t.Fatalf("status = %v, called = %t: %s", c.Status, called, c.Detail)
+	labelOnly := checkRestrictedNetwork(context.Background(), opts)
+	if labelOnly.Status != Warn || !called ||
+		labelOnly.Detail != "network egress carries the labels for egress policy policy-v1; labels are not proof that egress is enforced on this host" {
+		t.Fatalf("status = %v, called = %t: %s", labelOnly.Status, called, labelOnly.Detail)
 	}
-	if c := checkRestrictedNetwork(context.Background(), Options{JobNetwork: "none"}); c.Status != OK {
+	if code := (Report{Checks: []Check{labelOnly}}).ExitCode(); code != 0 {
+		t.Fatalf("label-only exit code = %d", code)
+	}
+	if c := checkRestrictedNetwork(context.Background(), Options{JobNetwork: "none"}); c.Status != OK || c.Detail != "job network is disabled" {
 		t.Fatalf("none status = %v: %s", c.Status, c.Detail)
 	}
 	policyCalled := false
@@ -84,6 +89,39 @@ func TestRestrictedNetworkVerification(t *testing.T) {
 	}
 	if c := checkRestrictedNetwork(context.Background(), opts); c.Status != Fail {
 		t.Fatalf("missing effective policy status = %v: %s", c.Status, c.Detail)
+	}
+}
+
+func TestRestrictedNetworkAttestationFailureFails(t *testing.T) {
+	originalNetwork := attestDockerNetwork
+	t.Cleanup(func() { attestDockerNetwork = originalNetwork })
+	for _, failure := range []string{
+		"docker network our-runner-jobs-dev was not found",
+		"docker network egress-policy label does not match local-dev-egress-not-enforced",
+		"docker network must use the bridge driver",
+	} {
+		attestDockerNetwork = func(context.Context, string, string) (isolation.DockerNetworkAttestation, error) {
+			return isolation.DockerNetworkAttestation{}, errors.New(failure)
+		}
+		c := checkRestrictedNetwork(context.Background(), Options{JobNetwork: "restricted", JobNetworkName: "our-runner-jobs-dev", EgressPolicyID: "local-dev-egress-not-enforced"})
+		if c.Status != Fail || c.Detail != failure {
+			t.Fatalf("status = %v: %s", c.Status, c.Detail)
+		}
+		if code := (Report{Checks: []Check{c}}).ExitCode(); code != 1 {
+			t.Fatalf("exit code = %d", code)
+		}
+	}
+}
+
+func TestRestrictedNetworkLabelOnlyNamesTheLocalDevelopmentPolicyVerbatim(t *testing.T) {
+	originalNetwork := attestDockerNetwork
+	t.Cleanup(func() { attestDockerNetwork = originalNetwork })
+	attestDockerNetwork = func(context.Context, string, string) (isolation.DockerNetworkAttestation, error) {
+		return isolation.DockerNetworkAttestation{Name: "our-runner-jobs-dev", PolicyID: "local-dev-egress-not-enforced"}, nil
+	}
+	c := checkRestrictedNetwork(context.Background(), Options{JobNetwork: "restricted", JobNetworkName: "our-runner-jobs-dev", EgressPolicyID: "local-dev-egress-not-enforced"})
+	if c.Status != Warn || !strings.Contains(c.Detail, "network our-runner-jobs-dev") || !strings.Contains(c.Detail, "egress policy local-dev-egress-not-enforced") {
+		t.Fatalf("status = %v: %s", c.Status, c.Detail)
 	}
 }
 

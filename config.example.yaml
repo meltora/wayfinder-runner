@@ -22,6 +22,10 @@ job_network: none
 # job_network: restricted
 # job_network_name: runner-egress
 # egress_policy_id: provider-git-v1
+# With `our-runner configure`, the dashboard delivers job_network,
+# job_network_name and egress_policy_id; a runner build without that support
+# rejects such a delivered document. Labels are checked at start, but they are
+# not proof that egress is enforced on the host.
 # Prompt-only work-intake consultation additionally requires a root-owned
 # effective-policy lease agent on Linux. It must exclusively pin the applicable
 # host firewall/proxy rules while each authenticated lease connection is open;

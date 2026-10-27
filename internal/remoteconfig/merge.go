@@ -34,6 +34,10 @@ func Merge(local Local, delivery Delivery) (Merged, error) {
 	if remote.JobNetwork != "" {
 		cfg.JobNetwork = remote.JobNetwork
 	}
+	if remote.JobNetwork == "restricted" {
+		cfg.JobNetworkName = remote.JobNetworkName
+		cfg.EgressPolicyID = remote.EgressPolicyID
+	}
 	if remote.JobMemoryMB != 0 {
 		cfg.JobMemoryMB = remote.JobMemoryMB
 	}

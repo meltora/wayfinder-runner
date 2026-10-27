@@ -36,6 +36,8 @@ type Remote struct {
 	Provider                       string
 	JobImage                       string
 	JobNetwork                     string
+	JobNetworkName                 string
+	EgressPolicyID                 string
 	JobMemoryMB                    int
 	JobCPUs                        float64
 	JobPIDs                        int
@@ -60,7 +62,7 @@ var requiredEnvelopeFields = []string{"schema_version", "runner_id", "profile_re
 
 var remoteFields = map[string]bool{
 	"isolation": true, "allow_unsafe_direct": true, "provider": true, "job_image": true, "job_network": true,
-	"job_memory_mb": true, "job_cpus": true, "job_pids": true, "labels": true, "repositories": true,
+	"job_network_name": true, "egress_policy_id": true, "job_memory_mb": true, "job_cpus": true, "job_pids": true, "labels": true, "repositories": true,
 	"agent_pack_public_keys": true, "source_publication_installations": true, "revoked_agent_pack_digests": true,
 	"agent_pack_trusted_key_set": true,
 }
@@ -129,7 +131,7 @@ func parseRemote(raw json.RawMessage) (Remote, error) {
 		}
 	}
 	for name, target := range map[string]any{
-		"isolation": &out.Isolation, "provider": &out.Provider, "job_image": &out.JobImage, "job_network": &out.JobNetwork,
+		"isolation": &out.Isolation, "provider": &out.Provider, "job_image": &out.JobImage,
 		"job_memory_mb": &out.JobMemoryMB, "job_cpus": &out.JobCPUs, "job_pids": &out.JobPIDs, "allow_unsafe_direct": &out.AllowUnsafeDirect,
 	} {
 		if value, ok := fields[name]; ok {
@@ -145,9 +147,17 @@ func parseRemote(raw json.RawMessage) (Remote, error) {
 		if !hasJobImage || hasAllowUnsafeDirect {
 			return out, fmt.Errorf("docker config requires job_image and must not set allow_unsafe_direct")
 		}
+		if err := parseJobNetwork(fields, &out); err != nil {
+			return out, err
+		}
 	case "direct":
 		if hasJobImage || !out.AllowUnsafeDirect {
 			return out, fmt.Errorf("direct config requires allow_unsafe_direct: true and must not set job_image")
+		}
+		for _, name := range networkFields {
+			if _, ok := fields[name]; ok {
+				return out, fmt.Errorf("direct config must not set %s", name)
+			}
 		}
 	default:
 		return out, fmt.Errorf("config isolation must be docker or direct")

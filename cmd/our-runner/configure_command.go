@@ -309,6 +309,11 @@ func printConfigureSummary(output io.Writer, delivery remoteconfig.Delivery) {
 		fmt.Fprintln(output, "Isolation: direct. Jobs are not sandboxed and run with this user's access to the host.")
 	} else {
 		fmt.Fprintf(output, "Isolation: docker, job image %s\n", remote.JobImage)
+		if remote.JobNetwork == "restricted" {
+			fmt.Fprintf(output, "Job network: restricted, Docker network %s, egress policy %s (checked against the network labels at start)\n", remote.JobNetworkName, remote.EgressPolicyID)
+		} else {
+			fmt.Fprintln(output, "Job network: none (jobs have no network access)")
+		}
 	}
 	fmt.Fprintf(output, "Provider: %s\n", providerDisplayName(remote.Provider))
 	fmt.Fprintf(output, "Repositories: %d included, %d omitted%s\n", len(remote.Repositories), len(delivery.OmittedRepositories), omissionBreakdown(delivery.OmittedRepositories))

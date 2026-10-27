@@ -106,14 +106,23 @@ func TestReloaderAppliesADocumentThatChangesOnlyHotKeys(t *testing.T) {
 
 func TestReloaderRefusesEveryRestartRequiredKeyChange(t *testing.T) {
 	changes := map[string]func(map[string]any){
-		"provider":      func(c map[string]any) { c["provider"] = "codex" },
-		"job_image":     func(c map[string]any) { c["job_image"] = strings.Replace(testJobImage, "aaaa", "bbbb", 1) },
-		"job_network":   func(c map[string]any) { c["job_network"] = "restricted" },
+		"provider":  func(c map[string]any) { c["provider"] = "codex" },
+		"job_image": func(c map[string]any) { c["job_image"] = strings.Replace(testJobImage, "aaaa", "bbbb", 1) },
+		"job_network": func(c map[string]any) {
+			c["job_network"] = "restricted"
+			c["job_network_name"] = "our-runner-jobs-dev"
+			c["egress_policy_id"] = "policy"
+		},
 		"job_memory_mb": func(c map[string]any) { c["job_memory_mb"] = 8192 },
 		"job_cpus":      func(c map[string]any) { c["job_cpus"] = 4 },
 		"job_pids":      func(c map[string]any) { c["job_pids"] = 1024 },
 	}
+	expectedKeys := map[string][]string{"job_network": {"job_network", "job_network_name", "egress_policy_id"}}
 	for key, change := range changes {
+		want, ok := expectedKeys[key]
+		if !ok {
+			want = []string{key}
+		}
 		cached := encode(t, deliveryBody(dockerConfig()))
 		local := configuredState(t, cached)
 		next := dockerConfig()
@@ -122,7 +131,7 @@ func TestReloaderRefusesEveryRestartRequiredKeyChange(t *testing.T) {
 		script := &conditionalScript{responses: []conditionalResponse{{raw: encode(t, bodyWithDigest(next, strings.Repeat("f", 64)))}}}
 		reloader := runningReloader(t, local, deliveryBody(dockerConfig()), script.fetch)
 		reload, err := reloader.Check(context.Background())
-		if err != nil || reload.Outcome != ReloadRestartRequired || !reflect.DeepEqual(reload.RestartKeys, []string{key}) {
+		if err != nil || reload.Outcome != ReloadRestartRequired || !reflect.DeepEqual(reload.RestartKeys, want) {
 			t.Fatalf("%s: reload = %+v err = %v", key, reload, err)
 		}
 		if reload.Delivery.Digest != strings.Repeat("f", 64) || reloader.RunningDigest() != strings.Repeat("d", 64) {

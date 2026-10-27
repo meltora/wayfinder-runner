@@ -112,6 +112,8 @@ func RestartRequiredChanges(running, next Remote) []string {
 		{"provider", running.Provider != next.Provider},
 		{"job_image", running.JobImage != next.JobImage},
 		{"job_network", running.JobNetwork != next.JobNetwork},
+		{"job_network_name", running.JobNetworkName != next.JobNetworkName},
+		{"egress_policy_id", running.EgressPolicyID != next.EgressPolicyID},
 		{"job_memory_mb", running.JobMemoryMB != next.JobMemoryMB},
 		{"job_cpus", running.JobCPUs != next.JobCPUs},
 		{"job_pids", running.JobPIDs != next.JobPIDs},

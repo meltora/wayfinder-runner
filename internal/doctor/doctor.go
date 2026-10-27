@@ -121,7 +121,7 @@ func checkRestrictedNetwork(ctx context.Context, opts Options) Check {
 		c.Status, c.Detail = OK, "verified effective leased egress policy "+opts.EgressPolicyID
 		return c
 	}
-	c.Status, c.Detail = OK, "verified Docker network identity and configured policy label "+opts.EgressPolicyID
+	c.Status, c.Detail = Warn, "network "+opts.JobNetworkName+" carries the labels for egress policy "+opts.EgressPolicyID+"; labels are not proof that egress is enforced on this host"
 	return c
 }
 

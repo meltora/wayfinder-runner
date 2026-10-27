@@ -111,6 +111,19 @@ func TestDockerWrapRejectsUnapprovedContainerEnvironment(t *testing.T) {
 	}
 }
 
+func TestDockerWrapAttachesARestrictedJobToTheNamedNetwork(t *testing.T) {
+	_, args, err := (Docker{}).Wrap("claude", nil, Policy{
+		NetworkNone: false, NetworkName: "our-runner-jobs-dev", RunnerID: "runner-1", AttemptID: "attempt-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--network our-runner-jobs-dev") || strings.Contains(joined, "--network none") {
+		t.Fatalf("restricted job network args = %s", joined)
+	}
+}
+
 func TestDockerWrapPinsConsultationNetworkIdentityAndDisablesLogs(t *testing.T) {
 	networkID := strings.Repeat("a", 64)
 	_, args, err := (Docker{}).Wrap("codex", []string{"exec"}, Policy{

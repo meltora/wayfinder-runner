@@ -92,6 +92,8 @@ func restartRequiredSettingsEqual(running, next config.Config) bool {
 		running.Provider == next.Provider &&
 		running.JobImage == next.JobImage &&
 		running.JobNetwork == next.JobNetwork &&
+		running.JobNetworkName == next.JobNetworkName &&
+		running.EgressPolicyID == next.EgressPolicyID &&
 		running.JobMemoryMB == next.JobMemoryMB &&
 		running.JobCPUs == next.JobCPUs &&
 		running.JobPIDs == next.JobPIDs &&
