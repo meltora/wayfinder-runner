@@ -31,11 +31,11 @@ func TestDockerAvailabilityAndPolicyValidation(t *testing.T) {
 	if _, _, err := docker.Wrap("true", nil, Policy{NetworkNone: true}); err == nil {
 		t.Fatal("missing container identity accepted")
 	}
-	if _, _, err := docker.Wrap("true", nil, Policy{RunnerID: "runner-1", AttemptID: "attempt-1"}); err == nil {
+	if _, _, err := docker.Wrap("true", nil, Policy{RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser}); err == nil {
 		t.Fatal("unapproved default network accepted")
 	}
 	_, args, err := docker.Wrap("true", nil, Policy{
-		RunnerID: "runner-1", AttemptID: "attempt-1", NetworkNone: true,
+		RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser, NetworkNone: true,
 		AgentPackDir: "/pack", MCPSock: "/run/a/mcp.sock", MCPTokenFile: "/run/b/token",
 	})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestDockerWrap(t *testing.T) {
 		MemoryMB: 512, CPUs: 1.5, PIDs: 128, NetworkNone: true, ReadOnlyFS: true,
 		ReadOnlyWorkDir: true, WorkDir: "/workspace/repositories/primary", WorkspaceRoot: "/workspace", JobHome: "/job-home",
 		MCPSock: "/run/job/mcp.sock", MCPTokenFile: "/run/job/token",
-		RunnerID: "runner-1", AttemptID: "attempt-1", NestedSandbox: true,
+		RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser, NestedSandbox: true,
 		DisableLogs: true,
 		Environment: []string{"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"},
 	})
@@ -97,11 +97,52 @@ func TestDockerWrap(t *testing.T) {
 	if strings.Contains(joined, "no-new-privileges") {
 		t.Fatalf("nested sandbox cannot start with no-new-privileges: %s", joined)
 	}
+	if users := userArguments(args); len(users) != 1 || users[0] != testJobUser {
+		t.Fatalf("--user values = %v", users)
+	}
+}
+
+const testJobUser = "10001:10001"
+
+func userArguments(args []string) []string {
+	var users []string
+	for index, argument := range args {
+		if argument == "--user" && index+1 < len(args) {
+			users = append(users, args[index+1])
+		}
+	}
+	return users
+}
+
+func TestDockerWrapUsesTheResolvedUserAndNeverTheRunnerProcessIDs(t *testing.T) {
+	d := Docker{EffectiveUID: func() int { return 1000 }}
+	for _, user := range []string{"10001:10001", "1000:1000", "501:20"} {
+		_, args, err := d.Wrap("true", nil, Policy{NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1", User: user})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if users := userArguments(args); len(users) != 1 || users[0] != user {
+			t.Fatalf("user %s produced --user %v", user, users)
+		}
+	}
+	for _, user := range []string{"", "10001", "runner", "0:10001", "10001:0", "0:0", "-1:5", "10001:10001 ", "10001:10001:1", "99999999999:1"} {
+		if _, _, err := d.Wrap("true", nil, Policy{NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1", User: user}); err == nil {
+			t.Fatalf("container user %q accepted", user)
+		}
+	}
+}
+
+func TestDockerWrapRefusesHostRoot(t *testing.T) {
+	d := Docker{EffectiveUID: func() int { return 0 }}
+	_, _, err := d.Wrap("true", nil, Policy{NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser})
+	if !errors.Is(err, ErrHostRoot) {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestDockerWrapRejectsUnapprovedContainerEnvironment(t *testing.T) {
 	d := Docker{}
-	base := Policy{NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1"}
+	base := Policy{NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser}
 	for _, entry := range []string{"SECRET=value", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG_CONTENT=bad\nvalue"} {
 		p := base
 		p.Environment = []string{entry}
@@ -113,7 +154,7 @@ func TestDockerWrapRejectsUnapprovedContainerEnvironment(t *testing.T) {
 
 func TestDockerWrapAttachesARestrictedJobToTheNamedNetwork(t *testing.T) {
 	_, args, err := (Docker{}).Wrap("claude", nil, Policy{
-		NetworkNone: false, NetworkName: "our-runner-jobs-dev", RunnerID: "runner-1", AttemptID: "attempt-1",
+		NetworkNone: false, NetworkName: "our-runner-jobs-dev", RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +168,7 @@ func TestDockerWrapAttachesARestrictedJobToTheNamedNetwork(t *testing.T) {
 func TestDockerWrapPinsConsultationNetworkIdentityAndDisablesLogs(t *testing.T) {
 	networkID := strings.Repeat("a", 64)
 	_, args, err := (Docker{}).Wrap("codex", []string{"exec"}, Policy{
-		NetworkName: networkID, RunnerID: "runner-1", AttemptID: "attempt-1",
+		NetworkName: networkID, RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser,
 		ReadOnlyFS: true, DisableLogs: true,
 	})
 	if err != nil {
@@ -151,7 +192,7 @@ func TestDockerWrapAllowsOnlyPrivateRunnerManagedConfigMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := Policy{
-		NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1",
+		NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser,
 		MCPSock: filepath.Join(configDir, "mcp.sock"), MCPTokenFile: filepath.Join(configDir, "job.token"),
 	}
 	base.ManagedConfigMounts = []supervisor.ManagedConfigMount{{Source: requirements, Target: "/etc/codex/requirements.toml"}}
@@ -179,7 +220,7 @@ func TestDockerCredentialFreeTaskRetainsNoNewPrivileges(t *testing.T) {
 	d := Docker{LookPath: func(string) (string, error) { return "/usr/bin/docker", nil }}
 	_, args, err := d.Wrap("git", []string{"status"}, Policy{
 		NetworkNone: true, ReadOnlyFS: true, WorkDir: "/workspace", WorkspaceRoot: "/workspace",
-		Image: "registry/job@sha256:abc", RunnerID: "runner-1", AttemptID: "check-1",
+		Image: "registry/job@sha256:abc", RunnerID: "runner-1", AttemptID: "check-1", User: testJobUser,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +256,15 @@ func TestNestedSandboxContainerIntegration(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	if err := ProbeNestedSandbox(ctx, t.TempDir(), image); err != nil {
+	mapping, err := ResolveUserMapping(ctx, image, "doctor")
+	if err != nil {
 		t.Fatal(err)
+	}
+	state := t.TempDir()
+	if err := ProbeNestedSandbox(ctx, state, image, mapping); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(filepath.Join(state, "doctor")); err != nil || len(entries) != 0 {
+		t.Fatalf("probe left %v (%v)", entries, err)
 	}
 }

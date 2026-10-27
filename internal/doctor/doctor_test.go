@@ -26,8 +26,19 @@ func withProbe(t *testing.T, info isolation.DockerInfo) {
 	t.Cleanup(func() { probeDocker = orig })
 }
 
+var testRootlessMapping = isolation.UserMapping{
+	Mode: isolation.UserMappingRootless, ContainerUID: 10001, ContainerGID: 10001, HostUID: 110000, HostGID: 110000,
+}
+
+func withUserMapping(t *testing.T, mapping isolation.UserMapping, err error) {
+	t.Helper()
+	original := resolveUserMapping
+	resolveUserMapping = func(context.Context, string, string) (isolation.UserMapping, error) { return mapping, err }
+	t.Cleanup(func() { resolveUserMapping = original })
+}
+
 func TestNestedSandboxRequiresLoadedConfiguration(t *testing.T) {
-	c := checkNestedSandbox(context.Background(), Options{})
+	c := checkNestedSandbox(context.Background(), Options{}, isolation.UserMapping{}, nil)
 	if c.Status != Warn {
 		t.Fatalf("status = %v: %s", c.Status, c.Detail)
 	}
@@ -36,14 +47,66 @@ func TestNestedSandboxRequiresLoadedConfiguration(t *testing.T) {
 func TestNestedSandboxProbePassesAndFailsClosed(t *testing.T) {
 	original := probeNestedSandbox
 	t.Cleanup(func() { probeNestedSandbox = original })
-	probeNestedSandbox = func(context.Context, string, string) error { return nil }
+	var probed isolation.UserMapping
+	probeNestedSandbox = func(_ context.Context, _, _ string, mapping isolation.UserMapping) error {
+		probed = mapping
+		return nil
+	}
 	opts := Options{Isolation: "docker", JobImage: "registry/job@sha256:test", StateDir: t.TempDir()}
-	if c := checkNestedSandbox(context.Background(), opts); c.Status != OK {
+	if c := checkNestedSandbox(context.Background(), opts, testRootlessMapping, nil); c.Status != OK || probed != testRootlessMapping {
+		t.Fatalf("status = %v: %s (probed with %+v)", c.Status, c.Detail, probed)
+	}
+	probeNestedSandbox = func(context.Context, string, string, isolation.UserMapping) error {
+		return errors.New("bwrap unavailable")
+	}
+	if c := checkNestedSandbox(context.Background(), opts, testRootlessMapping, nil); c.Status != Fail {
 		t.Fatalf("status = %v: %s", c.Status, c.Detail)
 	}
-	probeNestedSandbox = func(context.Context, string, string) error { return errors.New("bwrap unavailable") }
-	if c := checkNestedSandbox(context.Background(), opts); c.Status != Fail {
+}
+
+func TestNestedSandboxFailsWithTheMappingReasonBeforeProbing(t *testing.T) {
+	original := probeNestedSandbox
+	t.Cleanup(func() { probeNestedSandbox = original })
+	probeNestedSandbox = func(context.Context, string, string, isolation.UserMapping) error {
+		t.Fatal("probe ran with an unsupported mapping")
+		return nil
+	}
+	opts := Options{Isolation: "docker", JobImage: "registry/job@sha256:test", StateDir: t.TempDir()}
+	reason := errors.New("the runner's host uid 1000 is not mapped into the Docker daemon's user namespace; userns-remap daemons are not supported yet")
+	c := checkNestedSandbox(context.Background(), opts, isolation.UserMapping{}, reason)
+	if c.Status != Fail || !strings.Contains(c.Detail, reason.Error()) {
 		t.Fatalf("status = %v: %s", c.Status, c.Detail)
+	}
+}
+
+func TestDockerUserMappingRow(t *testing.T) {
+	opts := Options{Isolation: "docker", JobImage: "registry/job@sha256:test"}
+	withUserMapping(t, testRootlessMapping, nil)
+	c, mapping, err := checkDockerUserMapping(context.Background(), opts)
+	if c.Name != "docker-user-mapping" || c.Status != OK || err != nil || mapping != testRootlessMapping ||
+		c.Detail != "rootless: job user 10001:10001 (host 110000:110000); job output is re-owned after each container" {
+		t.Fatalf("rootless row = %+v err=%v", c, err)
+	}
+	identity := isolation.UserMapping{Mode: isolation.UserMappingIdentity, ContainerUID: 501, ContainerGID: 20, HostUID: 501, HostGID: 20}
+	withUserMapping(t, identity, nil)
+	c, _, _ = checkDockerUserMapping(context.Background(), opts)
+	want := Warn
+	if runtime.GOOS == "darwin" {
+		want = OK
+	}
+	if c.Status != want || !strings.Contains(c.Detail, "501:20") {
+		t.Fatalf("identity row = %+v", c)
+	}
+	withUserMapping(t, isolation.UserMapping{}, isolation.ErrHostRoot)
+	c, _, err = checkDockerUserMapping(context.Background(), opts)
+	if c.Status != Fail || !errors.Is(err, isolation.ErrHostRoot) || !strings.Contains(c.Detail, "docker isolation must not run as host root") {
+		t.Fatalf("host root row = %+v err=%v", c, err)
+	}
+	for _, unconfigured := range []Options{{}, {Isolation: "direct", JobImage: "registry/job@sha256:test"}} {
+		c, _, _ = checkDockerUserMapping(context.Background(), unconfigured)
+		if c.Status != Warn || !strings.Contains(c.Detail, "not tested") {
+			t.Fatalf("unconfigured row = %+v", c)
+		}
 	}
 }
 
@@ -133,10 +196,10 @@ func TestDockerModeRootless(t *testing.T) {
 	}
 }
 
-func TestDockerModeUserns(t *testing.T) {
+func TestDockerModeUsernsRemapFailsClosed(t *testing.T) {
 	withProbe(t, isolation.DockerInfo{Available: true, UsernsRemap: true, ServerVersion: "26.1.0"})
 	c := checkDockerMode(context.Background())
-	if c.Status != OK {
+	if c.Status != Fail || !strings.Contains(c.Detail, "userns-remap is not supported yet") {
 		t.Fatalf("status = %v: %s", c.Status, c.Detail)
 	}
 }
@@ -249,10 +312,11 @@ func TestRunExecutesCompleteConfiguredPreflight(t *testing.T) {
 	probeDocker = func(context.Context) isolation.DockerInfo {
 		return isolation.DockerInfo{Available: true, Rootless: true, ServerVersion: "test"}
 	}
-	probeNestedSandbox = func(context.Context, string, string) error { return nil }
+	probeNestedSandbox = func(context.Context, string, string, isolation.UserMapping) error { return nil }
 	attestDockerNetwork = func(context.Context, string, string) (isolation.DockerNetworkAttestation, error) {
 		return isolation.DockerNetworkAttestation{}, nil
 	}
+	withUserMapping(t, testRootlessMapping, nil)
 
 	report := Run(context.Background(), Options{
 		ControlPlaneURL: "wss://" + listener.Addr().String() + "/stream",
@@ -264,8 +328,15 @@ func TestRunExecutesCompleteConfiguredPreflight(t *testing.T) {
 	if report.ExitCode() != 0 {
 		t.Fatalf("preflight failed:\n%s", Format(report))
 	}
-	if len(report.Checks) != 10 {
-		t.Fatalf("checks = %d, want 10", len(report.Checks))
+	if len(report.Checks) != 11 {
+		t.Fatalf("checks = %d, want 11", len(report.Checks))
+	}
+	names := make([]string, len(report.Checks))
+	for index, check := range report.Checks {
+		names[index] = check.Name
+	}
+	if joined := strings.Join(names, " "); !strings.Contains(joined, "docker-mode docker-user-mapping restricted-egress job-image-sandbox") {
+		t.Fatalf("check order = %s", joined)
 	}
 }
 

@@ -61,6 +61,10 @@ type Daemon struct {
 	uploader       *artifactUploader
 	supervisor     supervisor.Supervisor
 
+	userMapping        isolation.UserMapping
+	ownership          isolation.Ownership
+	removeJobContainer containerRemover
+
 	jobMu                                                 sync.Mutex
 	activeJob                                             *jobRunner
 	workIntakeProposalActive                              bool
@@ -209,10 +213,6 @@ func NewWithExternalOperationDependencies(
 		_ = lock.Close()
 		return nil, fmt.Errorf("load runner ID: %w", err)
 	}
-	if err := cleanupStaleWorkIntakeProposalExecutions(cfg.StateDir, nil); err != nil {
-		_ = lock.Close()
-		return nil, fmt.Errorf("cleanup stale work intake proposal executions: %w", err)
-	}
 	j, err := journal.Open(filepath.Join(cfg.StateDir, "journal.db"))
 	if err != nil {
 		_ = lock.Close()
@@ -224,6 +224,7 @@ func NewWithExternalOperationDependencies(
 	httpURL := deriveHTTPURL(cfg.ControlPlaneURL)
 	leaseManager := lease.NewManager()
 	recoveredLease := false
+	cleanupJobs := true
 	persistedLease, err := j.LoadLease(context.Background())
 	if err != nil {
 		_ = j.Close()
@@ -238,30 +239,25 @@ func NewWithExternalOperationDependencies(
 				return nil, fmt.Errorf("restore durable lease: %w", err)
 			}
 			recoveredLease = true
+			cleanupJobs = false
 		} else if err := j.ClearLease(context.Background(), persistedLease.AttemptID); err != nil {
 			_ = j.Close()
 			_ = lock.Close()
 			return nil, fmt.Errorf("clear expired durable lease: %w", err)
-		} else if err := cleanupOrphanedJobState(cfg.StateDir); err != nil {
-			_ = j.Close()
-			_ = lock.Close()
-			return nil, fmt.Errorf("cleanup expired job state: %w", err)
 		}
-	} else if err := cleanupOrphanedJobState(cfg.StateDir); err != nil {
-		_ = j.Close()
-		_ = lock.Close()
-		return nil, fmt.Errorf("cleanup orphaned job state: %w", err)
 	}
 	var workIntakeNetworkAttestation isolation.DockerNetworkAttestation
 	var workIntakeEffectivePolicy egresspolicy.Binding
+	var userMapping isolation.UserMapping
+	var ownership isolation.Ownership
 	if cfg.Isolation == "docker" {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		info := isolation.ProbeDocker(cleanupCtx)
-		if !info.Available || (runtime.GOOS == "linux" && !info.Rootless && !info.UsernsRemap) {
+		if refusal := dockerDaemonRefusal(info, runtime.GOOS); refusal != nil {
 			cleanupCancel()
 			_ = j.Close()
 			_ = lock.Close()
-			return nil, fmt.Errorf("production Docker isolation requires an available rootless or userns-remapped daemon")
+			return nil, refusal
 		}
 		if cfg.JobNetwork == "restricted" {
 			attestation, attestErr := isolation.AttestDockerNetwork(cleanupCtx, cfg.JobNetworkName, cfg.EgressPolicyID)
@@ -293,6 +289,17 @@ func NewWithExternalOperationDependencies(
 			_ = lock.Close()
 			return nil, fmt.Errorf("cleanup runner containers: %w", cleanupErr)
 		}
+		userMapping, ownership, err = resolveDockerJobUser(cfg, runnerID)
+		if err != nil {
+			_ = j.Close()
+			_ = lock.Close()
+			return nil, err
+		}
+	}
+	if err := recoverStartupJobState(cfg.StateDir, cleanupJobs, ownershipReclaimer(ownership, runnerID)); err != nil {
+		_ = j.Close()
+		_ = lock.Close()
+		return nil, err
 	}
 	trust, err := openAgentPackTrust(cfg)
 	if err != nil {
@@ -310,6 +317,8 @@ func NewWithExternalOperationDependencies(
 		collectors:                           collector.NewStore(cfg.StateDir),
 		uploader:                             newArtifactUploader(httpURL),
 		supervisor:                           nil,
+		userMapping:                          userMapping,
+		ownership:                            ownership,
 		updateWake:                           make(chan struct{}, 1),
 		updateIPC:                            updateClient,
 		sourcePublicationPublisher:           publicationPublisher,
@@ -339,6 +348,7 @@ func NewWithExternalOperationDependencies(
 		// instead of persisting it in a tmux/herdr command specification.
 		d.workIntakeProposalGenerator = newProviderWorkIntakeProposalGenerator(
 			cfg, runnerID, supervisor.NewDirectProcess(), workIntakeNetworkAttestation, workIntakeEffectivePolicy,
+			userMapping, ownership,
 		)
 	}
 	paused, err := ReadPausedState(cfg.StateDir)

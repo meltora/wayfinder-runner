@@ -82,7 +82,7 @@ func TestTrustedResultRepositoryIsRemovedByCleanupRetirementAndSweep(t *testing.
 				t.Fatal(err)
 			}
 		}
-		if err := cleanupOrphanedJobState(stateDir); err != nil {
+		if err := cleanupOrphanedJobState(context.Background(), stateDir, nil); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := os.Stat(filepath.Join(stateDir, trustedResultsDirectory, "job-old")); !os.IsNotExist(err) {

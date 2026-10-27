@@ -48,6 +48,8 @@ type providerWorkIntakeProposalGenerator struct {
 	attestEffectivePolicy  func(context.Context, egresspolicy.Binding) error
 	acquireEffectivePolicy func(context.Context, egresspolicy.Binding, time.Duration) (effectivePolicyLease, error)
 	removeContainer        func(context.Context, string, string) error
+	userMapping            isolation.UserMapping
+	ownership              isolation.Ownership
 }
 
 func newProviderWorkIntakeProposalGenerator(
@@ -56,9 +58,12 @@ func newProviderWorkIntakeProposalGenerator(
 	sup supervisor.Supervisor,
 	networkAttestation isolation.DockerNetworkAttestation,
 	effectivePolicy egresspolicy.Binding,
+	userMapping isolation.UserMapping,
+	ownership isolation.Ownership,
 ) *providerWorkIntakeProposalGenerator {
 	generator := &providerWorkIntakeProposalGenerator{
 		cfg: cfg, runnerID: runnerID, supervisor: sup, probeDocker: isolation.ProbeDocker,
+		userMapping: userMapping, ownership: ownership,
 		networkAttestation: networkAttestation, attestNetwork: isolation.VerifyDockerNetworkAttestation,
 		effectivePolicy: effectivePolicy,
 	}
@@ -104,11 +109,15 @@ func (generator *providerWorkIntakeProposalGenerator) Generate(
 	if !dockerInfo.Available || (!dockerInfo.Rootless && !dockerInfo.UsernsRemap) {
 		return workIntakeProposalPreStartFailure()
 	}
+	if generator.userMapping.Validate() != nil ||
+		(generator.userMapping.RequiresOwnershipHandOff() && generator.ownership == nil) {
+		return workIntakeProposalPreStartFailure()
+	}
 	root, err := generator.preparePrivateExecutionRoot()
 	if err != nil {
 		return workIntakeProposalPreStartFailure()
 	}
-	defer func() { _ = os.RemoveAll(root) }()
+	defer func() { _ = removeRunnerTree(root) }()
 	workspace := filepath.Join(root, "workspace")
 	privateConfig := filepath.Join(root, "config")
 	if err := os.Mkdir(workspace, 0o700); err != nil {
@@ -187,17 +196,27 @@ func (generator *providerWorkIntakeProposalGenerator) Generate(
 		return workIntakeProposalPreStartFailure()
 	}
 	defer func() { _ = policyLease.Close() }()
-	process, err := generator.supervisor.Start(ctx, spec)
+	ownership, err := handOffOwnership(ctx, generator.ownership, generator.removeContainer, isolation.OwnershipRequest{
+		RunnerID: generator.runnerID, AttemptID: operation.WorkIntakeProposalAttemptID, Purpose: "proposal",
+		Workspace: []string{root}, Private: []string{jobHome},
+	})
 	if err != nil {
+		_ = ownership.Release()
 		return workIntakeProposalPreStartFailure()
 	}
-	defer generator.removeWorkIntakeProposalContainer(operation.WorkIntakeProposalAttemptID)
+	process, err := generator.supervisor.Start(ctx, spec)
+	if err != nil {
+		_ = ownership.Release()
+		return workIntakeProposalPreStartFailure()
+	}
 	if generator.attestDockerNetworkIdentity(ctx) != nil {
 		_ = process.Kill()
 		_ = process.Wait()
+		_ = ownership.Release()
 		return workIntakeProposalUncertainResult()
 	}
-	if !generator.waitWithEffectivePolicyLease(process, policyLease) {
+	completed := generator.waitWithEffectivePolicyLease(process, policyLease)
+	if ownership.Release() != nil || !completed {
 		return workIntakeProposalUncertainResult()
 	}
 	return workIntakeProposalGenerationResult{
@@ -231,15 +250,6 @@ func (generator *providerWorkIntakeProposalGenerator) waitWithEffectivePolicyLea
 		<-finished
 		return false
 	}
-}
-
-func (generator *providerWorkIntakeProposalGenerator) removeWorkIntakeProposalContainer(attemptID string) {
-	if generator.removeContainer == nil {
-		return
-	}
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = generator.removeContainer(cleanupCtx, generator.runnerID, attemptID)
 }
 
 func workIntakeProposalUncertainResult() workIntakeProposalGenerationResult {

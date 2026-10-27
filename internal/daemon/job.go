@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -290,21 +291,23 @@ func (d *Daemon) cancelJob(ctx context.Context, attemptID, reason string) error 
 	}
 	d.leases.Release(current.AttemptID)
 	d.recoveredLease.Store(false)
-	return cleanupOrphanedJobState(d.cfg.StateDir)
+	return cleanupOrphanedJobState(ctx, d.cfg.StateDir, d.recoveryReclaimer())
 }
 
-func cleanupOrphanedJobState(stateDir string) error {
+func cleanupOrphanedJobState(ctx context.Context, stateDir string, reclaim func(context.Context, []string) error) error {
 	var errs []error
+	var leftovers, owned []string
 	for _, target := range []struct {
-		dir, prefix string
-		locked      bool
+		dir, prefix, ownedSuffix string
+		jobOwned                 bool
 	}{
-		{filepath.Join(stateDir, "jobs"), "job-", false},
-		{filepath.Join(stateDir, trustedResultsDirectory), "job-", true},
-		{filepath.Join(stateDir, "job-homes"), "home-", false},
-		{filepath.Join(stateDir, "sockets"), "job-", false},
-		{filepath.Join(stateDir, "tmux"), "job-", false},
-		{filepath.Join(stateDir, "supervisor"), ".herdr-exit-", false},
+		{filepath.Join(stateDir, "jobs"), "job-", "", true},
+		{filepath.Join(stateDir, trustedResultsDirectory), "job-", checkWorkspaceSuffix, true},
+		{filepath.Join(stateDir, "job-homes"), "home-", "", true},
+		{filepath.Join(stateDir, "check-homes"), "home-", "", true},
+		{filepath.Join(stateDir, "sockets"), "job-", "", true},
+		{filepath.Join(stateDir, "tmux"), "job-", "", false},
+		{filepath.Join(stateDir, "supervisor"), ".herdr-exit-", "", false},
 	} {
 		entries, err := os.ReadDir(target.dir)
 		if os.IsNotExist(err) {
@@ -319,16 +322,38 @@ func cleanupOrphanedJobState(stateDir string) error {
 				continue
 			}
 			path := filepath.Join(target.dir, entry.Name())
-			remove := os.RemoveAll
-			if target.locked {
-				remove = removeRunnerTree
-			}
-			if err := remove(path); err != nil {
-				errs = append(errs, err)
+			leftovers = append(leftovers, path)
+			if target.jobOwned && entry.IsDir() && strings.HasSuffix(entry.Name(), target.ownedSuffix) {
+				owned = append(owned, path)
 			}
 		}
 	}
-	return errors.Join(errs...)
+	reclaimed := false
+	if reclaim != nil && len(owned) != 0 {
+		reclaimCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ownershipOperationTimeout)
+		reclaimErr := reclaim(reclaimCtx, owned)
+		cancel()
+		if reclaimErr != nil {
+			errs = append(errs, fmt.Errorf("re-own leftover job output: %w", reclaimErr))
+		} else {
+			reclaimed = true
+		}
+	}
+	removeErrs := make([]error, 0, len(leftovers))
+	for _, path := range leftovers {
+		if err := removeRunnerTree(path); err != nil {
+			if !reclaimed && slices.Contains(owned, path) {
+				err = fmt.Errorf("remove %s: %w; the runner could not re-own job output", path, err)
+			} else {
+				err = fmt.Errorf("remove %s: %w", path, err)
+			}
+			removeErrs = append(removeErrs, err)
+		}
+	}
+	if len(removeErrs) == 0 {
+		return nil
+	}
+	return errors.Join(append(errs, removeErrs...)...)
 }
 
 func (jr *jobRunner) run() {
@@ -338,8 +363,13 @@ func (jr *jobRunner) run() {
 	leaseCtx, stopLeaseMonitor := context.WithCancel(ctx)
 	defer stopLeaseMonitor()
 	go jr.monitorLease(leaseCtx)
+	var ownership *ownershipScope
 	finish := func(outcome jobOutcome, capacityEvent *v1.ProviderCapacityExhaustedEvent) {
 		stopLeaseMonitor()
+		if err := ownership.Release(); err != nil {
+			jr.logger.Error("re-own job output", "err", err)
+			outcome, capacityEvent = jobOutputReclaimFailure(), nil
+		}
 		jr.completeJob(outcome, capacityEvent)
 	}
 
@@ -492,7 +522,9 @@ func (jr *jobRunner) run() {
 		AttemptID:       job.AttemptID,
 		NestedSandbox:   isDocker && adapterName != "opencode",
 	}
+	var jobHome string
 	if iso.Name() == "docker" {
+		isoPolicy.User = d.userMapping.User()
 		spec, err = adapter.BuildSpec(provider.StartParams{
 			Job:             job,
 			WorkDir:         workDir,
@@ -520,7 +552,7 @@ func (jr *jobRunner) run() {
 		}
 		isoPolicy.Environment = provider.ContainerEnvironment(spec.Env)
 		isoPolicy.ManagedConfigMounts = append([]supervisor.ManagedConfigMount(nil), spec.ManagedConfigMounts...)
-		jobHome, err := isolation.PrepareHome(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName)
+		jobHome, err = isolation.PrepareHome(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName)
 		if err != nil {
 			finish(
 				jr.startupFailureOutcome(
@@ -589,6 +621,17 @@ func (jr *jobRunner) run() {
 	outR, outW := io.Pipe()
 	spec.Stdout = outW
 	spec.Stderr = outW
+	if iso.Name() == "docker" && d.ownership != nil {
+		ownership, err = handOffOwnership(ctx, d.ownership, d.containerRemover(), isolation.OwnershipRequest{
+			RunnerID: d.runnerID, AttemptID: job.AttemptID, Purpose: "job",
+			Workspace: []string{jr.workDir}, Private: []string{jobHome, socketDir},
+		})
+		if err != nil {
+			jr.logger.Error("hand off job workspace", "err", err)
+			finish(jr.startupFailureOutcome(v1.JobFailureWorkspacePreparation, "hand off job workspace"), nil)
+			return
+		}
+	}
 
 	jr.procMu.Lock()
 	if jr.cancelled {
@@ -646,6 +689,10 @@ func (jr *jobRunner) run() {
 	exitErr := proc.Wait()
 	_ = outW.Close()
 	<-outputConsumed
+	if ownership.Release() != nil {
+		finish(jobOutputReclaimFailure(), nil)
+		return
+	}
 	jr.publishAfterExitComposition(ctx)
 	if reporter, ok := proc.(supervisor.SessionReporter); ok {
 		if ref, err := reporter.SessionRef(); err == nil && ref != "" {

@@ -261,7 +261,7 @@ func TestCleanupOrphanedJobStateUsesStrictPrefixes(t *testing.T) {
 			}
 		}
 	}
-	if err := cleanupOrphanedJobState(stateDir); err != nil {
+	if err := cleanupOrphanedJobState(context.Background(), stateDir, nil); err != nil {
 		t.Fatal(err)
 	}
 	for dir, names := range paths {

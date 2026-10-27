@@ -23,6 +23,7 @@ case "$1" in
     echo '` + networkJSON + `' ;;
   ps) exit 0 ;;
   rm) exit 0 ;;
+  run) printf '%b' "` + rootlessMapOutput() + `" ;;
   *) exit 1 ;;
 esac
 `

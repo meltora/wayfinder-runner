@@ -221,6 +221,8 @@ func TestProviderGenerationFailsClosedOnEffectivePolicyDriftBeforeAndAfterStart(
 			containerRemovals++
 			return nil
 		},
+		userMapping: testRootlessMapping,
+		ownership:   &recordingOwnership{log: &orderLog{}},
 	}
 	digest, err := generator.ModelExecutionConfigDigest(context.Background())
 	if err != nil {
@@ -320,7 +322,8 @@ func TestModelExecutionConfigDigestBindsEveryEffectiveSecurityControl(t *testing
 		probeDocker: func(context.Context) isolation.DockerInfo {
 			return isolation.DockerInfo{Available: true, Rootless: true, ServerVersion: "26.1.0"}
 		},
-		runVersion: func(context.Context, string) (string, error) { return "codex 1.2.3", nil },
+		runVersion:  func(context.Context, string) (string, error) { return "codex 1.2.3", nil },
+		userMapping: testRootlessMapping,
 	}
 	spec := supervisor.Spec{
 		Command: "/opt/bin/codex",
@@ -360,6 +363,9 @@ func TestModelExecutionConfigDigestBindsEveryEffectiveSecurityControl(t *testing
 		},
 		"effective policy rules": func(g *providerWorkIntakeProposalGenerator, _ *supervisor.Spec) {
 			g.effectivePolicy.RulesDigest = strings.Repeat("e", 64)
+		},
+		"job user mapping": func(g *providerWorkIntakeProposalGenerator, _ *supervisor.Spec) {
+			g.userMapping = testIdentityMapping
 		},
 		"Docker isolation mode": func(g *providerWorkIntakeProposalGenerator, _ *supervisor.Spec) {
 			g.probeDocker = func(context.Context) isolation.DockerInfo {

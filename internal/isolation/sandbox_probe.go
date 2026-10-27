@@ -14,7 +14,14 @@ import (
 // ProbeNestedSandbox verifies the complete outer-container/inner-sandbox
 // boundary without using real provider credentials. The probe must be run with
 // the exact immutable image that will execute jobs.
-func ProbeNestedSandbox(ctx context.Context, stateDir, image string) error {
+func ProbeNestedSandbox(ctx context.Context, stateDir, image string, mapping UserMapping) (err error) {
+	if err := mapping.Validate(); err != nil {
+		return err
+	}
+	stateDir, err = filepath.Abs(stateDir)
+	if err != nil {
+		return fmt.Errorf("resolve sandbox probe state directory: %w", err)
+	}
 	probeRoot := filepath.Join(stateDir, "doctor")
 	if err := os.MkdirAll(probeRoot, 0o700); err != nil {
 		return fmt.Errorf("create sandbox probe root: %w", err)
@@ -23,7 +30,15 @@ func ProbeNestedSandbox(ctx context.Context, stateDir, image string) error {
 	if err != nil {
 		return fmt.Errorf("create sandbox probe directory: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	reclaimed := true
+	defer func() {
+		if !reclaimed {
+			return
+		}
+		if removeErr := removeOwnedTree(dir); removeErr != nil && err == nil {
+			err = fmt.Errorf("remove sandbox probe directory: %w", removeErr)
+		}
+	}()
 
 	home := filepath.Join(dir, "home")
 	workspace := filepath.Join(dir, "workspace")
@@ -45,6 +60,7 @@ func ProbeNestedSandbox(ctx context.Context, stateDir, image string) error {
 
 	attemptID := "sandbox-" + filepath.Base(dir)
 	policy := Policy{
+		User:          mapping.User(),
 		MemoryMB:      512,
 		CPUs:          1,
 		PIDs:          128,
@@ -65,6 +81,19 @@ func ProbeNestedSandbox(ctx context.Context, stateDir, image string) error {
 	if err != nil {
 		return err
 	}
+	var ownership Ownership
+	request := OwnershipRequest{
+		RunnerID: policy.RunnerID, AttemptID: attemptID, Purpose: "probe",
+		Workspace: []string{workspace}, Private: []string{home},
+	}
+	if mapping.RequiresOwnershipHandOff() {
+		ownership = DockerOwnership{Mapping: mapping, Image: image, StateDir: stateDir}
+		if err := ownership.HandOff(ctx, request); err != nil {
+			reclaimErr := reclaimProbe(ownership, request)
+			reclaimed = reclaimErr == nil
+			return errors.Join(err, reclaimErr)
+		}
+	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -79,6 +108,12 @@ func ProbeNestedSandbox(ctx context.Context, stateDir, image string) error {
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	cleanupErr := RemoveJobContainer(cleanupCtx, policy.RunnerID, policy.AttemptID)
 	cleanupCancel()
+	if cleanupErr != nil {
+		reclaimed = ownership == nil
+	} else if ownership != nil {
+		cleanupErr = reclaimProbe(ownership, request)
+		reclaimed = cleanupErr == nil
+	}
 	if runErr != nil {
 		return errors.Join(fmt.Errorf("nested sandbox probe failed: %w: %s", runErr, strings.TrimSpace(output.String())), cleanupErr)
 	}
@@ -95,6 +130,12 @@ func ProbeNestedSandbox(ctx context.Context, stateDir, image string) error {
 		return fmt.Errorf("nested sandbox did not produce its expected workspace output")
 	}
 	return nil
+}
+
+func reclaimProbe(ownership Ownership, request OwnershipRequest) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	return ownership.Reclaim(ctx, request)
 }
 
 type cappedProbeBuffer struct {

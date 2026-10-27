@@ -2,7 +2,6 @@ package isolation
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -15,6 +14,7 @@ import (
 
 type Policy struct {
 	Mode                string
+	User                string
 	MemoryMB            int
 	CPUs                float64
 	PIDs                int
@@ -54,7 +54,24 @@ func (d Direct) Wrap(command string, args []string, p Policy) (string, []string,
 }
 
 type Docker struct {
-	LookPath func(string) (string, error)
+	LookPath     func(string) (string, error)
+	EffectiveUID func() int
+}
+
+var containerUserPattern = regexp.MustCompile(`^[0-9]{1,10}:[0-9]{1,10}$`)
+
+func validateContainerUser(user string) error {
+	if !containerUserPattern.MatchString(user) {
+		return fmt.Errorf("docker isolation requires a resolved numeric container user")
+	}
+	uid, gid, _ := strings.Cut(user, ":")
+	for _, value := range []string{uid, gid} {
+		id, err := strconv.ParseUint(value, 10, 32)
+		if err != nil || id == 0 || id >= 1<<32-1 {
+			return fmt.Errorf("docker isolation refuses container user %q", user)
+		}
+	}
+	return nil
 }
 
 func (d Docker) Name() string { return "docker" }
@@ -68,8 +85,14 @@ func (d Docker) Available() bool {
 }
 
 func (d Docker) Wrap(command string, args []string, p Policy) (string, []string, error) {
+	if hostRoot(d.EffectiveUID) {
+		return "", nil, ErrHostRoot
+	}
+	if err := validateContainerUser(p.User); err != nil {
+		return "", nil, err
+	}
 	dockerArgs := []string{
-		"run", "--rm", "-i", "--init", "--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
+		"run", "--rm", "-i", "--init", "--user", p.User,
 		"--cap-drop", "ALL",
 	}
 	if p.NestedSandbox {

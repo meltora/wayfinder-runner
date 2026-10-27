@@ -91,6 +91,9 @@ func (generator *providerWorkIntakeProposalGenerator) modelExecutionConfigDigest
 	if !dockerInfo.Available || (!dockerInfo.Rootless && !dockerInfo.UsernsRemap) {
 		return "", fmt.Errorf("hardened Docker isolation is unavailable")
 	}
+	if err := generator.userMapping.Validate(); err != nil {
+		return "", fmt.Errorf("the Docker job user is unresolved: %w", err)
+	}
 	versionRunner := generator.runVersion
 	if versionRunner == nil {
 		versionRunner = func(ctx context.Context, binary string) (string, error) {
@@ -141,6 +144,8 @@ func (generator *providerWorkIntakeProposalGenerator) modelExecutionConfigDigest
 		DockerServerVersion   string                             `json:"docker_server_version"`
 		DockerRootless        bool                               `json:"docker_rootless"`
 		DockerUsernsRemap     bool                               `json:"docker_userns_remap"`
+		DockerUser            string                             `json:"docker_user"`
+		DockerUserMapping     isolation.UserMappingMode          `json:"docker_user_mapping"`
 		DockerNetwork         isolation.DockerNetworkAttestation `json:"docker_network"`
 		EffectiveEgressPolicy egresspolicy.Binding               `json:"effective_egress_policy"`
 		DockerMemoryMB        int                                `json:"docker_memory_mb"`
@@ -162,11 +167,12 @@ func (generator *providerWorkIntakeProposalGenerator) modelExecutionConfigDigest
 		ProviderArgs: args, ProviderEnvironment: environment, StdinMode: "pipe",
 		DockerImage: generator.cfg.JobImage, DockerServerVersion: dockerInfo.ServerVersion,
 		DockerRootless: dockerInfo.Rootless, DockerUsernsRemap: dockerInfo.UsernsRemap,
+		DockerUser: generator.userMapping.User(), DockerUserMapping: generator.userMapping.Mode,
 		DockerNetwork: generator.networkAttestation, EffectiveEgressPolicy: generator.effectivePolicy,
 		DockerMemoryMB: generator.cfg.JobMemoryMB, DockerCPUs: generator.cfg.JobCPUs,
 		DockerPIDs: generator.cfg.JobPIDs, DockerReadOnly: true,
 		DockerNestedSandbox: generator.cfg.WorkIntakeProposal.Adapter != "opencode",
-		DockerLogDriver:     "none", DockerWrapperPolicy: "work-intake-proposal-docker/v1",
+		DockerLogDriver:     "none", DockerWrapperPolicy: "work-intake-proposal-docker/v2",
 		PolicyLeaseDurationMS: workIntakeProposalPolicyLeaseDuration.Milliseconds(),
 		DockerCommand:         dockerCommand, DockerArgs: dockerArgs,
 		OutputSchemaDigest: hex.EncodeToString(schemaDigest[:]), StrictEmptyMCPDigest: emptyMCPDigest,
@@ -188,7 +194,7 @@ func (generator *providerWorkIntakeProposalGenerator) workIntakeProposalIsolatio
 		NetworkName: generator.networkAttestation.ID,
 		ReadOnlyFS:  true, WorkDir: filepath.Join(executionRoot, "workspace"), WorkspaceRoot: executionRoot,
 		JobHome: jobHome, Image: generator.cfg.JobImage, RunnerID: generator.runnerID,
-		AttemptID: attemptID, NestedSandbox: adapter != "opencode", DisableLogs: true,
+		AttemptID: attemptID, User: generator.userMapping.User(), NestedSandbox: adapter != "opencode", DisableLogs: true,
 		Environment: append([]string(nil), environment...),
 	}
 }

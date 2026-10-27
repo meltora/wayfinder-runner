@@ -267,7 +267,7 @@ func TestOrphanSweepRemovesUnremovableCheckWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := cleanupOrphanedJobState(state); err != nil {
+	if err := cleanupOrphanedJobState(context.Background(), state, nil); err != nil {
 		t.Fatal(err)
 	}
 

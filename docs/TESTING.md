@@ -34,6 +34,27 @@ verification, and self-update. Production release CI must additionally exercise
 Linux rootless Docker, the real immutable job image, restricted egress,
 certificate rotation, upgrade/rollback, and recovery after forced termination.
 
+## Gated rootless Docker tests
+
+These tests start real containers, so they are skipped unless the gate is set.
+Point `DOCKER_HOST` at a rootless daemon owned by the user running the tests and
+`JOB_IMAGE` at the pinned job image:
+
+```sh
+DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock \
+RUN_DOCKER_SANDBOX_PROBE=1 \
+JOB_IMAGE=<registry>/<image>@sha256:<digest> \
+go test ./internal/isolation/ ./internal/daemon/ \
+  -run 'Integration|Container|Ownership|TestRecoveryReclaimsJobOwnedLeftoversOnARootlessDaemon' -v -count=1
+```
+
+They cover the user-namespace map, ownership hand-off and re-owning of job
+trees (including symlinks, a `000` directory, a `0600` file and a FIFO made by
+the job user), the job user's security properties inside a nested provider
+container, Agent Pack read-only mounts, the nested sandbox probe, recovery of
+job-owned leftovers after a simulated crash, and hand-off timing on a
+100 000-entry tree.
+
 Agent Pack tests cover the cross-language canonical publication digest,
 Ed25519-SPKI trust validation, exact authority/reference/provider/version
 binding, pre-network rejection, HTTPS origin policy, redirects, response

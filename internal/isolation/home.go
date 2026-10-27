@@ -135,5 +135,5 @@ func CleanupHome(home string) error {
 	if home == "" {
 		return nil
 	}
-	return os.RemoveAll(home)
+	return removeOwnedTree(home)
 }

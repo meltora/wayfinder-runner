@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -64,8 +66,129 @@ if [ "$1" = run ]; then
 fi
 if [ "$1" = rm ]; then exit 0; fi
 exit 4`)
-	if err := ProbeNestedSandbox(context.Background(), t.TempDir(), "registry.example.test/job@sha256:abc"); err != nil {
+	if err := ProbeNestedSandbox(context.Background(), t.TempDir(), "registry.example.test/job@sha256:abc", testIdentityMapping); err != nil {
 		t.Fatalf("ProbeNestedSandbox: %v", err)
+	}
+}
+
+var testIdentityMapping = UserMapping{Mode: UserMappingIdentity, ContainerUID: 1000, ContainerGID: 1000, HostUID: 1000, HostGID: 1000}
+
+func installRootlessProbeDocker(t *testing.T, handOffExit, reclaimExit, removeExit int) string {
+	t.Helper()
+	log := filepath.Join(t.TempDir(), "calls")
+	installFakeDocker(t, `
+FAKE_DOCKER_LOG='`+log+`'
+user=""
+prev=""
+for arg do
+  if [ "$prev" = --user ]; then user="$arg"; fi
+  prev="$arg"
+done
+case "$1" in
+  run)
+    if [ "$user" = 0:0 ]; then
+      case "$*" in
+        *" sh -c "*) echo "handoff" >> "$FAKE_DOCKER_LOG"; exit `+strconv.Itoa(handOffExit)+` ;;
+        *" chown -hR 0:0 "*) echo "reclaim" >> "$FAKE_DOCKER_LOG"; exit `+strconv.Itoa(reclaimExit)+` ;;
+      esac
+      exit 7
+    fi
+    echo "probe $user" >> "$FAKE_DOCKER_LOG"
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = -w ]; then shift; printf passed > "$1/probe-output"; exit 0; fi
+      shift
+    done
+    exit 3 ;;
+  rm) echo "rm" >> "$FAKE_DOCKER_LOG"; exit `+strconv.Itoa(removeExit)+` ;;
+esac
+exit 4`)
+	return log
+}
+
+func probeCalls(t *testing.T, log string) string {
+	t.Helper()
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(strings.Fields(strings.ReplaceAll(string(calls), "\n", " ")), " ")
+}
+
+func probeTrees(t *testing.T, state string) int {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(state, "doctor"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(entries)
+}
+
+func TestNestedSandboxProbeReclaimsWhatWasHandedOffWhenHandOffFails(t *testing.T) {
+	log := installRootlessProbeDocker(t, 5, 0, 0)
+	state := t.TempDir()
+	err := ProbeNestedSandbox(context.Background(), state, "registry.example.test/job@sha256:abc", testRootlessMapping)
+	if err == nil || !strings.Contains(err.Error(), "hand job trees to the container user") {
+		t.Fatalf("hand-off failure err = %v", err)
+	}
+	if got := probeCalls(t, log); got != "handoff rm reclaim" {
+		t.Fatalf("docker calls = %q", got)
+	}
+	if count := probeTrees(t, state); count != 0 {
+		t.Fatalf("doctor has %d entries after a reclaimed hand-off failure", count)
+	}
+}
+
+func TestNestedSandboxProbeNeverReclaimsOrRemovesWhileTheProbeContainerMayRun(t *testing.T) {
+	log := installRootlessProbeDocker(t, 0, 0, 6)
+	state := t.TempDir()
+	if err := ProbeNestedSandbox(context.Background(), state, "registry.example.test/job@sha256:abc", testRootlessMapping); err == nil {
+		t.Fatal("probe passed although its container could not be removed")
+	}
+	if got := probeCalls(t, log); got != "handoff probe 10001:10001 rm" {
+		t.Fatalf("docker calls = %q", got)
+	}
+	if count := probeTrees(t, state); count != 1 {
+		t.Fatalf("doctor has %d entries, want the unreclaimed probe tree kept", count)
+	}
+}
+
+func TestNestedSandboxProbeFailsAndKeepsTheTreeWhenReclaimFails(t *testing.T) {
+	log := installRootlessProbeDocker(t, 0, 8, 0)
+	state := t.TempDir()
+	err := ProbeNestedSandbox(context.Background(), state, "registry.example.test/job@sha256:abc", testRootlessMapping)
+	if err == nil || !strings.Contains(err.Error(), "re-own job output for the runner") {
+		t.Fatalf("reclaim failure err = %v", err)
+	}
+	if got := probeCalls(t, log); got != "handoff probe 10001:10001 rm reclaim rm" {
+		t.Fatalf("docker calls = %q", got)
+	}
+	if count := probeTrees(t, state); count != 1 {
+		t.Fatalf("doctor has %d entries, want the unreclaimed probe tree kept", count)
+	}
+}
+
+func TestNestedSandboxProbeHandsOffAndReclaimsUnderRootless(t *testing.T) {
+	log := installRootlessProbeDocker(t, 0, 0, 0)
+	state := t.TempDir()
+	if err := ProbeNestedSandbox(context.Background(), state, "registry.example.test/job@sha256:abc", testRootlessMapping); err != nil {
+		t.Fatalf("ProbeNestedSandbox: %v", err)
+	}
+	if got := probeCalls(t, log); got != "handoff probe 10001:10001 rm reclaim" {
+		t.Fatalf("docker calls = %q", got)
+	}
+	if count := probeTrees(t, state); count != 0 {
+		t.Fatalf("doctor has %d entries after a passing probe", count)
+	}
+}
+
+func TestNestedSandboxProbeRefusesAnUnresolvedMappingBeforeDocker(t *testing.T) {
+	installFakeDocker(t, `exit 9`)
+	state := t.TempDir()
+	if err := ProbeNestedSandbox(context.Background(), state, "registry.example.test/job@sha256:abc", UserMapping{}); err == nil {
+		t.Fatal("unresolved mapping accepted")
+	}
+	if _, err := os.Stat(filepath.Join(state, "doctor")); !os.IsNotExist(err) {
+		t.Fatalf("probe tree created for a refused mapping: %v", err)
 	}
 }
 
@@ -78,7 +201,7 @@ if [ "$1" = run ]; then
 fi
 if [ "$1" = rm ]; then exit 0; fi
 exit 4`)
-	err := ProbeNestedSandbox(context.Background(), t.TempDir(), "registry.example.test/job@sha256:abc")
+	err := ProbeNestedSandbox(context.Background(), t.TempDir(), "registry.example.test/job@sha256:abc", testIdentityMapping)
 	if err == nil || len(err.Error()) > (34<<10) {
 		t.Fatalf("expected bounded probe failure, got length=%d err=%v", len(err.Error()), err)
 	}
@@ -99,7 +222,7 @@ func TestNestedSandboxProbeRejectsUnusableStateRoot(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := ProbeNestedSandbox(context.Background(), file, "registry.example.test/job@sha256:abc"); err == nil {
+	if err := ProbeNestedSandbox(context.Background(), file, "registry.example.test/job@sha256:abc", testIdentityMapping); err == nil {
 		t.Fatal("file state root unexpectedly accepted")
 	}
 }

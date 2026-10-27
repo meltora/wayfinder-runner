@@ -278,7 +278,7 @@ func (jr *jobRunner) commandPolicy(dir, root, home, attempt string, configuredNe
 		MemoryMB: jr.d.cfg.JobMemoryMB, CPUs: jr.d.cfg.JobCPUs, PIDs: jr.d.cfg.JobPIDs,
 		NetworkNone: !configuredNetwork || jr.d.cfg.JobNetwork == "none", NetworkName: jr.d.cfg.JobNetworkName,
 		ReadOnlyFS: true, WorkDir: dir, WorkspaceRoot: root, JobHome: home,
-		Image: jr.d.cfg.JobImage, RunnerID: jr.d.runnerID, AttemptID: attempt,
+		Image: jr.d.cfg.JobImage, RunnerID: jr.d.runnerID, AttemptID: attempt, User: jr.d.userMapping.User(),
 	}
 }
 
@@ -302,21 +302,25 @@ func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, root, dir
 		if err != nil {
 			return "", false, err
 		}
+		var scope *ownershipScope
 		cleanup = func() error {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			containerErr := isolation.RemoveJobContainer(cleanupCtx, jr.d.runnerID, containerAttempt)
-			homeErr := os.RemoveAll(home)
-			if containerErr != nil {
-				return containerErr
+			if err := scope.Release(); err != nil {
+				return err
 			}
-			return homeErr
+			return isolation.CleanupHome(home)
 		}
 		policy := jr.commandPolicy(dir, root, home, containerAttempt, configuredNetwork)
 		wrappedCommand, wrappedArgs, err = iso.Wrap(command, wrappedArgs, policy)
 		if err != nil {
-			_ = cleanup()
+			_ = isolation.CleanupHome(home)
 			return "", false, err
+		}
+		scope, err = handOffOwnership(ctx, jr.d.ownership, jr.d.containerRemover(), isolation.OwnershipRequest{
+			RunnerID: jr.d.runnerID, AttemptID: containerAttempt, Purpose: "check",
+			Workspace: []string{root}, Private: []string{home},
+		})
+		if err != nil {
+			return "", false, errors.Join(err, cleanup())
 		}
 		workDir = ""
 		commandEnvironment = isolation.DockerEnvironment()

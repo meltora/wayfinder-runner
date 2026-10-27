@@ -15,7 +15,7 @@ func agentPackMountPolicy(jobRoot string, readOnlyWorkDir bool) Policy {
 		NetworkNone: true, ReadOnlyWorkDir: readOnlyWorkDir,
 		WorkspaceRoot: jobRoot, WorkDir: filepath.Join(jobRoot, "repositories", "primary"),
 		AgentPackDir: filepath.Join(jobRoot, "pack"),
-		RunnerID:     "runner-1", AttemptID: "attempt-1",
+		RunnerID:     "runner-1", AttemptID: "attempt-1", User: testJobUser,
 	}
 }
 
@@ -67,17 +67,22 @@ func TestAgentPackMountRefusesEveryWriteInsideTheContainer(t *testing.T) {
 	if image == "" {
 		t.Fatal("JOB_IMAGE is required")
 	}
-	jobRoot, err := os.MkdirTemp("", "ap8-pack-mount-")
+	resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	mapping, err := ResolveUserMapping(resolveCtx, image, "runner-1")
+	resolveCancel()
 	if err != nil {
 		t.Fatal(err)
 	}
-	jobRoot, err = filepath.EvalSymlinks(jobRoot)
+	state := integrationState(t)
+	if err := os.MkdirAll(filepath.Join(state, "jobs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jobRoot, err := os.MkdirTemp(filepath.Join(state, "jobs"), "job-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	pack := filepath.Join(jobRoot, "pack")
 	checkout := filepath.Join(jobRoot, "repositories", "primary")
-	t.Cleanup(func() { _ = os.RemoveAll(jobRoot) })
 	for _, dir := range []string{filepath.Join(pack, "skills"), checkout} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
@@ -88,7 +93,20 @@ func TestAgentPackMountRefusesEveryWriteInsideTheContainer(t *testing.T) {
 	}
 	p := agentPackMountPolicy(jobRoot, false)
 	p.Image = image
+	p.User = mapping.User()
 	p.AttemptID = "ap8-pack-mount-" + strings.ReplaceAll(filepath.Base(jobRoot), "_", "-")
+	if mapping.RequiresOwnershipHandOff() {
+		ownership := DockerOwnership{Mapping: mapping, Image: image, StateDir: state}
+		request := OwnershipRequest{RunnerID: p.RunnerID, AttemptID: p.AttemptID, Purpose: "job", Workspace: []string{jobRoot}}
+		if err := ownership.HandOff(context.Background(), request); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := ownership.Reclaim(context.Background(), request); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
 	script := strings.Join([]string{
 		`touch "$P/new.md" 2>&1; echo "create=$?"`,
 		`sh -c 'echo x >> "$P/WORKFLOW.md"' 2>&1; echo "append=$?"`,

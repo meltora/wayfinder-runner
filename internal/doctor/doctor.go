@@ -76,8 +76,10 @@ func runSystemChecks(ctx context.Context, opts Options) Report {
 	r.Checks = append(r.Checks, checkBinary("git"))
 	r.Checks = append(r.Checks, checkBinary("docker"))
 	r.Checks = append(r.Checks, checkDockerMode(ctx))
+	mappingCheck, mapping, mappingErr := checkDockerUserMapping(ctx, opts)
+	r.Checks = append(r.Checks, mappingCheck)
 	r.Checks = append(r.Checks, checkRestrictedNetwork(ctx, opts))
-	r.Checks = append(r.Checks, checkNestedSandbox(ctx, opts))
+	r.Checks = append(r.Checks, checkNestedSandbox(ctx, opts, mapping, mappingErr))
 	r.Checks = append(r.Checks, checkDisk(opts.StateDir))
 	r.Checks = append(r.Checks, checkClock())
 	return r
@@ -125,7 +127,31 @@ func checkRestrictedNetwork(ctx context.Context, opts Options) Check {
 	return c
 }
 
-func checkNestedSandbox(ctx context.Context, opts Options) Check {
+var resolveUserMapping = isolation.ResolveUserMapping
+
+func checkDockerUserMapping(ctx context.Context, opts Options) (Check, isolation.UserMapping, error) {
+	c := Check{Name: "docker-user-mapping"}
+	if opts.Isolation == "" || opts.JobImage == "" {
+		c.Status, c.Detail = Warn, "job user mapping not tested; run doctor --config FILE before production use"
+		return c, isolation.UserMapping{}, nil
+	}
+	if opts.Isolation != "docker" {
+		c.Status, c.Detail = Warn, "job user mapping not tested; direct isolation is development-only"
+		return c, isolation.UserMapping{}, nil
+	}
+	mapping, err := resolveUserMapping(ctx, opts.JobImage, "doctor")
+	if err != nil {
+		c.Status, c.Detail = Fail, err.Error()
+		return c, isolation.UserMapping{}, err
+	}
+	c.Status, c.Detail = OK, mapping.Describe()
+	if mapping.Mode == isolation.UserMappingIdentity && runtime.GOOS == "linux" {
+		c.Status, c.Detail = Warn, mapping.Describe()+"; daemon start refuses a rootful Linux daemon"
+	}
+	return c, mapping, nil
+}
+
+func checkNestedSandbox(ctx context.Context, opts Options, mapping isolation.UserMapping, mappingErr error) Check {
 	c := Check{Name: "job-image-sandbox"}
 	if opts.Isolation == "" || opts.JobImage == "" {
 		c.Status, c.Detail = Warn, "job image not tested; run doctor --config FILE before production use"
@@ -135,7 +161,11 @@ func checkNestedSandbox(ctx context.Context, opts Options) Check {
 		c.Status, c.Detail = Warn, "direct isolation is development-only"
 		return c
 	}
-	if err := probeNestedSandbox(ctx, opts.StateDir, opts.JobImage); err != nil {
+	if mappingErr != nil {
+		c.Status, c.Detail = Fail, "job user mapping: "+mappingErr.Error()
+		return c
+	}
+	if err := probeNestedSandbox(ctx, opts.StateDir, opts.JobImage, mapping); err != nil {
 		c.Status, c.Detail = Fail, err.Error()
 		return c
 	}
@@ -160,15 +190,15 @@ func checkDockerMode(ctx context.Context) Check {
 		c.Status, c.Detail = OK, "rootless docker "+info.ServerVersion
 		return c
 	}
-	if info.UsernsRemap {
-		c.Status, c.Detail = OK, "docker "+info.ServerVersion+" with userns remap"
-		return c
-	}
 	if runtime.GOOS == "darwin" {
 		c.Status, c.Detail = Warn, "Docker Desktop VM "+info.ServerVersion+" is supported for development, not the Linux production gate"
 		return c
 	}
-	c.Status, c.Detail = Fail, "docker "+info.ServerVersion+" is rootful; configure rootless Docker or userns-remap"
+	if info.UsernsRemap {
+		c.Status, c.Detail = Fail, "docker "+info.ServerVersion+" uses userns-remap; userns-remap is not supported yet, configure rootless Docker owned by the runner's user"
+		return c
+	}
+	c.Status, c.Detail = Fail, "docker "+info.ServerVersion+" is rootful; configure rootless Docker owned by the runner's user"
 	return c
 }
 

@@ -21,10 +21,14 @@ content by matching an actor.
 
 ## Current production boundary
 
-The supported production target is Linux with systemd and rootless Docker (or a
-Docker daemon configured with user-namespace remapping). macOS and direct
-process isolation are development-only. Firecracker isolation is a future
-hardening layer and is not implemented here.
+The supported production target is Linux with systemd and a rootless Docker
+daemon owned by the runner's own user. A Docker daemon configured with
+`userns-remap` is not supported yet: the runner's host user is not mapped into
+that daemon's user namespace, so `our-runner start` and `doctor` fail closed
+with a message that names the reason. A runner process running as host root is
+refused for Docker isolation. macOS and direct process isolation are
+development-only. Firecracker isolation is a future hardening layer and is not
+implemented here.
 
 A production deployment also needs:
 
@@ -53,9 +57,36 @@ attestation from the root-owned verifier described below.
   idempotent. Long-running jobs request renewal during the latter third of the
   current authority window and accept only a manifest-bound, fencing-checked
   extension from the control plane.
-- Every job container runs under rootless/user-namespaced Docker with a read-only
-  root filesystem, non-root UID/GID, PID/CPU/memory limits, private temporary
+- Every job container runs under rootless Docker with a read-only root
+  filesystem, a non-root UID/GID, PID/CPU/memory limits, private temporary
   filesystems, and either no network or the verified restricted network.
+  At start the runner reads the daemon's user-namespace map from a short probe
+  container on the pinned job image and picks the job user from it. Under
+  rootless Docker the job user is the image's `runner` user, `10001:10001`
+  (a subordinate host id such as 110000, never the runner's own uid). On an
+  identity map (rootful development Docker or the Docker Desktop VM) the job
+  user is the runner's own uid and gid. Any other map, a daemon owned by a
+  different host user, or an image whose `runner` user is not `10001:10001`
+  fails closed.
+- Under rootless Docker the runner hands job trees to the job user before each
+  job, check, consultation, or doctor container starts and re-owns them after
+  the container has been removed. This is done by a short ownership helper
+  container on the same pinned image. The helper runs as container root, which
+  under rootless Docker is the runner's own unprivileged host uid. It drops
+  every capability and adds back only `CHOWN` for the hand-off, plus
+  `DAC_READ_SEARCH` for re-owning. It runs with `no-new-privileges`, no
+  network, a read-only root filesystem, no logging, and PID and memory limits.
+  It runs no job code, only a fixed `chmod`/`chown` argv over per-job
+  directories under the state directory. The state directory itself, the
+  identity, the journal, repository mirrors, and trusted result repositories
+  are never mounted into it. Workspace roots keep group read for the runner
+  while the job runs. Job homes and socket directories are owned by the job
+  user alone, so the MCP token stays `0400`. A job that removes group and other
+  read from its own files makes a mid-job artifact publication, check, or
+  preview of those files fail closed. Re-owning runs on every exit path,
+  including start failure, cancellation, timeout, lease loss, and emergency
+  stop. If re-owning fails, the job is quarantined as a cleanup failure and
+  the next start re-owns and removes the leftovers.
   Credential-free check and Git containers drop every capability and enforce
   `no-new-privileges`. Provider containers drop all capabilities and add back
   only `SYS_ADMIN`, `SYS_CHROOT`, `SETUID`, and `SETGID`, with an unconfined
