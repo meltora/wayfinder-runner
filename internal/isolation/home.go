@@ -1,7 +1,9 @@
 package isolation
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +13,12 @@ import (
 	"github.com/example/app-runner/internal/safeio"
 )
 
-func PrepareHome(stateDir, jobID, attemptID, provider string) (string, error) {
+var (
+	hostGOOS                      = runtime.GOOS
+	readKeychainClaudeCredentials = keychainClaudeCredentials
+)
+
+func PrepareHome(stateDir, jobID, attemptID, provider string, environment []string) (string, error) {
 	homesRoot := filepath.Join(stateDir, "job-homes")
 	if err := os.MkdirAll(homesRoot, 0o700); err != nil {
 		return "", err
@@ -27,6 +34,20 @@ func PrepareHome(stateDir, jobID, attemptID, provider string) (string, error) {
 	hostHome, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
+	}
+	if provider == "claude" {
+		configDir, err := claudeConfigDir(environment, hostHome)
+		if err != nil {
+			_ = os.RemoveAll(home)
+			return "", err
+		}
+		if configDir != "" {
+			if err := copyConfiguredClaudeLogin(configDir, home); err != nil {
+				_ = os.RemoveAll(home)
+				return "", err
+			}
+			return home, nil
+		}
 	}
 	var copies []struct{ src, dst string }
 	switch provider {
@@ -51,10 +72,7 @@ func PrepareHome(stateDir, jobID, attemptID, provider string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(c.dst), 0o700); err != nil {
-			return "", err
-		}
-		if err := os.WriteFile(c.dst, data, 0o600); err != nil {
+		if err := writeJobHomeFile(c.dst, data); err != nil {
 			return "", err
 		}
 		copied++
@@ -63,14 +81,10 @@ func PrepareHome(stateDir, jobID, attemptID, provider string) (string, error) {
 			credCopied = true
 		}
 	}
-	if !credCopied && provider == "claude" && runtime.GOOS == "darwin" {
-		data, err := keychainClaudeCredentials()
+	if !credCopied && provider == "claude" && hostGOOS == "darwin" {
+		data, err := readKeychainClaudeCredentials()
 		if err == nil && len(data) > 0 {
-			dst := filepath.Join(home, ".claude", ".credentials.json")
-			if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-				return "", err
-			}
-			if err := os.WriteFile(dst, data, 0o600); err != nil {
+			if err := writeJobHomeFile(filepath.Join(home, ".claude", ".credentials.json"), data); err != nil {
 				return "", err
 			}
 			copied++
@@ -87,6 +101,53 @@ func PrepareHome(stateDir, jobID, attemptID, provider string) (string, error) {
 		}
 	}
 	return home, nil
+}
+
+func claudeConfigDir(environment []string, hostHome string) (string, error) {
+	value := ""
+	for _, entry := range environment {
+		if key, candidate, ok := strings.Cut(entry, "="); ok && key == "CLAUDE_CONFIG_DIR" {
+			value = candidate
+		}
+	}
+	switch {
+	case value == "":
+		return "", nil
+	case value == "~":
+		return hostHome, nil
+	case strings.HasPrefix(value, "~/"):
+		return filepath.Join(hostHome, value[2:]), nil
+	}
+	resolved, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("resolve CLAUDE_CONFIG_DIR %s: %w", value, err)
+	}
+	return resolved, nil
+}
+
+func copyConfiguredClaudeLogin(configDir, home string) error {
+	credentials, err := readPrivateCredential(filepath.Join(configDir, ".credentials.json"))
+	if err != nil {
+		return fmt.Errorf("CLAUDE_CONFIG_DIR %s has no usable Claude login in .credentials.json: %w", configDir, err)
+	}
+	state, err := readPrivateCredential(filepath.Join(configDir, ".claude.json"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("CLAUDE_CONFIG_DIR %s has an unusable .claude.json: %w", configDir, err)
+	}
+	if err := writeJobHomeFile(filepath.Join(home, ".claude", ".credentials.json"), credentials); err != nil {
+		return err
+	}
+	if state == nil {
+		return nil
+	}
+	return writeJobHomeFile(filepath.Join(home, ".claude.json"), state)
+}
+
+func writeJobHomeFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 func writeCodexProfiles(home string) error {

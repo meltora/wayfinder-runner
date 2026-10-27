@@ -166,13 +166,33 @@ func TestConfiguredSetupReportsProviderEnvironmentNamesOnly(t *testing.T) {
 	}
 	opts.Isolation = "docker"
 	docker := findCheck(t, RunWithDependencies(context.Background(), opts, setupDependencies()), "provider-environment")
-	if docker.Status != Warn || !strings.Contains(docker.Detail, "not applied under docker isolation") || !strings.Contains(docker.Detail, "CLAUDE_CONFIG_DIR") {
+	if docker.Status != Warn || docker.Detail != "codex: CODEX_HOME; claude: ANTHROPIC_LOG, CLAUDE_CONFIG_DIR; "+
+		"under docker isolation the Claude login is copied from CLAUDE_CONFIG_DIR into the job home; "+
+		"not applied under docker isolation: codex: CODEX_HOME; claude: ANTHROPIC_LOG; values are not shown" {
 		t.Fatalf("docker check = %+v", docker)
 	}
 	for _, c := range RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude"}, setupDependencies()).Checks {
 		if c.Name == "provider-environment" {
 			t.Fatal("provider environment reported without configuration")
 		}
+	}
+}
+
+func TestDockerSetupReportsTheCopiedClaudeConfigDirectoryWithoutWarning(t *testing.T) {
+	t.Parallel()
+	opts := Options{ConfigurationLoaded: true, Provider: "claude", Isolation: "docker", ProviderEnvironmentNames: map[string][]string{
+		"claude": {"CLAUDE_CONFIG_DIR"},
+	}}
+	check := findCheck(t, RunWithDependencies(context.Background(), opts, setupDependencies()), "provider-environment")
+	want := "claude: CLAUDE_CONFIG_DIR; under docker isolation the Claude login is copied from CLAUDE_CONFIG_DIR into the job home; values are not shown"
+	if check.Status != OK || check.Detail != want {
+		t.Fatalf("check = %+v, want OK %q", check, want)
+	}
+	opts.ProviderEnvironmentNames = map[string][]string{"codex": {"CLAUDE_CONFIG_DIR", "CODEX_HOME"}}
+	codex := findCheck(t, RunWithDependencies(context.Background(), opts, setupDependencies()), "provider-environment")
+	want = "codex: CLAUDE_CONFIG_DIR, CODEX_HOME; not applied under docker isolation: codex: CLAUDE_CONFIG_DIR, CODEX_HOME; values are not shown"
+	if codex.Status != Warn || codex.Detail != want {
+		t.Fatalf("codex check = %+v, want Warn %q", codex, want)
 	}
 }
 func TestConfiguredSetupReportsIsolationMode(t *testing.T) {

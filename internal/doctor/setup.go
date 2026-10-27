@@ -97,7 +97,8 @@ func registrationCheck(name string, count int, label, limit string) Check {
 }
 
 func providerEnvironmentCheck(opts Options) (Check, bool) {
-	var parts []string
+	var parts, unapplied []string
+	claudeConfigDirCopied := false
 	for _, provider := range []string{"codex", "claude", "opencode"} {
 		names := append([]string(nil), opts.ProviderEnvironmentNames[provider]...)
 		if len(names) == 0 {
@@ -105,14 +106,33 @@ func providerEnvironmentCheck(opts Options) (Check, bool) {
 		}
 		sort.Strings(names)
 		parts = append(parts, provider+": "+strings.Join(names, ", "))
+		var skipped []string
+		for _, name := range names {
+			if provider == "claude" && name == "CLAUDE_CONFIG_DIR" {
+				claudeConfigDirCopied = true
+				continue
+			}
+			skipped = append(skipped, name)
+		}
+		if len(skipped) > 0 {
+			unapplied = append(unapplied, provider+": "+strings.Join(skipped, ", "))
+		}
 	}
 	if len(parts) == 0 {
 		return Check{}, false
 	}
 	check := Check{Name: "provider-environment", Status: OK, Detail: strings.Join(parts, "; ") + "; applied to agent processes only; values are not shown"}
-	if opts.Isolation == "docker" {
-		check.Status = Warn
-		check.Detail = strings.Join(parts, "; ") + "; not applied under docker isolation; values are not shown"
+	if opts.Isolation != "docker" {
+		return check, true
 	}
+	segments := append([]string(nil), parts...)
+	if claudeConfigDirCopied {
+		segments = append(segments, "under docker isolation the Claude login is copied from CLAUDE_CONFIG_DIR into the job home")
+	}
+	if len(unapplied) > 0 {
+		check.Status = Warn
+		segments = append(segments, "not applied under docker isolation: "+strings.Join(unapplied, "; "))
+	}
+	check.Detail = strings.Join(append(segments, "values are not shown"), "; ")
 	return check, true
 }

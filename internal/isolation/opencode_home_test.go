@@ -24,7 +24,7 @@ func TestPrepareHomeOpenCodeCopiesOnlyAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	home, err := PrepareHome(t.TempDir(), "j1", "a1", "opencode")
+	home, err := PrepareHome(t.TempDir(), "j1", "a1", "opencode", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

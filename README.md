@@ -97,7 +97,12 @@ attestation from the root-owned verifier described below.
   provider credentials.
 - Agent processes receive only their repository workspace, a job-specific home,
   and a read-only MCP socket/token mount. They do not receive the runner's mTLS
-  identity or control-plane credentials.
+  identity or control-plane credentials. Under Docker isolation the job home
+  receives private copies of the provider login, never a host mount: Claude
+  Code's `.credentials.json` and `.claude.json` come from `CLAUDE_CONFIG_DIR`
+  when `provider_environment.claude` sets it, otherwise from `~/.claude` and
+  `~/.claude.json` (with the macOS Keychain as a fallback); Codex and OpenCode
+  copy their default `auth.json`.
 - Repository instructions such as `AGENTS.md`, `CLAUDE.md`, skills, commands,
   hooks, and MCP declarations are inventoried without execution. The provider
   may then use repository-native instructions as code owned by that repository.
@@ -697,10 +702,23 @@ in `provider_environment`.
 The variables are applied only to agent sessions (planning, build and review
 continuation) started with `isolation: direct`, under the direct, herdr or tmux
 supervisor. They are never applied to Git, required checks, preview observation,
-source publication or other runner processes. They are not applied under
-`isolation: docker`, where job homes receive copies of the default provider
-credentials, or to prompt-only work-intake consultation, which always runs in
-Docker. The tmux supervisor passes them on its command line and the herdr
+source publication or other runner processes. They are not passed into
+`isolation: docker` containers or to prompt-only work-intake consultation,
+which always runs in Docker. Under Docker the job home receives copies of the
+provider credentials instead. For Claude Code, a configured `CLAUDE_CONFIG_DIR`
+selects the copy source: `<CLAUDE_CONFIG_DIR>/.credentials.json` and
+`<CLAUDE_CONFIG_DIR>/.claude.json` are copied to the job home's
+`.claude/.credentials.json` and `.claude.json`, so provider jobs and proposal
+consultations run as the same account that capability detection reports as
+signed in. The container still uses `HOME=/home/runner` and does not receive
+`CLAUDE_CONFIG_DIR`. When `CLAUDE_CONFIG_DIR` is set but its `.credentials.json`
+is missing, not a private regular file, or a symlink, the job fails before the
+agent starts with an error naming the directory; the runner never falls back to
+`~/.claude` or the macOS Keychain. Without `CLAUDE_CONFIG_DIR`, Claude jobs copy
+`~/.claude/.credentials.json` and `~/.claude.json` (Keychain fallback on macOS).
+Codex and OpenCode always copy their default `auth.json`; `CODEX_HOME` and other
+variables are not applied under Docker, and `our-runner doctor --config` warns
+with their names. The tmux supervisor passes them on its command line and the herdr
 supervisor writes them to its private launch script, as it already does for the
 runner's own session variables.
 

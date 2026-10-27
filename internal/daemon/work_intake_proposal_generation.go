@@ -163,6 +163,7 @@ func (generator *providerWorkIntakeProposalGenerator) Generate(
 		operation.WorkIntakeProposalRequestID,
 		operation.WorkIntakeProposalAttemptID,
 		operation.Adapter,
+		generator.cfg.AgentEnvironment(operation.Adapter),
 	)
 	if err != nil {
 		return workIntakeProposalPreStartFailure()

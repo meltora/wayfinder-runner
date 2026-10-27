@@ -20,7 +20,7 @@ func TestPrepareHomeClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateDir := t.TempDir()
-	home, err := PrepareHome(stateDir, "j1", "a1", "claude")
+	home, err := PrepareHome(stateDir, "j1", "a1", "claude", nil)
 	if err != nil {
 		t.Fatalf("PrepareHome: %v", err)
 	}
@@ -55,14 +55,14 @@ func TestPrepareHomeRejectsCredentialSymlink(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(hostHome, ".codex", "auth.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PrepareHome(t.TempDir(), "j1", "a1", "codex"); err == nil {
+	if _, err := PrepareHome(t.TempDir(), "j1", "a1", "codex", nil); err == nil {
 		t.Fatal("credential symlink was accepted")
 	}
 }
 
 func TestPrepareHomeMissingCredentials(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if _, err := PrepareHome(t.TempDir(), "j1", "a1", "claude"); err == nil {
+	if _, err := PrepareHome(t.TempDir(), "j1", "a1", "claude", nil); err == nil {
 		t.Fatal("expected error when no credentials exist")
 	}
 }
@@ -76,7 +76,7 @@ func TestPrepareHomeCodex(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(hostHome, ".codex", "auth.json"), []byte(`{"key":"k"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	home, err := PrepareHome(t.TempDir(), "j1", "a1", "codex")
+	home, err := PrepareHome(t.TempDir(), "j1", "a1", "codex", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
