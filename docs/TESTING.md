@@ -45,7 +45,7 @@ DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock \
 RUN_DOCKER_SANDBOX_PROBE=1 \
 JOB_IMAGE=<registry>/<image>@sha256:<digest> \
 go test ./internal/isolation/ ./internal/daemon/ \
-  -run 'Integration|Container|Ownership|TestRecoveryReclaimsJobOwnedLeftoversOnARootlessDaemon' -v -count=1
+  -run 'Integration|Container|Ownership|TestRecoveryReclaimsJobOwnedLeftoversOnARootlessDaemon|TestPlanCheckoutCarryForwardOnARootlessDaemon' -v -count=1
 ```
 
 They cover the user-namespace map, ownership hand-off and re-owning of job
@@ -54,6 +54,43 @@ the job user), the job user's security properties inside a nested provider
 container, Agent Pack read-only mounts, the nested sandbox probe, recovery of
 job-owned leftovers after a simulated crash, and hand-off timing on a
 100 000-entry tree.
+
+`TestPlanCheckoutCarryForwardOnARootlessDaemon` skips on a daemon that is not
+rootless. It proves that the real hand-off changes ctime but not the plan
+checkout identity, that plan checkout verification still passes after the
+baseline is carried forward and the job user runs a read-only
+`git rev-parse HEAD`, and that a write by the job user is refused.
+
+The provider CLI probe tests run in the same package under the same gate:
+
+```sh
+DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock \
+RUN_DOCKER_SANDBOX_PROBE=1 \
+JOB_IMAGE=<registry>/<image>@sha256:<digest> \
+INCOMPATIBLE_JOB_IMAGE=<older image>@sha256:<digest> \
+go test ./internal/isolation/ \
+  -run 'ProviderCLIProbeIntegration|TestJobImageSandboxRuntimeStartsUnderTheNestedSandboxFlags|TestClaudeBash' -v -count=1
+```
+
+The `TestClaudeBash` cases run the image's real `claude` offline: no
+credentials, `--network none`, and a local fake Messages API on loopback that
+asks for one Bash call. The argv, settings file and container environment come
+from `Claude.BuildSpec` for a Docker build job, under the job flags and the
+unprivileged bubblewrap `PATH`, with a logging `bwrap` wrapper earlier on
+`PATH`. Without `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, Bash must run in a nested
+PID namespace with `--bind /proc /proc`, unable to read a denied canary or
+write outside the allowed paths. The control case sets the scrub and expects
+`--proc /proc` and `Can't mount proc`. Claude did not use a wrapper owned by
+the job user under its home directory (cause not verified), so the test mounts
+the wrapper read-only from a directory that the rootless daemon maps to root.
+
+They probe `claude --version` and `claude --help` inside `JOB_IMAGE` as the
+job user and require every runner option to be declared, start `srt` as the
+job user with the nested-sandbox flags and expect `sandbox-ok`, check that
+`rg --version` runs, and check that `/usr/bin/bwrap` is the only set-ID file.
+`INCOMPATIBLE_JOB_IMAGE` is optional; when set it names an image whose Claude
+Code release predates `--permission-prompts` and `--restricted`, and the test
+requires the probe to report exactly those two options as missing.
 
 Agent Pack tests cover the cross-language canonical publication digest,
 Ed25519-SPKI trust validation, exact authority/reference/provider/version

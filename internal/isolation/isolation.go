@@ -32,12 +32,18 @@ type Policy struct {
 	RunnerID            string
 	AttemptID           string
 	NestedSandbox       bool
+	UnprivilegedBwrap   bool
 	DisableLogs         bool
 	Environment         []string
 	ManagedConfigMounts []supervisor.ManagedConfigMount
 }
 
-const DefaultJobImage = "app-runner-job:latest"
+const (
+	DefaultJobImage               = "app-runner-job:latest"
+	UnprivilegedBubblewrapDir     = "/usr/local/lib/our-runner/unprivileged-bwrap"
+	JobImagePath                  = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	unprivilegedBubblewrapEnvPath = "PATH=" + UnprivilegedBubblewrapDir + ":" + JobImagePath
+)
 
 type Isolator interface {
 	Name() string
@@ -90,6 +96,9 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 	}
 	if err := validateContainerUser(p.User); err != nil {
 		return "", nil, err
+	}
+	if p.UnprivilegedBwrap && !p.NestedSandbox {
+		return "", nil, fmt.Errorf("docker isolation uses the unprivileged bubblewrap only for a nested sandbox")
 	}
 	dockerArgs := []string{
 		"run", "--rm", "-i", "--init", "--user", p.User,
@@ -185,6 +194,9 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 			return "", nil, fmt.Errorf("docker isolation received an invalid container environment entry")
 		}
 		dockerArgs = append(dockerArgs, "-e", entry)
+	}
+	if p.UnprivilegedBwrap {
+		dockerArgs = append(dockerArgs, "-e", unprivilegedBubblewrapEnvPath)
 	}
 	image := p.Image
 	if image == "" {

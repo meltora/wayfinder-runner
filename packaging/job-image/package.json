@@ -6,7 +6,7 @@
     "node": ">=22.22.2"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "2.1.221",
+    "@anthropic-ai/claude-code": "2.1.299",
     "@anthropic-ai/sandbox-runtime": "0.0.69",
     "@openai/codex": "0.146.0",
     "opencode-ai": "1.18.13",

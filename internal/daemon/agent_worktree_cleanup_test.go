@@ -3,8 +3,51 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestWorkspaceCleanupAcceptsAnAlreadyRemovedWorkspace(t *testing.T) {
+	f := newAgentResultTest(t)
+	if err := os.RemoveAll(f.jr.workDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeAgentWorktrees(f.jr.workDir, f.checkout); err != nil {
+		t.Fatalf("cleanup of a removed workspace = %v", err)
+	}
+}
+
+func TestWorkspaceCleanupRefusesARegularFileInPlaceOfTheWorkspace(t *testing.T) {
+	f := newAgentResultTest(t)
+	if err := os.RemoveAll(f.jr.workDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.jr.workDir, []byte("not a workspace"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeAgentWorktrees(f.jr.workDir, f.checkout); err == nil {
+		t.Fatal("cleanup accepted a regular file as the workspace root")
+	}
+}
+
+func TestWorkspaceCleanupRefusesASymlinkedWorkspace(t *testing.T) {
+	f := newAgentResultTest(t)
+	sibling := f.addWorktree(t, "../linked-root-sibling", "agent-linked-root")
+	moved := f.jr.workDir + ".moved"
+	if err := os.Rename(f.jr.workDir, moved); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(moved) })
+	if err := os.Symlink(moved, f.jr.workDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeAgentWorktrees(f.jr.workDir, f.checkout); err == nil {
+		t.Fatal("cleanup accepted a symlinked workspace root")
+	}
+	if _, err := os.Stat(filepath.Join(moved, strings.TrimPrefix(sibling, f.jr.workDir), "README.md")); err != nil {
+		t.Fatalf("cleanup removed a worktree through a symlinked root: %v", err)
+	}
+}
 
 func TestWorkspaceCleanupRefusesSymlinkedGitDirectory(t *testing.T) {
 	f := newAgentResultTest(t)

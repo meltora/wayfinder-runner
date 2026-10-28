@@ -28,6 +28,7 @@ type StartParams struct {
 	ResumeSessionID string
 	ReadOnly        bool
 	HardenedRuntime bool
+	DockerIsolation bool
 	Environment     []string
 }
 
@@ -261,23 +262,27 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if p.ReadOnly {
 		deniedPermissions = append(deniedPermissions, claudePlanDeniedTools...)
 	}
+	sandbox := map[string]any{
+		"enabled":                  p.HardenedRuntime,
+		"failIfUnavailable":        p.HardenedRuntime,
+		"allowUnsandboxedCommands": false,
+		"filesystem": map[string]any{
+			"denyRead":  deniedPaths,
+			"denyWrite": deniedPaths,
+		},
+		"credentials": map[string]any{
+			"files": deniedCredentialFiles,
+		},
+		"network": map[string]any{"strictAllowlist": true, "allowedDomains": []string{}},
+	}
+	if p.DockerIsolation {
+		sandbox["enableWeakerNestedSandbox"] = true
+	}
 	settings := map[string]any{
 		"permissions": map[string]any{
 			"deny": deniedPermissions,
 		},
-		"sandbox": map[string]any{
-			"enabled":                  p.HardenedRuntime,
-			"failIfUnavailable":        p.HardenedRuntime,
-			"allowUnsandboxedCommands": false,
-			"filesystem": map[string]any{
-				"denyRead":  deniedPaths,
-				"denyWrite": deniedPaths,
-			},
-			"credentials": map[string]any{
-				"files": deniedCredentialFiles,
-			},
-			"network": map[string]any{"strictAllowlist": true, "allowedDomains": []string{}},
-		},
+		"sandbox": sandbox,
 	}
 	hooks, err := claudeManagedHooks(p)
 	if err != nil {
@@ -328,7 +333,7 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		args = append(args, "--resume", p.ResumeSessionID)
 	}
 	env := allowedEnvironment()
-	if p.HardenedRuntime {
+	if p.HardenedRuntime && !p.DockerIsolation {
 		env = append(env, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1")
 	}
 	return supervisor.Spec{

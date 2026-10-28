@@ -15,23 +15,32 @@ import (
 
 var errPlanCheckoutChanged = errors.New("plan checkout changed")
 
-type planBaselineWalk struct {
-	root    *os.Root
-	digest  hash.Hash
-	entries int
+type planCheckoutDigests struct {
+	Strict   string
+	Identity string
 }
 
-func planCheckoutBaseline(dir string) (string, error) {
+type planBaselineWalk struct {
+	root     *os.Root
+	strict   hash.Hash
+	identity hash.Hash
+	entries  int
+}
+
+func planCheckoutBaseline(dir string) (planCheckoutDigests, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return "", err
+		return planCheckoutDigests{}, err
 	}
 	defer func() { _ = root.Close() }()
-	walk := &planBaselineWalk{root: root, digest: sha256.New()}
+	walk := &planBaselineWalk{root: root, strict: sha256.New(), identity: sha256.New()}
 	if err := walk.directory("."); err != nil {
-		return "", err
+		return planCheckoutDigests{}, err
 	}
-	return hex.EncodeToString(walk.digest.Sum(nil)), nil
+	return planCheckoutDigests{
+		Strict:   hex.EncodeToString(walk.strict.Sum(nil)),
+		Identity: hex.EncodeToString(walk.identity.Sum(nil)),
+	}, nil
 }
 
 func (w *planBaselineWalk) directory(rel string) error {
@@ -66,7 +75,8 @@ func (w *planBaselineWalk) entry(child string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w.digest, "%q\x00%s\x00", child, info.Mode().String())
+	fmt.Fprintf(w.strict, "%q\x00%s\x00", child, info.Mode().String())
+	fmt.Fprintf(w.identity, "%q\x00%s\x00", child, info.Mode().Type().String())
 	switch mode := info.Mode(); {
 	case mode.IsDir():
 		return w.directory(child)
@@ -75,13 +85,15 @@ func (w *planBaselineWalk) entry(child string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(w.digest, "%q\x00", target)
+		fmt.Fprintf(w.strict, "%q\x00", target)
+		fmt.Fprintf(w.identity, "%q\x00", target)
 	}
 	key, ok := fileStatKey(info)
 	if !ok {
 		return errPlanCheckoutChanged
 	}
-	fmt.Fprintf(w.digest, "%d\x00%d\x00%d\x00%d\x00%d\x00%d\x00", key.dev, key.ino, key.mode, key.size, key.mtime, key.ctime)
+	fmt.Fprintf(w.strict, "%d\x00%d\x00%d\x00%d\x00%d\x00%d\x00", key.dev, key.ino, key.mode, key.size, key.mtime, key.ctime)
+	fmt.Fprintf(w.identity, "%d\x00%d\x00%d\x00%d\x00", key.dev, key.ino, key.size, key.mtime)
 	return nil
 }
 

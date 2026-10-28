@@ -670,7 +670,9 @@ on `PATH`; a missing explicit executable reports unavailable without falling bac
 Authentication readiness is checked separately. Overrides are local configuration
 and are not included in the manifest; version output containing the configured or
 resolved executable path is omitted. These host checks do not prove executable or
-credential availability inside a production job image.
+credential availability inside a production job image. Capability detection
+still reports the host CLI version, not the one inside the job image; the job
+image's Claude Code release is verified separately by the start gate below.
 
 The Claude probe is advertised as both `claude` and the signed Pack/runtime name
 `claude-code`, with identical availability, authentication and hook facts; these
@@ -1160,6 +1162,64 @@ probe creates a synthetic provider credential and proves that a real nested
 sandbox can use the workspace but cannot read that credential. CI also builds
 the image from the committed lockfile and rejects fixed HIGH or CRITICAL image
 vulnerabilities.
+
+The job image pins Claude Code `2.1.299`, the first release checked to declare
+every option the runner passes, including `--permission-prompts` and
+`--restricted` (the earlier `2.1.221` pin rejected both, so every Claude job
+exited at startup). The build fails if `claude --version` does not report that
+release. The image also ships `ripgrep`, a dependency of the nested sandbox runtime
+(`srt` refuses to start without `rg`), which Docker jobs require Claude to use.
+
+The image carries two identical bubblewrap binaries. `/usr/bin/bwrap` stays
+setuid and is the only set-ID file in the image; Codex's nested sandbox needs
+it. A root-owned, non-setuid `0755` copy lives at
+`/usr/local/lib/our-runner/unprivileged-bwrap/bwrap`. The build fails unless the
+set-ID list is exactly `/usr/bin/bwrap` and the copy is byte-identical to it.
+Setuid bwrap cannot start Claude's sandbox under the provider container's
+capability set (`capset failed`), and Claude's strict mode cannot mount a fresh
+`/proc` inside Docker. Claude Docker jobs therefore get the copy's directory
+prepended to the container `PATH`, and the runner sets
+`sandbox.enableWeakerNestedSandbox: true` in their Claude settings. Codex and
+OpenCode jobs, direct isolation, and the probe and helper containers keep the
+image `PATH`, and direct isolation keeps Claude's strict sandbox. The tradeoff
+is that a command in Claude's weaker sandbox can see the container's process
+list and command lines (prompts and paths, not credentials, which stay under
+denied paths). Other processes' environments, denied paths, `/proc/*/root`
+paths into denied files, and writes outside the allowed paths remain refused,
+and the outer container stays the primary boundary.
+
+Claude Docker jobs also run without `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`. Claude
+Code ignores `enableWeakerNestedSandbox` while that scrub is on and asks
+bubblewrap for a fresh `/proc` mount, which Docker refuses (`Can't mount proc`),
+so Bash could not run in any Claude Docker job. Without the scrub, Claude binds
+the container's `/proc` instead. The tradeoff is that commands Claude runs
+inherit its own environment; under Docker that environment holds no secret
+values (`HOME`, `PATH`, the MCP socket and token file paths, and image
+variables), the Claude login stays a file under denied paths, and other
+processes' environments stay unreadable inside the sandbox. The scrub exists to
+keep credentials delivered as environment variables, such as
+`ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, from leaking to every command
+Claude runs, so while it is off no credential may enter a Claude Docker job's
+environment; today the container environment allowlist (`ContainerEnvironment`
+and `containerEnvironmentKey`) enforces that. No runner job sets the scrub:
+Docker jobs omit it, and direct isolation, which is development-only, runs
+Claude without the hardened runtime and never set it. The provider still adds
+the scrub to a hardened spec built without Docker isolation, but no runner code
+path builds one.
+
+Under Docker isolation, `our-runner start` runs `claude --version` and
+`claude --help` once in the pinned job image as the job user (no network,
+read-only root, all capabilities dropped) for the configured provider and, when
+enabled, the work intake proposal adapter. It refuses to start when the help
+output does not declare every runner option, naming the image, the version and
+the missing options, and a job whose provider and image pair was not verified
+fails with `agent_start_failed` before any container starts. `doctor --config`
+reports the same probe as the `job-image-provider-cli` row: OK when every
+option is accepted, Fail with the missing options or the probe error, and Warn
+for direct isolation or for providers without a declared option contract.
+When a provider exits unsuccessfully, the `agent exited` log carries a
+redacted, bounded tail of its unstructured output, and the job's failure
+message names the option when the CLI reported `unknown option '<name>'`.
 
 The mock control plane and development-only direct isolation are documented in
 [`docs/TESTING.md`](docs/TESTING.md). A release is not production-approved until

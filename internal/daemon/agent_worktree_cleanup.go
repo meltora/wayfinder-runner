@@ -15,6 +15,16 @@ func removeAgentWorktrees(workspaceRoot, checkout string) error {
 	if !ok {
 		return fmt.Errorf("repository checkout is outside the job workspace")
 	}
+	info, err := os.Lstat(workspaceRoot)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("job workspace root is not a directory")
+	}
 	root, err := os.OpenRoot(workspaceRoot)
 	if err != nil {
 		return err

@@ -328,14 +328,14 @@ func TestRunExecutesCompleteConfiguredPreflight(t *testing.T) {
 	if report.ExitCode() != 0 {
 		t.Fatalf("preflight failed:\n%s", Format(report))
 	}
-	if len(report.Checks) != 11 {
-		t.Fatalf("checks = %d, want 11", len(report.Checks))
+	if len(report.Checks) != 12 {
+		t.Fatalf("checks = %d, want 12", len(report.Checks))
 	}
 	names := make([]string, len(report.Checks))
 	for index, check := range report.Checks {
 		names[index] = check.Name
 	}
-	if joined := strings.Join(names, " "); !strings.Contains(joined, "docker-mode docker-user-mapping restricted-egress job-image-sandbox") {
+	if joined := strings.Join(names, " "); !strings.Contains(joined, "docker-mode docker-user-mapping restricted-egress job-image-sandbox job-image-provider-cli disk-space") {
 		t.Fatalf("check order = %s", joined)
 	}
 }

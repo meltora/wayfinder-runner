@@ -61,9 +61,10 @@ type Daemon struct {
 	uploader       *artifactUploader
 	supervisor     supervisor.Supervisor
 
-	userMapping        isolation.UserMapping
-	ownership          isolation.Ownership
-	removeJobContainer containerRemover
+	userMapping          isolation.UserMapping
+	ownership            isolation.Ownership
+	removeJobContainer   containerRemover
+	verifiedProviderCLIs map[providerCLIKey]string
 
 	jobMu                                                 sync.Mutex
 	activeJob                                             *jobRunner
@@ -250,6 +251,7 @@ func NewWithExternalOperationDependencies(
 	var workIntakeEffectivePolicy egresspolicy.Binding
 	var userMapping isolation.UserMapping
 	var ownership isolation.Ownership
+	var verifiedProviderCLIs map[providerCLIKey]string
 	if cfg.Isolation == "docker" {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		info := isolation.ProbeDocker(cleanupCtx)
@@ -295,6 +297,12 @@ func NewWithExternalOperationDependencies(
 			_ = lock.Close()
 			return nil, err
 		}
+		verifiedProviderCLIs, err = verifyDockerProviderCLIs(cfg, runnerID, userMapping, logger)
+		if err != nil {
+			_ = j.Close()
+			_ = lock.Close()
+			return nil, err
+		}
 	}
 	if err := recoverStartupJobState(cfg.StateDir, cleanupJobs, ownershipReclaimer(ownership, runnerID)); err != nil {
 		_ = j.Close()
@@ -319,6 +327,7 @@ func NewWithExternalOperationDependencies(
 		supervisor:                           nil,
 		userMapping:                          userMapping,
 		ownership:                            ownership,
+		verifiedProviderCLIs:                 verifiedProviderCLIs,
 		updateWake:                           make(chan struct{}, 1),
 		updateIPC:                            updateClient,
 		sourcePublicationPublisher:           publicationPublisher,

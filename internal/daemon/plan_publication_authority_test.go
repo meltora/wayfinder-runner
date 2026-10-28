@@ -67,8 +67,8 @@ func configurePlanPublicationRepositories(t *testing.T, jr *jobRunner) []v1.JobR
 		t.Fatal(err)
 	}
 	jr.repositories = []checkedOutRepository{
-		{ID: "repository-1", Base: "main", WorkDir: dir, Primary: true, PlanBaseline: baseline},
-		{ID: "repository-2", Base: "release", WorkDir: dir, PlanBaseline: baseline},
+		{ID: "repository-1", Base: "main", WorkDir: dir, Primary: true, PlanBaseline: newPlanCheckoutEvidence(baseline)},
+		{ID: "repository-2", Base: "release", WorkDir: dir, PlanBaseline: newPlanCheckoutEvidence(baseline)},
 	}
 	return repositories
 }

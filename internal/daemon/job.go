@@ -44,6 +44,7 @@ type jobRunner struct {
 	completionStarted bool
 	sessionID         string
 	providerError     string
+	outputTail        *providerOutputTail
 	capacityFailure   *provider.CapacityFailure
 	controlAction     v1.JobControlAction
 	controlResultDone chan struct{}
@@ -89,7 +90,7 @@ type checkedOutRepository struct {
 	WorkDir      string
 	Primary      bool
 	Fingerprint  string
-	PlanBaseline string
+	PlanBaseline *planCheckoutEvidence
 	Trusted      *trustedResultRepository
 }
 
@@ -524,7 +525,19 @@ func (jr *jobRunner) run() {
 	}
 	var jobHome string
 	if iso.Name() == "docker" {
+		if !d.providerCLIVerified(adapter) {
+			jr.logger.Error("job image provider CLI compatibility is unverified", "provider", adapterName)
+			finish(
+				jr.startupFailureOutcome(
+					v1.JobFailureAgentStart,
+					"job image provider CLI compatibility is unverified",
+				),
+				nil,
+			)
+			return
+		}
 		isoPolicy.User = d.userMapping.User()
+		isoPolicy.UnprivilegedBwrap = isoPolicy.NestedSandbox && provider.UsesUnprivilegedBubblewrap(adapter)
 		spec, err = adapter.BuildSpec(provider.StartParams{
 			Job:             job,
 			WorkDir:         workDir,
@@ -539,6 +552,7 @@ func (jr *jobRunner) run() {
 			ResumeSessionID: job.ResumeSessionID,
 			ReadOnly:        job.Kind == v1.JobKindPlan,
 			HardenedRuntime: true,
+			DockerIsolation: true,
 		})
 		if err != nil {
 			finish(
@@ -631,6 +645,10 @@ func (jr *jobRunner) run() {
 			finish(jr.startupFailureOutcome(v1.JobFailureWorkspacePreparation, "hand off job workspace"), nil)
 			return
 		}
+		if err := jr.carryPlanCheckoutForward(); err != nil {
+			finish(jr.startupFailureOutcome(v1.JobFailureWorkspacePreparation, planCheckoutHandOffFailure), nil)
+			return
+		}
 	}
 
 	jr.procMu.Lock()
@@ -707,7 +725,15 @@ func (jr *jobRunner) run() {
 		cancelled := jr.cancelled
 		leaseLost := jr.leaseLost
 		jr.procMu.Unlock()
-		jr.logger.Error("agent exited", "err", exitErr, "capacity_exhausted", capacityExhausted)
+		outputTail := jr.currentOutputTail()
+		exitAttributes := []any{"err", exitErr, "capacity_exhausted", capacityExhausted}
+		if tail := outputTail.String(); tail != "" {
+			exitAttributes = append(exitAttributes, "provider_output_tail", tail)
+		}
+		if providerError := jr.currentProviderError(); providerError != "" {
+			exitAttributes = append(exitAttributes, "provider_error", providerError)
+		}
+		jr.logger.Error("agent exited", exitAttributes...)
 		extra := map[string]any{}
 		if job.Kind == v1.JobKindBuild && !cancelled && !leaseLost {
 			rm := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
@@ -737,7 +763,7 @@ func (jr *jobRunner) run() {
 			finish(jobOutcome{State: v1.JobFinishedCancelled, FailureCode: v1.JobFailureCancelled}, nil)
 			return
 		}
-		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentExit, FailureMessage: "agent process exited unsuccessfully"}, nil)
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureAgentExit, FailureMessage: agentExitFailure(outputTail.rejectedOption())}, nil)
 		return
 	}
 
@@ -906,13 +932,15 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 			_ = rm.RemoveWorkspace(wtDir)
 			return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, err)
 		}
-		var planBaseline string
+		var planBaseline *planCheckoutEvidence
 		if job.Kind == v1.JobKindPlan {
-			if planBaseline, err = planCheckoutBaseline(wtDir); err != nil {
+			digests, err := planCheckoutBaseline(wtDir)
+			if err != nil {
 				cleanup()
 				_ = rm.RemoveWorkspace(wtDir)
 				return "", func() {}, fmt.Errorf("workspace %s: %w", ref.RepositoryID, err)
 			}
+			planBaseline = newPlanCheckoutEvidence(digests)
 		}
 		var trusted *trustedResultRepository
 		if job.Kind == v1.JobKindBuild {
@@ -1070,6 +1098,10 @@ func (jr *jobRunner) publishProgress(ctx context.Context, milestone, task, next 
 }
 
 func (jr *jobRunner) consumeOutput(r io.Reader) {
+	tail := jr.newProviderOutputTail()
+	jr.procMu.Lock()
+	jr.outputTail = tail
+	jr.procMu.Unlock()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
 	for sc.Scan() {
@@ -1095,6 +1127,7 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 			jr.logger.Info("agent event", "type", safeLogValue(m["type"]), "status", safeLogValue(m["status"]))
 			jr.publishSanitizedAgentStatus(m)
 		} else {
+			tail.add(line)
 			jr.logger.Debug("unstructured agent output suppressed", "bytes", len(line))
 		}
 	}

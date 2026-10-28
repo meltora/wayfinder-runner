@@ -23,6 +23,7 @@ func TestDoctorCommandPassesValidatedOperatorSetupFacts(t *testing.T) {
 	cfg.StateDir = "/private/runner-state"
 	cfg.Provider = "claude"
 	cfg.ProviderBinaries = map[string]string{"claude": "/private/installed/claude", "codex": "/other/tool"}
+	cfg.WorkIntakeProposal = config.WorkIntakeProposalConfig{Enabled: true, Adapter: "codex", Model: "consultation-model"}
 	cfg.Repositories = map[string]config.RepositoryConfig{"repo-a": {URL: "https://example.com/a"}, "repo-b": {URL: "https://example.com/b"}}
 	cfg.AgentPackPublicKeys = map[string]string{"key-a": "validated"}
 	var captured doctor.Options
@@ -44,6 +45,9 @@ func TestDoctorCommandPassesValidatedOperatorSetupFacts(t *testing.T) {
 	}
 	if !captured.ConfigurationLoaded || captured.Provider != "claude" || captured.ProviderBinary != "/private/installed/claude" || captured.RepositoryCount != 2 || captured.TrustedAgentPackKeyCount != 1 {
 		t.Fatal("operator setup facts were not passed")
+	}
+	if !captured.WorkIntakeProposalEnabled || captured.WorkIntakeProposalAdapter != "codex" || captured.WorkIntakeProposalBinary != "/other/tool" {
+		t.Fatal("proposal adapter facts were not passed")
 	}
 	if captured.JobImage != cfg.JobImage || captured.JobNetwork != cfg.JobNetwork || captured.Isolation != cfg.Isolation || captured.StateDir != cfg.StateDir {
 		t.Fatal("existing diagnostic settings changed")

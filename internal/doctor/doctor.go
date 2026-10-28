@@ -62,6 +62,8 @@ type Options struct {
 	JobNetworkName             string
 	EgressPolicyID             string
 	WorkIntakeProposalEnabled  bool
+	WorkIntakeProposalAdapter  string
+	WorkIntakeProposalBinary   string
 	EgressPolicyVerifierSocket string
 	ProviderEnvironmentNames   map[string][]string
 	PlatformTrustedKeySet      *v1.AgentPackTrustedKeySet
@@ -80,6 +82,7 @@ func runSystemChecks(ctx context.Context, opts Options) Report {
 	r.Checks = append(r.Checks, mappingCheck)
 	r.Checks = append(r.Checks, checkRestrictedNetwork(ctx, opts))
 	r.Checks = append(r.Checks, checkNestedSandbox(ctx, opts, mapping, mappingErr))
+	r.Checks = append(r.Checks, checkProviderCLI(ctx, opts, mapping, mappingErr))
 	r.Checks = append(r.Checks, checkDisk(opts.StateDir))
 	r.Checks = append(r.Checks, checkClock())
 	return r

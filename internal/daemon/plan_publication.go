@@ -317,23 +317,21 @@ func planAgentRunAuthorityMatches(event, job *v1.AgentRunAuthority) bool {
 func (jr *jobRunner) verifyPlanRepositoryAuthority(ctx context.Context) ([]v1.PlanRepositoryAuthority, error) {
 	if !slices.Equal(jr.verifiedPlanRepositories, jr.job.Repositories) ||
 		len(jr.repositories) != len(jr.verifiedPlanRepositories) {
+		jr.logger.Error(planCheckoutVerificationFailure, "cause", "identity")
 		return nil, fmt.Errorf("plan repository authority is not the verified command set")
 	}
 	for index, authority := range jr.verifiedPlanRepositories {
 		repository := jr.repositories[index]
 		if repository.ID != authority.RepositoryID || repository.Base != authority.BaseBranch ||
 			repository.Primary != authority.Primary || repository.Branch != "" {
+			jr.logger.Error(planCheckoutVerificationFailure, "repository", authority.RepositoryID, "cause", "identity")
 			return nil, fmt.Errorf("plan repository checkout identity does not match command authority")
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		head, err := planCheckoutHead(repository.WorkDir)
-		if err != nil || head != authority.BaseSHA {
-			return nil, fmt.Errorf("plan repository checkout mismatch for %s", authority.RepositoryID)
-		}
-		baseline, err := planCheckoutBaseline(repository.WorkDir)
-		if err != nil || repository.PlanBaseline == "" || baseline != repository.PlanBaseline {
+		if cause := planCheckoutMismatchCause(repository, authority.BaseSHA); cause != "" {
+			jr.logger.Error(planCheckoutVerificationFailure, "repository", authority.RepositoryID, "cause", cause)
 			return nil, fmt.Errorf("plan repository checkout mismatch for %s", authority.RepositoryID)
 		}
 	}

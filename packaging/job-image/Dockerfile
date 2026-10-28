@@ -1,9 +1,15 @@
 FROM node:22-bookworm-slim@sha256:f32b81066cde10a75dbac96646099533316d94bac4150c55da1636e1f0ffdc46
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates bubblewrap socat \
+    git ca-certificates bubblewrap socat ripgrep \
+    && rg --version \
     && find / -xdev -type f -perm /6000 ! -path /usr/bin/bwrap -exec chmod a-s {} + \
     && chmod u+s /usr/bin/bwrap \
+    && install -d -o root -g root -m 0755 /usr/local/lib/our-runner/unprivileged-bwrap \
+    && install -o root -g root -m 0755 /usr/bin/bwrap /usr/local/lib/our-runner/unprivileged-bwrap/bwrap \
+    && test "$(find / -xdev -type f -perm /6000)" = "/usr/bin/bwrap" \
+    && test "$(stat -c '%a %U:%G' /usr/local/lib/our-runner/unprivileged-bwrap/bwrap)" = "755 root:root" \
+    && cmp /usr/bin/bwrap /usr/local/lib/our-runner/unprivileged-bwrap/bwrap \
     && rm -rf /var/lib/apt/lists/*
 
 # npm 12.0.2 still bundles four older transitive packages. The build replaces
@@ -38,6 +44,7 @@ RUN npm ci --omit=dev --prefix /opt/agent-tools \
     && test "$(node -p "require('/opt/agent-tools/node_modules/npm/node_modules/tar/package.json').version")" = "7.5.22" \
     && test "$(node -p "require('/opt/agent-tools/node_modules/npm/node_modules/undici/package.json').version")" = "6.28.0" \
     && claude --version \
+    && claude --version | grep -Eq '^2\.1\.299 ' \
     && codex --version \
 	&& opencode --version \
     && srt --version \

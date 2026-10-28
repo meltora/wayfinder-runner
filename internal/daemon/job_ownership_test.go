@@ -150,6 +150,7 @@ func newOwnershipRun(t *testing.T, mapping isolation.UserMapping) *ownershipRun 
 	jr.d.cfg.Isolation = "docker"
 	jr.d.cfg.JobNetwork = "none"
 	jr.d.cfg.JobImage = "registry.example.test/job@sha256:" + strings.Repeat("a", 64)
+	jr.d.verifiedProviderCLIs = map[providerCLIKey]string{{provider: "claude", image: jr.d.cfg.JobImage}: "2.1.299 (Claude Code)"}
 	jr.d.userMapping = mapping
 	if mapping.RequiresOwnershipHandOff() {
 		run.ownership = &recordingOwnership{log: run.log}
