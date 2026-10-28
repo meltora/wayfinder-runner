@@ -17,6 +17,7 @@ func validReviewFeedbackContinuationCommand() (v1.JobSpec, v1.ReviewFeedbackCont
 		Repositories:         []v1.JobRepository{{RepositoryID: "repository-1", BaseBranch: "main", Primary: true}},
 		Ticket:               v1.TicketContext{Key: "WAY-123", Summary: "Address authenticated provider review feedback"},
 		ApprovedPlanRevision: 3, ContinuationCount: 5, ResumeSessionID: "agent-session-1",
+		ApprovedPlan: &v1.ApprovedPlan{RevisionID: "revision-3", Revision: 3, Digest: strings.Repeat("c", 64), Content: validPlanContent()},
 	}
 	authority := v1.ReviewFeedbackContinuationAuthority{
 		SchemaVersion: 1, Purpose: v1.ReviewFeedbackContinuationPurpose,

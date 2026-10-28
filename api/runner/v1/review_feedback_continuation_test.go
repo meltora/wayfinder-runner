@@ -21,6 +21,13 @@ func TestReviewFeedbackContinuationJobScopeDigestMatchesControlPlaneVector(t *te
 	if got := ReviewFeedbackContinuationJobScopeDigest(job); got != expected {
 		t.Fatalf("scope digest = %q, want %q", got, expected)
 	}
+	job.ApprovedPlan = &ApprovedPlan{
+		RevisionID: "revision-3", Revision: 3, Digest: strings.Repeat("c", 64),
+		Content: PlanContent{Behavior: "Approved.", InScope: []string{"Approved deviation"}, DeliveryOrder: []string{"One"}},
+	}
+	if got := ReviewFeedbackContinuationJobScopeDigest(job); got != expected {
+		t.Fatalf("approved_plan changed the continuation scope digest: %q, want %q", got, expected)
+	}
 }
 
 func TestReviewFeedbackContinuationJobScopeDigestNormalizesDefaultsAndSetOrdering(t *testing.T) {

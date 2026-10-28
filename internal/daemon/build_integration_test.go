@@ -113,7 +113,7 @@ func TestBuildJobEndToEnd(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-1", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)}, ApprovedPlanRevision: 1, ApprovedPlan: daemon.ApprovedPlanFixture(1),
 		RequiredChecks: []string{"feature-file", "feature-symbol"},
 		PushBranch:     true, PRTitle: "PROJ-9 add feature",
 		Ticket: v1.TicketContext{Key: "PROJ-9", Summary: "Add Feature()"},
@@ -254,8 +254,8 @@ func TestProviderStartFailureEmitsNoJobStarted(t *testing.T) {
 		JobID: "build-start-failure", AttemptID: "attempt-start-failure",
 		Kind: v1.JobKindBuild, FencingToken: 1,
 		Repositories:         []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)},
-		ApprovedPlanRevision: 1,
-		Ticket:               v1.TicketContext{Key: "PROJ-START", Summary: "Fail before process start"},
+		ApprovedPlanRevision: 1, ApprovedPlan: daemon.ApprovedPlanFixture(1),
+		Ticket: v1.TicketContext{Key: "PROJ-START", Summary: "Fail before process start"},
 	})
 	job.AgentRunAuthority = &v1.AgentRunAuthority{
 		SchemaVersion: 1, AgentRunID: "agent-run-start-failure",
@@ -313,7 +313,7 @@ func TestBuildJobCheckFailure(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-2", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-2", origin)}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-2", origin)}, ApprovedPlanRevision: 1, ApprovedPlan: daemon.ApprovedPlanFixture(1),
 		RequiredChecks: []string{"always-fail"},
 		PushBranch:     true,
 		Ticket:         v1.TicketContext{Key: "PROJ-10", Summary: "Will fail checks"},
@@ -400,7 +400,7 @@ func TestBuildJobAgentFailurePreservesPartialWork(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-agent-failure", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-agent-failure", origin)}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-agent-failure", origin)}, ApprovedPlanRevision: 1, ApprovedPlan: daemon.ApprovedPlanFixture(1),
 		RequiredChecks: []string{"partial-file", "always-fail"}, PushBranch: true,
 		ProviderCapacityResumePolicy: v1.CapacityResumeAutomatic,
 		Ticket:                       v1.TicketContext{Key: "PROJ-11", Summary: "Preserve partial work"},
@@ -515,7 +515,7 @@ echo '{"type":"result","status":"success"}'
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "multi-1", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
-		ApprovedPlanRevision: 1,
+		ApprovedPlanRevision: 1, ApprovedPlan: daemon.ApprovedPlanFixture(1),
 		Repositories: []v1.JobRepository{
 			pinnedPlanRepository(t, "primary", primaryOrigin),
 			{RepositoryID: "secondary", BaseBranch: "main", BaseSHA: pinnedPlanRepository(t, "secondary", secondaryOrigin).BaseSHA},

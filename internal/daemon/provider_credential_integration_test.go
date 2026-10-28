@@ -116,7 +116,7 @@ echo '{"type":"result","session_id":"sess-credential","status":"success"}'
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-credential", AttemptID: "att-credential", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)}, ApprovedPlanRevision: 1, ApprovedPlan: daemon.ApprovedPlanFixture(1),
 		PushBranch: true, PRTitle: "PROJ-9 add feature",
 		Ticket: v1.TicketContext{Key: "PROJ-9", Summary: "Add Feature()"},
 	})

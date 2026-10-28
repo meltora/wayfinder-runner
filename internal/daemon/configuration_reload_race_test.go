@@ -50,9 +50,9 @@ func swapRaceJob(index int) v1.JobSpec {
 	return withTestAuthority(v1.JobSpec{
 		JobID: fmt.Sprintf("job-swap-%d", index), AttemptID: fmt.Sprintf("attempt-swap-%d", index), Kind: v1.JobKindBuild,
 		FencingToken: uint64(index + 1), LeaseExpiresAt: time.Now().Add(time.Hour),
-		ApprovedPlanRevision: 1,
-		Repositories:         []v1.JobRepository{{RepositoryID: "repo-unregistered", Primary: true}},
-		Ticket:               v1.TicketContext{Key: "T-1", Summary: "summary", Description: "description"},
+		ApprovedPlanRevision: 1, ApprovedPlan: testApprovedPlan(1),
+		Repositories: []v1.JobRepository{{RepositoryID: "repo-unregistered", Primary: true}},
+		Ticket:       v1.TicketContext{Key: "T-1", Summary: "summary", Description: "description"},
 	})
 }
 

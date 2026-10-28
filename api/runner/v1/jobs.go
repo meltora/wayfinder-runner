@@ -35,6 +35,7 @@ type JobSpec struct {
 	AgentRunAuthority      *AgentRunAuthority        `json:"agent_run_authority,omitempty"`
 
 	ApprovedPlanRevision         int                  `json:"approved_plan_revision,omitempty"`
+	ApprovedPlan                 *ApprovedPlan        `json:"approved_plan,omitempty"`
 	RequiredChecks               []string             `json:"required_checks,omitempty"`
 	PushBranch                   bool                 `json:"push_branch,omitempty"`
 	PRTitle                      string               `json:"pr_title,omitempty"`

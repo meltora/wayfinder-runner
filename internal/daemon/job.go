@@ -1037,9 +1037,13 @@ func repositoryAccessFailure(err error, gitHubOrigin bool) error {
 func (jr *jobRunner) buildPrompt() string {
 	t := jr.job.Ticket
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are working on ticket %s: %s\n\n%s\n", t.Key, t.Summary, t.Description)
-	if t.AcceptanceCriteria != "" {
-		fmt.Fprintf(&b, "\nAcceptance criteria:\n%s\n", t.AcceptanceCriteria)
+	if jr.job.Kind == v1.JobKindBuild {
+		b.WriteString(buildTicketBackground(t))
+	} else {
+		fmt.Fprintf(&b, "You are working on ticket %s: %s\n\n%s\n", t.Key, t.Summary, t.Description)
+		if t.AcceptanceCriteria != "" {
+			fmt.Fprintf(&b, "\nAcceptance criteria:\n%s\n", t.AcceptanceCriteria)
+		}
 	}
 	b.WriteString("\nFirst call the platform_get_job_context MCP tool for full context. ")
 	if jr.packDir != "" {
@@ -1057,7 +1061,7 @@ func (jr *jobRunner) buildPrompt() string {
 			b.WriteString("Analyze the repository and publish an implementation plan using platform_publish_plan. Do not modify any files.")
 		}
 	case v1.JobKindBuild:
-		fmt.Fprintf(&b, "Implement the approved plan (revision %d) in this repository. ", jr.job.ApprovedPlanRevision)
+		b.WriteString(approvedPlanPrompt(jr.job))
 		if len(jr.job.RequiredChecks) > 0 {
 			fmt.Fprintf(&b, "The following checks must pass before review: %s. ", strings.Join(jr.job.RequiredChecks, "; "))
 		}

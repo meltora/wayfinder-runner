@@ -63,7 +63,7 @@ func TestProviderEnvironmentReachesOnlyTheAgentProcess(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-env", AttemptID: "att-env", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-1", origin)}, ApprovedPlanRevision: 1, ApprovedPlan: daemon.ApprovedPlanFixture(1),
 		RequiredChecks: []string{"environment"},
 		Ticket:         v1.TicketContext{Key: "PROJ-10", Summary: "Environment"},
 	})

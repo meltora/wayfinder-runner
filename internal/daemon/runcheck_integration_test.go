@@ -63,7 +63,7 @@ func TestBuildJobRunCheckEndToEnd(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "build-rc", AttemptID: "att-1", Kind: v1.JobKindBuild, FencingToken: 1,
-		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-rc", origin)}, ApprovedPlanRevision: 1,
+		Repositories: []v1.JobRepository{pinnedPlanRepository(t, "repo-rc", origin)}, ApprovedPlanRevision: 1, ApprovedPlan: daemon.ApprovedPlanFixture(1),
 		RequiredChecks: []string{"feature-file"},
 		PushBranch:     true, PRTitle: "PROJ-12 add feature",
 		Ticket: v1.TicketContext{Key: "PROJ-12", Summary: "Add Feature()"},

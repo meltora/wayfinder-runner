@@ -11,6 +11,8 @@ import (
 	"github.com/example/app-runner/internal/transport"
 )
 
+func ApprovedPlanFixture(revision int) *v1.ApprovedPlan { return testApprovedPlan(revision) }
+
 func (d *Daemon) TestRotate(ctx context.Context) error { return d.rotateCert(ctx) }
 
 func (d *Daemon) SetClock(now func() time.Time) { d.now = now }

@@ -6,6 +6,8 @@ const AgentPackDeliveryAuthorityVersion = 1
 
 const AgentPackRevocationEvictionVersion = 1
 
+const ApprovedPlanTransportVersion = 1
+
 type CapabilityManifest struct {
 	AgentConfigScanTransportVersion                          string                                                           `json:"agent_config_scan_transport_version,omitempty"`
 	AgentConfigScanRepositoryIDs                             []string                                                         `json:"agent_config_scan_repository_ids,omitempty"`
@@ -62,6 +64,7 @@ type CapabilityManifest struct {
 	WorkIntakeProposalPromptTemplateDigest                   string                                                           `json:"work_intake_proposal_prompt_template_digest,omitempty"`
 	WorkIntakeProposalPolicyDigest                           string                                                           `json:"work_intake_proposal_policy_digest,omitempty"`
 	WorkIntakeProposalModelExecutionConfigDigest             string                                                           `json:"work_intake_proposal_model_execution_config_digest,omitempty"`
+	ApprovedPlanTransportVersion                             int                                                              `json:"approved_plan_transport_version,omitempty"`
 	RunnerConfigurationDigest                                string                                                           `json:"runner_configuration_digest,omitempty"`
 	Signature                                                string                                                           `json:"signature"`
 }

@@ -46,7 +46,7 @@ func main() {
 		ProviderReviewObservationTransportVersion: 2, ProviderReviewObservationProviders: []string{"github"}, ProviderReviewObservationInstallations: []v1.ProviderReviewObservationInstallationCapability{{InstallationID: "installation-a", Provider: "github", ProviderInstanceKey: "github.com"}},
 		ProviderReviewFeedbackContentTransportVersion: 1, ProviderReviewFeedbackContentProviders: []string{"github"}, ProviderReviewFeedbackContentInstallations: []v1.ProviderReviewFeedbackContentInstallationCapability{{InstallationID: "installation-a", Provider: "github", ProviderInstanceKey: "github.com"}},
 		AgentRunTransportVersion: 1, WorkIntakeProposalTransportVersion: 1, WorkIntakeProposalAdapter: "codex", WorkIntakeProposalModel: "model-<>&é", WorkIntakeProposalPromptTemplateDigest: digest, WorkIntakeProposalPolicyDigest: strings.Repeat("b", 64), WorkIntakeProposalModelExecutionConfigDigest: strings.Repeat("c", 64),
-		RunnerConfigurationDigest: strings.Repeat("d", 64),
+		ApprovedPlanTransportVersion: 1, RunnerConfigurationDigest: strings.Repeat("d", 64),
 	}
 	detector := capability.New(manifest.RunnerID, manifest.RunnerVersion, nil, nil)
 	if detector.Sign(&manifest, key) != nil {

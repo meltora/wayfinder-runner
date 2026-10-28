@@ -27,7 +27,7 @@ func validReviewFeedbackContinuationDaemonCommand() v1.CommandPayload {
 		LeaseExpiresAt:       now.Add(time.Hour),
 		Repositories:         []v1.JobRepository{{RepositoryID: "repository-1", BaseBranch: "main", Primary: true}},
 		Ticket:               v1.TicketContext{Key: "WAY-123", Summary: "Address feedback"},
-		ApprovedPlanRevision: 3, ContinuationCount: 5, ResumeSessionID: "agent-session-1",
+		ApprovedPlanRevision: 3, ApprovedPlan: testApprovedPlan(3), ContinuationCount: 5, ResumeSessionID: "agent-session-1",
 	}
 	content := "Café\nFix the retry path."
 	sum := sha256.Sum256([]byte(content))

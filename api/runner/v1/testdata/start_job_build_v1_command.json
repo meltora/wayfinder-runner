@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "type": "command",
+  "id": "cmd-0002",
+  "sent_at": "2026-08-07T12:06:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "command": "start_job",
+    "job": {
+      "job_id": "job-0002",
+      "attempt_id": "attempt-0002",
+      "project_id": "project-1",
+      "kind": "build",
+      "lease_id": "lease-0002",
+      "manifest_id": "manifest-0002",
+      "manifest_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "workflow_revision": 5,
+      "fencing_token": 9,
+      "lease_expires_at": "2026-08-07T13:06:00Z",
+      "repositories": [
+        {
+          "repository_id": "web-app",
+          "base_branch": "main",
+          "primary": true
+        },
+        {
+          "repository_id": "shared-api"
+        }
+      ],
+      "ticket": {
+        "key": "ABC-124",
+        "summary": "Implement plan-review dashboard",
+        "description": ""
+      },
+      "approved_plan_revision": 2,
+      "approved_plan": {
+        "revision_id": "plan-revision-0002",
+        "revision": 2,
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "content": {
+          "behavior": "Render the plan-review dashboard from immutable plan revisions.",
+          "in_scope": [
+            "Add the dashboard route.",
+            "REQUIRED DEVIATION from the ticket: move the shared helper into its own module."
+          ],
+          "out_of_scope": ["Merge automation."],
+          "assumptions": ["Plan revisions are immutable."],
+          "unanswered_questions": [],
+          "architecture": "Server-rendered route backed by the plan revision repository.",
+          "api_impact": "None.",
+          "data_impact": "None.",
+          "security_impact": "Tenant-scoped reads only.",
+          "operational_impact": "None.",
+          "preview_requirements": "A private preview.",
+          "automated_test_strategy": "Unit and integration tests.",
+          "manual_test_plan": "Open the dashboard and compare the plan digest.",
+          "rollout_strategy": "Ship behind the existing route.",
+          "rollback_strategy": "Revert the route.",
+          "risks": [],
+          "alternatives": [],
+          "dependencies": [],
+          "delivery_order": ["Move the helper", "Add the route", "Add tests"]
+        }
+      },
+      "required_checks": ["unit", "lint", "typecheck"],
+      "push_branch": true,
+      "pr_title": "ABC-124: plan-review dashboard",
+      "continuation_count": 0
+    }
+  }
+}

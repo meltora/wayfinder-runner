@@ -563,8 +563,8 @@ func validJobForUpdateTest() v1.JobSpec {
 	return withTestAuthority(v1.JobSpec{
 		JobID: "job-2", AttemptID: "attempt-2", Kind: v1.JobKindBuild,
 		FencingToken: 8, LeaseExpiresAt: time.Now().Add(time.Hour),
-		ApprovedPlanRevision: 1,
-		Repositories:         []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
-		Ticket:               v1.TicketContext{Key: "T-2", Summary: "summary", Description: "description"},
+		ApprovedPlanRevision: 1, ApprovedPlan: testApprovedPlan(1),
+		Repositories: []v1.JobRepository{{RepositoryID: "repo-1", Primary: true}},
+		Ticket:       v1.TicketContext{Key: "T-2", Summary: "summary", Description: "description"},
 	})
 }

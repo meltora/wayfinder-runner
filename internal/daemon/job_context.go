@@ -23,6 +23,9 @@ func (jr *jobRunner) jobContext() map[string]any {
 	if jr.job.PlanRevisionContext != nil {
 		result["plan_revision_context"] = jr.job.PlanRevisionContext
 	}
+	if jr.job.Kind == v1.JobKindBuild && jr.job.ApprovedPlan != nil {
+		result["approved_plan"] = jr.job.ApprovedPlan
+	}
 	if jr.job.AgentRunAuthority != nil {
 		authority := *jr.job.AgentRunAuthority
 		result["agent_run_authority"] = authority

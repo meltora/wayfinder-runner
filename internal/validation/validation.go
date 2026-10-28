@@ -152,6 +152,9 @@ func JobSpec(job v1.JobSpec) error {
 	if job.Kind == v1.JobKindBuild && job.PlanRevisionContext != nil {
 		return fmt.Errorf("build job cannot contain plan_revision_context")
 	}
+	if err := ApprovedPlan(job); err != nil {
+		return err
+	}
 	if job.PlanRevisionContext != nil {
 		if err := PlanRevisionContext(*job.PlanRevisionContext); err != nil {
 			return err
