@@ -8,7 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
+
+	"github.com/example/app-runner/internal/safeio"
 )
 
 const (
@@ -26,17 +27,17 @@ func verifyAgentPackView(root string, files map[string]string) error {
 			directories[current] = true
 		}
 	}
+	view, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = view.Close() }()
 	seen := make(map[string]bool, len(files))
-	err := filepath.WalkDir(root, func(current string, entry fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(view.FS(), ".", func(rel string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		rel, err := filepath.Rel(root, current)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		info, err := os.Lstat(current)
+		info, err := view.Lstat(rel)
 		if err != nil {
 			return err
 		}
@@ -56,7 +57,7 @@ func verifyAgentPackView(root string, files map[string]string) error {
 			if info.Mode().Perm() != agentPackViewFileMode {
 				return fmt.Errorf("Agent Pack view file %q has mode %v", rel, info.Mode().Perm())
 			}
-			got, err := agentPackViewFileDigest(current)
+			got, err := agentPackViewFileDigest(root, rel)
 			if err != nil {
 				return err
 			}
@@ -78,8 +79,8 @@ func verifyAgentPackView(root string, files map[string]string) error {
 	return nil
 }
 
-func agentPackViewFileDigest(name string) (string, error) {
-	file, err := os.Open(name)
+func agentPackViewFileDigest(root, rel string) (string, error) {
+	file, err := safeio.OpenRegular(root, rel)
 	if err != nil {
 		return "", err
 	}

@@ -265,7 +265,15 @@ func TestScanGitCancellationKillsChildrenAfterLeaderExits(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	_, _ = NewManager(t.TempDir()).scanGit(ctx, dir, 256, "--version")
+	started := time.Now()
+	_, err := NewManager(t.TempDir()).scanGit(ctx, dir, 256, "--version")
+	elapsed := time.Since(started)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("scanGit error = %v, want context deadline exceeded", err)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("scanGit returned after %s, at or beyond WaitDelay instead of on cancellation", elapsed)
+	}
 	time.Sleep(1100 * time.Millisecond)
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatal("transport child survived after Git leader exited")

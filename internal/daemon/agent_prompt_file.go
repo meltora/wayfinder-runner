@@ -19,7 +19,9 @@ const (
 )
 
 type agentPromptFile struct {
-	path string
+	path     string
+	stateDir string
+	name     string
 }
 
 func agentPromptDirectory(stateDir string) string {
@@ -67,7 +69,7 @@ func writeAgentPromptFile(stateDir, attemptID, prompt string) (*agentPromptFile,
 	if err != nil {
 		return nil, fmt.Errorf("create agent prompt file: %w", err)
 	}
-	prompted := &agentPromptFile{path: filepath.Join(agentPromptDirectory(stateDir), name)}
+	prompted := &agentPromptFile{path: filepath.Join(agentPromptDirectory(stateDir), name), stateDir: stateDir, name: name}
 	_, writeErr := io.WriteString(file, prompt)
 	if writeErr == nil {
 		writeErr = file.Sync()
@@ -86,10 +88,37 @@ func (f *agentPromptFile) Remove() error {
 	if f == nil {
 		return nil
 	}
-	if err := os.Remove(f.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	dir, err := openExistingAgentPromptDirectory(f.stateDir)
+	if err != nil || dir == nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	if err := dir.Remove(f.name); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
+}
+
+func openExistingAgentPromptDirectory(stateDir string) (*os.Root, error) {
+	supervisorRoot, err := os.OpenRoot(filepath.Dir(agentPromptDirectory(stateDir)))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = supervisorRoot.Close() }()
+	info, err := supervisorRoot.Lstat(agentPromptDirectoryName)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("agent prompt directory is not a directory")
+	}
+	return supervisorRoot.OpenRoot(agentPromptDirectoryName)
 }
 
 func (jr *jobRunner) attachAgentPromptFile(spec *supervisor.Spec) (*agentPromptFile, error) {
@@ -114,11 +143,17 @@ func (jr *jobRunner) attachAgentPromptFile(spec *supervisor.Spec) (*agentPromptF
 }
 
 func sweepAgentPromptFiles(stateDir string) error {
-	dir := agentPromptDirectory(stateDir)
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	dir, err := openExistingAgentPromptDirectory(stateDir)
+	if err != nil || dir == nil {
+		return err
 	}
+	defer func() { _ = dir.Close() }()
+	listing, err := dir.Open(".")
+	if err != nil {
+		return err
+	}
+	entries, err := listing.ReadDir(-1)
+	_ = listing.Close()
 	if err != nil {
 		return err
 	}
@@ -127,7 +162,7 @@ func sweepAgentPromptFiles(stateDir string) error {
 		if !strings.HasPrefix(entry.Name(), agentPromptFilePrefix) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := dir.Remove(entry.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}
 	}

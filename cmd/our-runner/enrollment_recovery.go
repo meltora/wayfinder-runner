@@ -12,6 +12,7 @@ import (
 
 	"github.com/example/app-runner/internal/daemon"
 	"github.com/example/app-runner/internal/identity"
+	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/validation"
 )
 
@@ -107,10 +108,5 @@ func writeMissingEnrollmentRunnerID(stateDir, runnerID string) error {
 	if err := os.Link(tmp.Name(), filepath.Join(stateDir, "runner-id")); err != nil {
 		return err
 	}
-	dir, err := os.Open(stateDir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = dir.Close() }()
-	return dir.Sync()
+	return safeio.SyncDirectory(stateDir)
 }

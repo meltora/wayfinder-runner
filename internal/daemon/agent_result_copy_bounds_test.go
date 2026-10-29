@@ -6,9 +6,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -173,22 +174,22 @@ func TestCopyRefusesPathsThatAreTooLong(t *testing.T) {
 
 func TestCopyRefusesADeepDirectoryChainQuickly(t *testing.T) {
 	f := newAgentResultTest(t)
-	fd, err := syscall.Open(f.checkout, syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+	fd, err := unix.Open(f.checkout, unix.O_RDONLY|unix.O_DIRECTORY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for range 1200 {
-		if err := syscall.Mkdirat(fd, "dd", 0o700); err != nil {
+		if err := unix.Mkdirat(fd, "dd", 0o700); err != nil {
 			t.Fatal(err)
 		}
-		next, err := syscall.Openat(fd, "dd", syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+		next, err := unix.Openat(fd, "dd", unix.O_RDONLY|unix.O_DIRECTORY, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = syscall.Close(fd)
+		_ = unix.Close(fd)
 		fd = next
 	}
-	_ = syscall.Close(fd)
+	_ = unix.Close(fd)
 	started := time.Now()
 
 	assertRefused(t, f, "more than 256 directories deep under dd")

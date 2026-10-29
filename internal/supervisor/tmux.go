@@ -53,7 +53,7 @@ type tmuxProc struct {
 }
 
 func (t *TmuxSupervisor) Start(ctx context.Context, spec Spec) (Process, error) {
-	if err := validateStdinSource(spec); err != nil {
+	if err := validateRedirectedStdinSource(spec); err != nil {
 		return nil, err
 	}
 	if !t.Available() {

@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/rand/v2"
+	"io"
 	"reflect"
 	"time"
 
@@ -210,11 +212,19 @@ func configurationReloadDelay(failures int, jitter float64) time.Duration {
 	return delay + time.Duration((jitter*2-1)*float64(configurationReloadJitter))
 }
 
+func configurationReloadJitterSample(source io.Reader) float64 {
+	var raw [8]byte
+	if _, err := io.ReadFull(source, raw[:]); err != nil {
+		return 0.5
+	}
+	return float64(binary.BigEndian.Uint64(raw[:])>>11) / (1 << 53)
+}
+
 func (d *Daemon) configurationReloadLoop(ctx context.Context) {
 	wait := d.configurationReloadWait
 	if wait == nil {
 		wait = func(failures int) time.Duration {
-			return configurationReloadDelay(failures, rand.Float64())
+			return configurationReloadDelay(failures, configurationReloadJitterSample(rand.Reader))
 		}
 	}
 	failures := 0

@@ -212,7 +212,7 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	}
 	var fs syscall.Statfs_t
 	if err := syscall.Statfs(".", &fs); err == nil {
-		m.DiskFreeBytes = fs.Bavail * uint64(fs.Bsize)
+		m.DiskFreeBytes = diskFreeBytes(fs.Bavail, fs.Bsize)
 	}
 	if _, err := d.LookPath("git"); err == nil {
 		if out, err := d.RunVersion(ctx, "git", "--version"); err == nil {

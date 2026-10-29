@@ -24,6 +24,7 @@ type fakeHerdr struct {
 	sentText   string
 	sentKeys   []string
 	failMethod string
+	results    map[string]any
 }
 
 func startFakeHerdr(t *testing.T) *fakeHerdr {
@@ -66,9 +67,15 @@ func (f *fakeHerdr) handle(conn net.Conn) {
 		f.mu.Lock()
 		f.requests = append(f.requests, req)
 		failMethod := f.failMethod
+		override, overridden := f.results[req.Method]
 		f.mu.Unlock()
 		if req.Method == failMethod {
 			_ = enc.Encode(herdrResponse{ID: req.ID, Error: &herdrError{Code: "failed", Message: "injected"}})
+			continue
+		}
+		if overridden {
+			raw, _ := json.Marshal(override)
+			_ = enc.Encode(herdrResponse{ID: req.ID, Result: raw})
 			continue
 		}
 		var result any

@@ -167,6 +167,7 @@ func trustSetRefusal(err error) error {
 }
 
 func writeNewFile(path string, contents []byte) error {
+	// #nosec G302 -- the signed trusted key set is public integrity-protected material that services running as other users must read
 	file, err := os.OpenFile(filepath.Clean(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if errors.Is(err, os.ErrExist) {
 		return refused("output_exists", "%s already exists and is never overwritten", path)

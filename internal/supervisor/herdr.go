@@ -169,7 +169,7 @@ func (p *herdrProc) SessionRef() (string, error) {
 }
 
 func (h *HerdrSupervisor) Start(ctx context.Context, spec Spec) (Process, error) {
-	if err := validateStdinSource(spec); err != nil {
+	if err := validateRedirectedStdinSource(spec); err != nil {
 		return nil, err
 	}
 	conn, err := h.dial(h.SocketPath)

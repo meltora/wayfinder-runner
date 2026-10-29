@@ -170,7 +170,12 @@ func (m *Manager) runScanGit(ctx context.Context, dir string, maxOutput int, net
 	cmd.WaitDelay = time.Second
 	stopOwnedGroup := configureScanProcess(cmd)
 	defer stopOwnedGroup()
-	err := cmd.Run()
+	err := cmd.Start()
+	if err == nil {
+		stopOnCancel := context.AfterFunc(commandCtx, func() { _ = cmd.Cancel() })
+		err = cmd.Wait()
+		stopOnCancel()
+	}
 	if stdout.overflow || stderr.overflow {
 		return nil, ErrScanLimit
 	}

@@ -23,6 +23,25 @@ func validateStdinSource(spec Spec) error {
 	return nil
 }
 
+func validateRedirectedStdinSource(spec Spec) error {
+	if err := validateStdinSource(spec); err != nil || spec.StdinFile == "" {
+		return err
+	}
+	info, err := os.Lstat(spec.StdinFile)
+	if err != nil {
+		return fmt.Errorf("inspect process stdin file: %w", err)
+	}
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		return fmt.Errorf("process stdin file is a symbolic link")
+	case !info.Mode().IsRegular():
+		return fmt.Errorf("process stdin file is not a regular file")
+	case info.Mode().Perm()&0o077 != 0:
+		return fmt.Errorf("process stdin file is accessible to group or other users")
+	}
+	return nil
+}
+
 func openStdinFile(path string) (*os.File, error) {
 	file, err := os.OpenFile(filepath.Clean(path), os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {

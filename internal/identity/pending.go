@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/example/app-runner/internal/safeio"
 )
 
 const (
@@ -43,19 +45,6 @@ func (s *Store) injectFault(step string) error {
 	return s.fault(step)
 }
 
-func syncDirectory(dir string) error {
-	handle, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	syncErr := handle.Sync()
-	closeErr := handle.Close()
-	if syncErr != nil {
-		return syncErr
-	}
-	return closeErr
-}
-
 func (s *Store) writeIdentityFile(name string, keyPEM, certPEM, caPEM []byte) error {
 	raw, err := json.Marshal(bundle{PrivateKey: string(keyPEM), Certificate: string(certPEM), CACert: string(caPEM)})
 	if err != nil {
@@ -64,7 +53,7 @@ func (s *Store) writeIdentityFile(name string, keyPEM, certPEM, caPEM []byte) er
 	if err := atomicWritePrivate(s.dir, name, raw); err != nil {
 		return fmt.Errorf("write %s: %w", name, err)
 	}
-	return syncDirectory(s.dir)
+	return safeio.SyncDirectory(s.dir)
 }
 
 func (s *Store) readIdentityFile(name string, requireCertificate bool) (*StoredIdentity, error) {
@@ -112,7 +101,7 @@ func (s *Store) removeIdentityFile(name string) error {
 	if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return syncDirectory(s.dir)
+	return safeio.SyncDirectory(s.dir)
 }
 
 func (s *Store) SavePendingKey(key *ecdsa.PrivateKey) error {
@@ -174,7 +163,7 @@ func (s *Store) PromotePending() error {
 	if err := os.Rename(filepath.Join(s.dir, pendingFileName), filepath.Join(s.dir, bundleFileName)); err != nil {
 		return fmt.Errorf("promote pending identity: %w", err)
 	}
-	if err := syncDirectory(s.dir); err != nil {
+	if err := safeio.SyncDirectory(s.dir); err != nil {
 		return err
 	}
 	return s.removeLegacyFiles()
@@ -215,7 +204,7 @@ func (s *Store) RestorePrevious() error {
 	if err := os.Rename(filepath.Join(s.dir, previousFileName), filepath.Join(s.dir, bundleFileName)); err != nil {
 		return fmt.Errorf("restore previous identity: %w", err)
 	}
-	if err := syncDirectory(s.dir); err != nil {
+	if err := safeio.SyncDirectory(s.dir); err != nil {
 		return err
 	}
 	if err := s.removeLegacyFiles(); err != nil {

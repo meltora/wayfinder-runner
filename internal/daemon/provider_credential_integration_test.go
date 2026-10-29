@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,7 +30,7 @@ func integrationProviderCredential(expiresAt time.Time) v1.ProviderCredential {
 	}
 }
 
-func startCredentialTestRunner(t *testing.T, configure func(*config.Config)) (*mockcp.Server, string, context.Context) {
+func startCredentialTestRunner(t *testing.T, configure func(*config.Config)) (*mockcp.Server, string, context.Context, func()) {
 	t.Helper()
 	cp, err := mockcp.NewServer()
 	if err != nil {
@@ -49,10 +51,44 @@ func startCredentialTestRunner(t *testing.T, configure func(*config.Config)) (*m
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() { _ = d.Run(ctx) }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = d.Run(ctx)
+	}()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(30 * time.Second):
+				t.Error("runner did not stop after cancellation")
+			}
+		})
+	}
+	t.Cleanup(stop)
 	waitFor(t, "runner connected", 10*time.Second, func() bool { return cp.HelloCount() >= 1 })
-	return cp, stateDir, ctx
+	return cp, stateDir, ctx, stop
+}
+
+func waitForJobRetirement(t *testing.T, stateDir string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		workspaces := jobWorkspaces(t, stateDir)
+		results, err := os.ReadDir(filepath.Join(stateDir, "job-results"))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if len(workspaces) == 0 && len(results) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job was not retired: workspaces %v, %d job-results entries", workspaces, len(results))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func treeContains(t *testing.T, root, needle string) []string {
@@ -108,7 +144,7 @@ while [ ! -e "`+release+`" ] && [ "$i" -lt 300 ]; do
 done
 echo '{"type":"result","session_id":"sess-credential","status":"success"}'
 `)
-	cp, stateDir, ctx := startCredentialTestRunner(t, func(cfg *config.Config) {
+	cp, stateDir, ctx, stopRunner := startCredentialTestRunner(t, func(cfg *config.Config) {
 		cfg.Provider = "claude"
 		cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
 		cfg.Repositories = map[string]config.RepositoryConfig{"repo-1": {URL: origin}}
@@ -173,6 +209,8 @@ echo '{"type":"result","session_id":"sess-credential","status":"success"}'
 	if strings.Contains(string(encodedEvents), integrationProviderToken) {
 		t.Fatal("events carry the provider token")
 	}
+	waitForJobRetirement(t, stateDir)
+	stopRunner()
 	if matches := treeContains(t, stateDir, integrationProviderToken); len(matches) != 0 {
 		t.Fatalf("provider token reached runner state: %v", matches)
 	}
@@ -182,7 +220,7 @@ func TestTerminalCommandRedeliveryWithExpiredCredentialReplaysStoredAck(t *testi
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
-	cp, _, ctx := startCredentialTestRunner(t, nil)
+	cp, _, ctx, _ := startCredentialTestRunner(t, nil)
 	envelope := v1.Envelope{
 		Version: v1.ProtocolVersion, Type: v1.TypeCommand, ID: "resume-with-credential",
 		SentAt: time.Now(), Payload: v1.CommandPayload{Command: v1.CmdResumeRunner},
@@ -232,7 +270,7 @@ func TestNonPushingJobAcceptsRepositoryReadCredential(t *testing.T) {
 	origin := seedBareOrigin(t)
 	fakeAgent := writeFakeAgent(t, `echo '{"type":"result","session_id":"sess-read","status":"success"}'
 `)
-	cp, stateDir, ctx := startCredentialTestRunner(t, func(cfg *config.Config) {
+	cp, stateDir, ctx, stopRunner := startCredentialTestRunner(t, func(cfg *config.Config) {
 		cfg.Provider = "claude"
 		cfg.ProviderBinaries = map[string]string{"claude": fakeAgent}
 		cfg.Repositories = map[string]config.RepositoryConfig{"repo-1": {URL: origin}}
@@ -264,6 +302,8 @@ func TestNonPushingJobAcceptsRepositoryReadCredential(t *testing.T) {
 	if strings.Contains(string(encoded), integrationProviderToken) {
 		t.Fatal("events or acknowledgements carry the provider token")
 	}
+	waitForJobRetirement(t, stateDir)
+	stopRunner()
 	if matches := treeContains(t, stateDir, integrationProviderToken); len(matches) != 0 {
 		t.Fatalf("provider token reached runner state: %v", matches)
 	}

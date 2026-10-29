@@ -2,16 +2,35 @@
 
 ## Automated gates
 
-Run these from the repository root:
+`scripts/check.sh` is the enforced gate. CI runs it in `.github/workflows/checks.yml`
+(`format`, `vet`, `test`) and `.github/workflows/security.yml` (`vuln`, `sec`), and
+contributors run the same script locally from any directory:
 
 ```sh
-go test ./...
-go test -race ./...
-go vet ./...
+sh scripts/check.sh
+```
+
+With no argument it runs `all`. Each subcommand can also run on its own, and several
+can be given in order (for example `sh scripts/check.sh format vet`):
+
+| Subcommand | What it runs | Fails when |
+| --- | --- | --- |
+| `format` | `gofmt -l .` | any file is listed (the script prints them) |
+| `vet` | `go vet ./...`, then `GOOS=darwin GOARCH=arm64 go vet ./...` | either vet run reports a problem |
+| `test` | `go test -race -count=1 ./...` | any test fails |
+| `vuln` | govulncheck, pinned in the script | the code reaches a known vulnerability |
+| `sec` | gosec `-quiet -exclude-generated ./...`, pinned in the script, with no rule or path exclusions | gosec reports any issue |
+| `all` | `format`, `vet`, `test`, `vuln`, `sec` in that order | any step fails |
+
+The govulncheck and gosec versions are defined once, at the top of the script. An
+unknown subcommand prints usage and exits with status 2. A gosec finding is fixed in
+code; a `#nosec` annotation is allowed only with a `-- reason` that justifies it.
+
+Coverage and the packaging checks are run separately:
+
+```sh
 go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 ./...
 sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh

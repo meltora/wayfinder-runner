@@ -298,11 +298,20 @@ func (generator *providerWorkIntakeProposalGenerator) preparePrivateExecutionRoo
 	if err != nil {
 		return "", err
 	}
-	if err := os.Chmod(root, 0o700); err != nil {
+	if err := restrictDirectoryToOwner(parent, filepath.Base(root)); err != nil {
 		_ = os.RemoveAll(root)
 		return "", err
 	}
 	return root, nil
+}
+
+func restrictDirectoryToOwner(parent, name string) error {
+	scoped, err := os.OpenRoot(parent)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = scoped.Close() }()
+	return scoped.Chmod(name, 0o700)
 }
 
 func workIntakeProposalPreStartFailure() workIntakeProposalGenerationResult {

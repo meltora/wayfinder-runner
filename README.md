@@ -1165,14 +1165,16 @@ sh packaging/job-image/build.sh our-runner-job:local
 
 ## Development and verification
 
+`sh scripts/check.sh` is the gate that CI enforces. It runs `format` (gofmt),
+`vet` (Linux and macOS), `test` (the race detector), `vuln` (govulncheck) and
+`sec` (gosec with no exclusions), in that order. Each subcommand can also run
+on its own, for example `sh scripts/check.sh format vet`. The tool versions are
+pinned once in the script. `docs/TESTING.md` describes each subcommand.
+
 ```sh
-go test ./...
-go test -race ./...
-go vet ./...
+sh scripts/check.sh
 go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 ./...
 sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh

@@ -3,10 +3,12 @@ package updater
 import (
 	"context"
 	"errors"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -192,7 +194,8 @@ func TestServerHealthDeadlineTimerRollsBackAndExits(t *testing.T) {
 	defer os.RemoveAll(dir)
 	archive := makeArchive(t, map[string][]byte{"our-runner": []byte("r"), "our-runner-updater": []byte("u")})
 	rel := releaseFor(archive, 6, "6.0.0")
-	clock := realClock{}
+	activatedAt := time.Now()
+	clock := &serveStartupClock{pending: activatedAt, expired: activatedAt.Add(time.Hour), pendingReads: math.MaxInt}
 	core := newTestCoordinator(t, dir, fakeCatalog{release: rel}, fakeArtifacts{body: archive}, &fakeService{}, clock)
 	core.cfg.HealthTimeout = 30 * time.Millisecond
 	if _, err := core.Prepare(context.Background(), rel.ReleaseID); err != nil {
@@ -201,6 +204,7 @@ func TestServerHealthDeadlineTimerRollsBackAndExits(t *testing.T) {
 	if _, err := core.Activate(context.Background(), rel.ReleaseID); err != nil {
 		t.Fatal(err)
 	}
+	clock.expireAfter(serveStartupDeadlineReads)
 	socket := filepath.Join(dir, "control.sock")
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
@@ -222,7 +226,42 @@ func TestServerHealthDeadlineTimerRollsBackAndExits(t *testing.T) {
 		t.Fatal("deadline timer did not exit")
 	}
 	state, err := core.loadState()
-	if err != nil || state.Phase != PhaseIdle || state.FailedReleaseID != rel.ReleaseID {
+	if err != nil || state.Phase != PhaseIdle || state.FailedReleaseID != rel.ReleaseID || state.LastError != "health deadline expired" {
 		t.Fatalf("state=%+v err=%v", state, err)
 	}
+	if !clock.servedExpired() {
+		t.Fatal("rollback happened before the deadline timer observed expiry")
+	}
+}
+
+const serveStartupDeadlineReads = 2
+
+type serveStartupClock struct {
+	mu           sync.Mutex
+	pending      time.Time
+	expired      time.Time
+	reads        int
+	pendingReads int
+}
+
+func (c *serveStartupClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reads++
+	if c.reads <= c.pendingReads {
+		return c.pending
+	}
+	return c.expired
+}
+
+func (c *serveStartupClock) expireAfter(reads int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pendingReads = c.reads + reads
+}
+
+func (c *serveStartupClock) servedExpired() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads > c.pendingReads
 }

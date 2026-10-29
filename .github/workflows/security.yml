@@ -27,12 +27,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Install govulncheck
+      - name: Scan reachable vulnerabilities
         env:
           GOTOOLCHAIN: auto
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-      - name: Scan reachable vulnerabilities
-        run: govulncheck ./...
+        run: sh scripts/check.sh vuln
 
   gosec:
     runs-on: ubuntu-24.04
@@ -47,12 +45,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Install gosec
+      - name: Scan source
         env:
           GOTOOLCHAIN: auto
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
-      - name: Scan source
-        run: >-
-          gosec -quiet -exclude-generated
-          -exclude-rules="internal/capability/capability\.go$:G115;internal/daemon/configuration_reload\.go$:G404;internal/daemon/worktree_fingerprint\.go$:G122,G204,G304;internal/identity/pending\.go$:G304;internal/daemon/agent_pack_view\.go$:G304;internal/daemon/agent_pack_composition\.go$:G304;cmd/our-runner/enrollment_recovery\.go$:G304;internal/daemon/work_intake_proposal_generation\.go$:G302;cmd/agentpack/trust_set\.go$:G302"
-          ./...
+        run: sh scripts/check.sh sec

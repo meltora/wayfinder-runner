@@ -14,6 +14,7 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/scanner"
 	"github.com/example/app-runner/internal/validation"
 )
@@ -131,7 +132,7 @@ func (builder *compositionBuilder) platformSafety(configDir string) error {
 		if name == "job.token" || !entry.Type().IsRegular() {
 			continue
 		}
-		digest, err := compositionFileDigest(filepath.Join(configDir, name))
+		digest, err := compositionFileDigest(configDir, name)
 		if err != nil {
 			return err
 		}
@@ -306,8 +307,8 @@ func (builder *compositionBuilder) conflict(code, layer, repositoryID, location 
 	})
 }
 
-func compositionFileDigest(name string) (string, error) {
-	file, err := os.Open(name)
+func compositionFileDigest(dir, name string) (string, error) {
+	file, err := safeio.OpenRegular(dir, name)
 	if err != nil {
 		return "", fmt.Errorf("composition digest: %w", err)
 	}
