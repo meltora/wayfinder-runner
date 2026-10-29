@@ -92,6 +92,32 @@ job user with the nested-sandbox flags and expect `sandbox-ok`, check that
 Code release predates `--permission-prompts` and `--restricted`, and the test
 requires the probe to report exactly those two options as missing.
 
+The stdin prompt probes run under the same gate:
+
+```sh
+DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock \
+RUN_DOCKER_SANDBOX_PROBE=1 \
+JOB_IMAGE=<registry>/<image>@sha256:<digest> \
+go test ./internal/isolation/ -run 'StdinInTheJobImage' -v -count=1
+```
+
+`TestClaudeReadsALargePromptFromStdinInTheJobImage` and
+`TestOpenCodeReadsALargePromptFromStdinInTheJobImage` build a Docker build-job
+spec for a prompt over 256 KiB, first show that passing it as one argument fails
+with `E2BIG` (Claude case), then run the image's real CLI offline under
+`--network none` with the prompt file as `docker run -i` standard input. A fake
+Messages or Chat Completions API on loopback records the size and SHA-256 of each
+user text block; the first request must carry the exact prompt. Containers get
+unique names and the `fr08-stdin-prompt` runner label, and the tests fail if any
+labelled container remains.
+
+The Codex stdin smoke runs the host's `codex` against a local refusing endpoint,
+once for a new session and once resuming that session's real thread ID:
+
+```sh
+RUN_PROVIDER_STDIN_SMOKE=1 go test ./internal/provider/ -run StdinSmoke -v -count=1
+```
+
 Agent Pack tests cover the cross-language canonical publication digest,
 Ed25519-SPKI trust validation, exact authority/reference/provider/version
 binding, pre-network rejection, HTTPS origin policy, redirects, response

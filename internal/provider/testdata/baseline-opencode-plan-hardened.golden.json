@@ -10,8 +10,7 @@
     "--agent",
     "plan",
     "--model",
-    "anthropic/claude-test",
-    "do the ticket"
+    "anthropic/claude-test"
   ],
   "dir": "$WORK",
   "env_extra": [
@@ -23,7 +22,7 @@
     "OPENCODE_DISABLE_PROJECT_CONFIG=1",
     "OPENCODE_CONFIG_DIR=$PACK"
   ],
-  "stdin": "",
+  "stdin": "do the ticket",
   "provider_environment": [
     "CLAUDE_CONFIG_DIR=/home/runner/.claude-config"
   ],

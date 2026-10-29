@@ -11,11 +11,11 @@
     "mcp_servers.platform.args=[\"mcp-serve\", \"--socket\", \"/run/runner/job.sock\", \"--token-file\", \"/run/runner/job.token\"]",
     "--add-dir",
     "$PACK",
-    "do the ticket"
+    "-"
   ],
   "dir": "$WORK",
   "env_extra": null,
-  "stdin": "",
+  "stdin": "do the ticket",
   "provider_environment": [
     "CLAUDE_CONFIG_DIR=/home/runner/.claude-config"
   ],

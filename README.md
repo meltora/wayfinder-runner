@@ -678,6 +678,30 @@ The Claude probe is advertised as both `claude` and the signed Pack/runtime name
 `claude-code`, with identical availability, authentication and hook facts; these
 compatibility aliases represent one adapter, not additional runner capacity.
 
+### Prompt delivery
+
+Planning, build and review-continuation prompts reach the provider CLI on
+standard input, never as a command-line argument, so a prompt larger than
+Linux's 128 KiB single-argument limit still starts. Claude runs with
+`-p --input-format text`, Codex with a trailing `-`, and OpenCode `run` with no
+message argument. The runner writes each prompt to a private file under
+`<state_dir>/supervisor/prompts/` (directory `0700`, file `0600`, unique per
+attempt) and points the supervisor at it: the direct supervisor opens it as the
+process's standard input, and the tmux and herdr supervisors add a `<` redirect
+to the command they launch. Under `isolation: docker` the `docker run -i`
+client forwards that standard input; the prompt directory is never mounted into
+the container. The file is removed when the agent exits or the start fails, and
+leftover files are removed when the runner starts.
+
+Before any workspace work, the runner refuses a job whose ticket summary
+exceeds 1 KiB, description 256 KiB, acceptance criteria or human change request
+128 KiB, required checks 64 entries, or review-feedback continuation content
+its protocol limit. Before starting the provider, it refuses a built prompt
+larger than 1 MiB.
+Both refusals report `agent_start_failed` with the message
+`agent prompt exceeds the runner size limit`, start no provider, and never log
+or report prompt text.
+
 ### Provider environment
 
 `provider_environment` sets extra environment variables for the agent process of
@@ -1183,8 +1207,8 @@ prepended to the container `PATH`, and the runner sets
 OpenCode jobs, direct isolation, and the probe and helper containers keep the
 image `PATH`, and direct isolation keeps Claude's strict sandbox. The tradeoff
 is that a command in Claude's weaker sandbox can see the container's process
-list and command lines (prompts and paths, not credentials, which stay under
-denied paths). Other processes' environments, denied paths, `/proc/*/root`
+list and command lines (paths and options, not credentials, which stay under
+denied paths; agent prompts arrive on standard input, not on a command line). Other processes' environments, denied paths, `/proc/*/root`
 paths into denied files, and writes outside the allowed paths remain refused,
 and the outer container stays the primary boundary.
 

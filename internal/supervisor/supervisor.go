@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -37,6 +38,7 @@ type Spec struct {
 	Dir                 string
 	Env                 []string
 	Stdin               io.Reader
+	StdinFile           string
 	Stdout              io.Writer
 	Stderr              io.Writer
 	RuntimeDir          string
@@ -92,6 +94,9 @@ func (p *directProc) Kill() error {
 }
 
 func (d *DirectProcess) Start(ctx context.Context, spec Spec) (Process, error) {
+	if err := validateStdinSource(spec); err != nil {
+		return nil, err
+	}
 	if _, err := d.LookPath(spec.Command); err != nil {
 		return nil, fmt.Errorf("%s not found: %w", spec.Command, err)
 	}
@@ -103,6 +108,15 @@ func (d *DirectProcess) Start(ctx context.Context, spec Spec) (Process, error) {
 		cmd.Env = append(append([]string(nil), spec.Env...), spec.ProviderEnvironment...)
 	}
 	cmd.Stdin = spec.Stdin
+	var stdinFile *os.File
+	if spec.StdinFile != "" {
+		file, err := openStdinFile(spec.StdinFile)
+		if err != nil {
+			return nil, err
+		}
+		stdinFile = file
+		cmd.Stdin = file
+	}
 	cmd.Stdout = spec.Stdout
 	cmd.Stderr = spec.Stderr
 	setProcGroup(cmd)
@@ -115,8 +129,12 @@ func (d *DirectProcess) Start(ctx context.Context, spec Spec) (Process, error) {
 		}
 		return nil
 	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	startErr := cmd.Start()
+	if stdinFile != nil {
+		_ = stdinFile.Close()
+	}
+	if startErr != nil {
+		return nil, startErr
 	}
 	return &directProc{cmd: cmd}, nil
 }

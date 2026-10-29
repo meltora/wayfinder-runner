@@ -156,7 +156,7 @@ func (c *Codex) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if p.ResumeSessionID != "" {
 		args = append(args, "resume", p.ResumeSessionID)
 	}
-	args = append(args, p.Prompt)
+	args = append(args, "-")
 	managedConfigMounts, err := writeCodexManagedHooks(p)
 	if err != nil {
 		return supervisor.Spec{}, err
@@ -167,6 +167,7 @@ func (c *Codex) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		Args:                args,
 		Dir:                 p.WorkDir,
 		Env:                 allowedEnvironment(),
+		Stdin:               strings.NewReader(p.Prompt),
 		ProviderEnvironment: p.providerEnvironment(),
 		ManagedConfigMounts: managedConfigMounts,
 	}, nil
@@ -305,7 +306,7 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		return supervisor.Spec{}, err
 	}
 	args := []string{
-		"-p", p.Prompt,
+		"-p", "--input-format", "text",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--mcp-config", mcpPath,
@@ -342,6 +343,7 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		Args:                args,
 		Dir:                 p.WorkDir,
 		Env:                 env,
+		Stdin:               strings.NewReader(p.Prompt),
 		ProviderEnvironment: p.providerEnvironment(),
 	}, nil
 }

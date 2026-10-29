@@ -53,6 +53,9 @@ type tmuxProc struct {
 }
 
 func (t *TmuxSupervisor) Start(ctx context.Context, spec Spec) (Process, error) {
+	if err := validateStdinSource(spec); err != nil {
+		return nil, err
+	}
 	if !t.Available() {
 		return nil, fmt.Errorf("tmux not available")
 	}
@@ -85,6 +88,7 @@ func (t *TmuxSupervisor) Start(ctx context.Context, spec Spec) (Process, error) 
 	for _, a := range spec.Args {
 		cmdStr.WriteString(" " + shellQuote(a))
 	}
+	cmdStr.WriteString(stdinRedirect(spec))
 	fmt.Fprintf(&cmdStr, " > %s 2>&1; echo $? > %s", shellQuote(logFile), shellQuote(exitFile))
 
 	if err := t.run("tmux", "new-session", "-d", "-s", session, cmdStr.String()); err != nil {

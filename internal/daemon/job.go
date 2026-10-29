@@ -78,6 +78,7 @@ type jobRunner struct {
 	composition              *compositionBody
 	compositionHook          func(context.Context) error
 	configuration            *hotConfiguration
+	agentPromptLimit         int
 }
 
 type checkedOutRepository struct {
@@ -374,6 +375,10 @@ func (jr *jobRunner) run() {
 		jr.completeJob(outcome, capacityEvent)
 	}
 
+	if !agentInputWithinBounds(job, jr.reviewFeedbackContinuation) {
+		finish(jr.startupFailureOutcome(v1.JobFailureAgentStart, agentPromptTooLargeMessage), nil)
+		return
+	}
 	if err := os.MkdirAll(jr.workDir, 0o700); err != nil {
 		finish(
 			jr.startupFailureOutcome(
@@ -402,6 +407,12 @@ func (jr *jobRunner) run() {
 		return
 	}
 	defer cleanup()
+
+	prompt := jr.buildPrompt()
+	if !agentPromptWithinLimit(prompt, jr.agentPromptByteLimit()) {
+		finish(jr.startupFailureOutcome(v1.JobFailureAgentStart, agentPromptTooLargeMessage), nil)
+		return
+	}
 
 	isDocker := d.cfg.Isolation == "docker"
 	socketsRoot := filepath.Join(d.cfg.StateDir, "sockets")
@@ -477,7 +488,7 @@ func (jr *jobRunner) run() {
 		PackDir:         jr.packDir,
 		MCPSock:         agentSockPath,
 		MCPTokenFile:    tokenPath,
-		Prompt:          jr.buildPrompt(),
+		Prompt:          prompt,
 		BinaryPath:      d.cfg.ProviderBinaries[adapterName],
 		Model:           d.cfg.AgentModel,
 		ResumeSessionID: job.ResumeSessionID,
@@ -546,7 +557,7 @@ func (jr *jobRunner) run() {
 			MCPSock:         agentSockPath,
 			MCPTokenFile:    tokenPath,
 			MCPBinary:       "/usr/local/bin/our-runner",
-			Prompt:          jr.buildPrompt(),
+			Prompt:          prompt,
 			BinaryPath:      d.cfg.ProviderBinaries[adapterName],
 			Model:           d.cfg.AgentModel,
 			ResumeSessionID: job.ResumeSessionID,
@@ -651,6 +662,18 @@ func (jr *jobRunner) run() {
 		}
 	}
 
+	promptFile, err := jr.attachAgentPromptFile(&spec)
+	if err != nil {
+		finish(jr.startupFailureOutcome(v1.JobFailureAgentStart, "prepare agent prompt input"), nil)
+		return
+	}
+	removePromptFile := func() {
+		if err := promptFile.Remove(); err != nil {
+			jr.logger.Warn("agent prompt file cleanup failed")
+		}
+	}
+	defer removePromptFile()
+
 	jr.procMu.Lock()
 	if jr.cancelled {
 		jr.procMu.Unlock()
@@ -705,6 +728,7 @@ func (jr *jobRunner) run() {
 	jr.procMu.Unlock()
 
 	exitErr := proc.Wait()
+	removePromptFile()
 	_ = outW.Close()
 	<-outputConsumed
 	if ownership.Release() != nil {

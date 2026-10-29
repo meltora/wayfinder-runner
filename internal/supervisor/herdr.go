@@ -169,6 +169,9 @@ func (p *herdrProc) SessionRef() (string, error) {
 }
 
 func (h *HerdrSupervisor) Start(ctx context.Context, spec Spec) (Process, error) {
+	if err := validateStdinSource(spec); err != nil {
+		return nil, err
+	}
 	conn, err := h.dial(h.SocketPath)
 	if err != nil {
 		return nil, fmt.Errorf("herdr connect: %w", err)
@@ -363,6 +366,7 @@ func writeHerdrLaunchScript(spec Spec, exitFile, outputPath string) (string, err
 	for _, arg := range spec.Args {
 		script.WriteString(" " + shellQuote(arg))
 	}
+	script.WriteString(stdinRedirect(spec))
 	fmt.Fprintf(&script, "\n) > %s 2>&1\n", shellQuote(outputPath))
 	script.WriteString("status=$?\n")
 	fmt.Fprintf(&script, "(umask 077 && printf '%%s\\n' \"$status\" > %s)\n", shellQuote(exitFile))

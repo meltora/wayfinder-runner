@@ -2,8 +2,10 @@ package isolation_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,7 +109,7 @@ func writeProbeFile(t *testing.T, path, content string, mode os.FileMode) {
 	}
 }
 
-func offlineClaudeBuildSpec(t *testing.T) ([]string, []string) {
+func offlineClaudeBuildSpec(t *testing.T, prompt string) ([]string, []string, []byte) {
 	t.Helper()
 	configDir := t.TempDir()
 	spec, err := provider.NewClaude().BuildSpec(provider.StartParams{
@@ -117,10 +119,17 @@ func offlineClaudeBuildSpec(t *testing.T) ([]string, []string) {
 		MCPSock:         "/run/job/mcp.sock",
 		MCPTokenFile:    "/run/job/job.token",
 		MCPBinary:       "/usr/local/bin/our-runner",
-		Prompt:          "run the sandbox probe",
+		Prompt:          prompt,
 		HardenedRuntime: true,
 		DockerIsolation: true,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Stdin == nil {
+		t.Fatal("Claude job spec has no stdin prompt")
+	}
+	stdin, err := io.ReadAll(spec.Stdin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +149,7 @@ func offlineClaudeBuildSpec(t *testing.T) ([]string, []string) {
 	for _, entry := range provider.ContainerEnvironment(spec.Env) {
 		mounts = append(mounts, "-e", entry)
 	}
-	return append([]string(nil), spec.Args...), mounts
+	return append([]string(nil), spec.Args...), mounts, stdin
 }
 
 func runOfflineClaudeBash(t *testing.T, image string, extra ...string) offlineClaudeBashRun {
@@ -160,9 +169,9 @@ func runOfflineClaudeBash(t *testing.T, image string, extra ...string) offlineCl
 	if err := os.Chmod(probeDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	args, specFlags := offlineClaudeBuildSpec(t)
+	args, specFlags, stdin := offlineClaudeBuildSpec(t, "run the sandbox probe")
 	uid, gid, _ := strings.Cut(mapping.User(), ":")
-	dockerArgs := []string{"run", "--rm", "--init", "--user", mapping.User(),
+	dockerArgs := []string{"run", "--rm", "-i", "--init", "--user", mapping.User(),
 		"--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--cap-add", "SYS_CHROOT",
 		"--cap-add", "SETUID", "--cap-add", "SETGID", "--security-opt", "seccomp=unconfined",
 		"--label", "com.ourplatform.runner-id=" + providerCLIIntegrationRunner,
@@ -176,7 +185,9 @@ func runOfflineClaudeBash(t *testing.T, image string, extra ...string) offlineCl
 	dockerArgs = append(dockerArgs, extra...)
 	dockerArgs = append(dockerArgs, image, "sh", "-c", offlineClaudeBashScript, "offline-claude-bash")
 	dockerArgs = append(dockerArgs, args...)
-	output, err := exec.CommandContext(ctx, "docker", dockerArgs...).CombinedOutput()
+	command := exec.CommandContext(ctx, "docker", dockerArgs...)
+	command.Stdin = bytes.NewReader(stdin)
+	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("offline claude bash probe failed: %v: %s", err, output)
 	}

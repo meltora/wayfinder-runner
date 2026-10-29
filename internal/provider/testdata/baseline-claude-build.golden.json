@@ -3,7 +3,8 @@
   "command": "claude",
   "args": [
     "-p",
-    "do the ticket",
+    "--input-format",
+    "text",
     "--output-format",
     "stream-json",
     "--verbose",
@@ -24,7 +25,7 @@
   ],
   "dir": "$WORK",
   "env_extra": null,
-  "stdin": "",
+  "stdin": "do the ticket",
   "provider_environment": [
     "CLAUDE_CONFIG_DIR=/home/runner/.claude-config"
   ],

@@ -163,10 +163,14 @@ func TestCompositionAttemptLeavesTheWorktreeUntouchedAndReportsBothPhases(t *tes
 	run := newCompositionRun(t, true)
 	var duringRunFingerprint, recordedFingerprint string
 	var runnerFiles []string
+	var prompt []byte
 	run.supervisor.duringRun = func(spec supervisor.Spec) {
 		var err error
 		duringRunFingerprint, err = worktreeFingerprint(context.Background(), run.checkout)
 		if err != nil {
+			t.Error(err)
+		}
+		if prompt, err = os.ReadFile(spec.StdinFile); err != nil {
 			t.Error(err)
 		}
 		recordedFingerprint = run.jr.repositories[0].Fingerprint
@@ -239,8 +243,8 @@ func TestCompositionAttemptLeavesTheWorktreeUntouchedAndReportsBothPhases(t *tes
 	if !(beforeIndex < afterIndex && afterIndex < finishedIndex) {
 		t.Fatalf("event order before=%d after=%d finished=%d", beforeIndex, afterIndex, finishedIndex)
 	}
-	if !strings.Contains(argumentFollowing(args, "-p"), "verified, permission-restricted directory") {
-		t.Fatalf("direct prompt claims a read-only mount: %s", argumentFollowing(args, "-p"))
+	if !strings.Contains(string(prompt), "verified, permission-restricted directory") {
+		t.Fatalf("direct prompt claims a read-only mount: %s", prompt)
 	}
 }
 

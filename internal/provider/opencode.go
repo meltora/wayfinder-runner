@@ -81,8 +81,6 @@ func (o *OpenCode) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if p.ResumeSessionID != "" && !p.HardenedRuntime {
 		args = append(args, "--session", p.ResumeSessionID, "--fork")
 	}
-	args = append(args, p.Prompt)
-
 	env := append(allowedEnvironment(),
 		"OPENCODE_CONFIG_CONTENT="+string(configJSON),
 		"OPENCODE_DISABLE_AUTOUPDATE=1",
@@ -101,6 +99,7 @@ func (o *OpenCode) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		Args:                args,
 		Dir:                 p.WorkDir,
 		Env:                 env,
+		Stdin:               strings.NewReader(p.Prompt),
 		ProviderEnvironment: p.providerEnvironment(),
 	}, nil
 }

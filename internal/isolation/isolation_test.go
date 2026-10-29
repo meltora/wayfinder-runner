@@ -102,6 +102,31 @@ func TestDockerWrap(t *testing.T) {
 	}
 }
 
+func TestDockerWrapForwardsStdinAndAddsNoPromptArgument(t *testing.T) {
+	stateDir := "/var/lib/our-runner"
+	providerArgs := []string{"-p", "--input-format", "text", "--output-format", "stream-json"}
+	cmd, args, err := (Docker{}).Wrap("claude", providerArgs, Policy{
+		NetworkNone: true, WorkDir: stateDir + "/jobs/job-1/repositories/primary", WorkspaceRoot: stateDir + "/jobs/job-1",
+		JobHome: stateDir + "/job-homes/home-1", MCPSock: stateDir + "/sockets/job-1/mcp.sock", MCPTokenFile: stateDir + "/sockets/job-1/job.token",
+		RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser, NestedSandbox: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd != "docker" || len(args) < 3 || args[0] != "run" || args[1] != "--rm" || args[2] != "-i" {
+		t.Fatalf("docker argv = %s %v, want run --rm -i", cmd, args)
+	}
+	tail := args[len(args)-len(providerArgs)-1:]
+	if tail[0] != "claude" || strings.Join(tail[1:], "\x00") != strings.Join(providerArgs, "\x00") {
+		t.Fatalf("provider argv changed by the wrapper: %v", tail)
+	}
+	for _, arg := range args {
+		if strings.Contains(arg, "supervisor") {
+			t.Fatalf("docker argv references the supervisor runtime: %q", arg)
+		}
+	}
+}
+
 const testJobUser = "10001:10001"
 
 func userArguments(args []string) []string {

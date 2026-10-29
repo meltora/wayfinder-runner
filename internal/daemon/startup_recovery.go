@@ -15,6 +15,9 @@ func recoverStartupJobState(stateDir string, cleanupJobs bool, reclaim func(cont
 	if err := cleanupStaleWorkIntakeProposalExecutions(stateDir, nil); err != nil {
 		return errors.Join(fmt.Errorf("cleanup stale work intake proposal executions: %w", err), reclaimErr)
 	}
+	if err := sweepAgentPromptFiles(stateDir); err != nil {
+		return fmt.Errorf("remove leftover agent prompt files: %w", err)
+	}
 	if !cleanupJobs {
 		return nil
 	}

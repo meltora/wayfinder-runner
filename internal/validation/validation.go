@@ -128,16 +128,16 @@ func JobSpec(job v1.JobSpec) error {
 	if err := ID("ticket.key", job.Ticket.Key); err != nil {
 		return err
 	}
-	if err := boundedText("ticket.summary", job.Ticket.Summary, 1024, true); err != nil {
+	if err := boundedText("ticket.summary", job.Ticket.Summary, MaxTicketSummaryBytes, true); err != nil {
 		return err
 	}
-	if err := boundedText("ticket.description", job.Ticket.Description, 256<<10, false); err != nil {
+	if err := boundedText("ticket.description", job.Ticket.Description, MaxTicketDescriptionBytes, false); err != nil {
 		return err
 	}
-	if err := boundedText("ticket.acceptance_criteria", job.Ticket.AcceptanceCriteria, 128<<10, false); err != nil {
+	if err := boundedText("ticket.acceptance_criteria", job.Ticket.AcceptanceCriteria, MaxAcceptanceCriteriaBytes, false); err != nil {
 		return err
 	}
-	if err := boundedText("review_comment", job.ReviewComment, 128<<10, false); err != nil {
+	if err := boundedText("review_comment", job.ReviewComment, MaxReviewCommentBytes, false); err != nil {
 		return err
 	}
 	if err := boundedText("pr_title", job.PRTitle, 512, false); err != nil {
@@ -175,7 +175,7 @@ func JobSpec(job v1.JobSpec) error {
 			return err
 		}
 	}
-	if len(job.RequiredChecks) > 64 {
+	if len(job.RequiredChecks) > MaxRequiredChecks {
 		return fmt.Errorf("job exceeds required-check limit")
 	}
 	seenChecks := map[string]bool{}
