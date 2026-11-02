@@ -70,6 +70,8 @@ labels:
 #     # (version 2 or 3, sha512 integrity, no git dependencies) before the
 #     # check. A published .npmrc in the install directory or an ancestor is
 #     # refused; set the registry in the operator's npm config. npm >= 10.9.4.
+#     # A package.json above an install directory is refused; list the
+#     # workspace root, not its workspaces, in directories.
 #     # With job_network: none the install is --offline, so registry packages
 #     # need job_network: restricted with an egress policy to the registry.
 #     # Artifact names starting with runner- are reserved for the runner's

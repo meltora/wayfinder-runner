@@ -48,7 +48,7 @@ func TestInstallArgvAndNetworkFollowTheIsolationMode(t *testing.T) {
 	}
 }
 
-func TestInstallRunsTheVersionProbeThenEachDirectoryInConfigurationOrder(t *testing.T) {
+func TestInstallProbesAndInstallsEachDirectoryInConfigurationOrder(t *testing.T) {
 	f := newNPMResultTest(t, "a", "b", "c")
 	npm := useFakeNPM(t, fakeNPMInstallBody)
 	check := npmInstallCheck("test -f c/node_modules/fixture-dep/index.js && test -f a/node_modules/fixture-dep/index.js && test -f b/node_modules/fixture-dep/index.js && test -z \"${npm_config_cache:-}\"", "c", "a", "b")
@@ -63,9 +63,11 @@ func TestInstallRunsTheVersionProbeThenEachDirectoryInConfigurationOrder(t *test
 	repoDir := filepath.Join(root, "repositories", "repo-1")
 	calls := npm.calls(t)
 	want := []npmCall{
-		{dir: repoDir, args: "--version", cache: cache},
+		{dir: filepath.Join(repoDir, "c"), args: "--version", cache: cache},
 		{dir: filepath.Join(repoDir, "c"), args: npmCIArgs, cache: cache},
+		{dir: filepath.Join(repoDir, "a"), args: "--version", cache: cache},
 		{dir: filepath.Join(repoDir, "a"), args: npmCIArgs, cache: cache},
+		{dir: filepath.Join(repoDir, "b"), args: "--version", cache: cache},
 		{dir: filepath.Join(repoDir, "b"), args: npmCIArgs, cache: cache},
 	}
 	if !slices.Equal(calls, want) {

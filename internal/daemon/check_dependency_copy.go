@@ -49,22 +49,17 @@ func (w *checkWorkspace) newInstalledTreeScan(ctx context.Context, root *os.Root
 	}
 }
 
-func (s *installedTreeScan) scan(repositoryRel, directory string) (installedTreeSummary, error) {
-	installRel := path.Join(repositoryRel, directory)
+func (s *installedTreeScan) scan(repositoryRel, directory string, nestedRoots []string) (installedTreeSummary, error) {
 	startEntries, startBytes := s.entries, s.bytes
 	records := []installedTreeRecord{}
-	info, err := s.root.Lstat(path.Join(installRel, installedDependencyDirectory))
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-	case err != nil:
-		return installedTreeSummary{}, err
-	case info.IsDir():
-		if err := s.directory(repositoryRel, installRel, installedDependencyDirectory, 1, &records); err != nil {
+	for _, nested := range append([]string{""}, nestedRoots...) {
+		rootRecords, err := s.scanRoot(repositoryRel, path.Join(repositoryRel, directory, nested))
+		if err != nil {
 			return installedTreeSummary{}, err
 		}
-	default:
-		if err := s.entry(repositoryRel, installRel, installedDependencyDirectory, info, 1, &records); err != nil {
-			return installedTreeSummary{}, err
+		for _, record := range rootRecords {
+			record.path = path.Join(nested, record.path)
+			records = append(records, record)
 		}
 	}
 	return installedTreeSummary{
@@ -72,6 +67,22 @@ func (s *installedTreeScan) scan(repositoryRel, directory string) (installedTree
 		bytes:   s.bytes - startBytes,
 		digest:  installedTreeDigest(records),
 	}, nil
+}
+
+func (s *installedTreeScan) scanRoot(repositoryRel, installRel string) ([]installedTreeRecord, error) {
+	records := []installedTreeRecord{}
+	info, err := s.root.Lstat(path.Join(installRel, installedDependencyDirectory))
+	switch {
+	case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
+		return records, nil
+	case err != nil:
+		return nil, err
+	case info.IsDir():
+		err = s.directory(repositoryRel, installRel, installedDependencyDirectory, 1, &records)
+	default:
+		err = s.entry(repositoryRel, installRel, installedDependencyDirectory, info, 1, &records)
+	}
+	return records, err
 }
 
 func (s *installedTreeScan) directory(repositoryRel, installRel, rel string, depth int, records *[]installedTreeRecord) error {

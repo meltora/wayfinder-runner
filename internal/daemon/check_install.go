@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -66,6 +67,8 @@ type checkInstall struct {
 	report     *installReport
 	refusalOut *checkOutcome
 	started    time.Time
+
+	versionDirectory string
 }
 
 func npmCacheRoot(stateDir, workDir string) string {
@@ -123,9 +126,6 @@ func (i *checkInstall) run() {
 	if !ok {
 		return
 	}
-	if !i.readToolVersion() {
-		return
-	}
 	root, err := os.OpenRoot(i.location.root)
 	if err != nil {
 		i.fail("internal", i.message("could not be verified"))
@@ -138,8 +138,9 @@ func (i *checkInstall) run() {
 		return
 	}
 	scan := i.workspace.newInstalledTreeScan(i.ctx, root, i.request.checkID)
+	guard := i.workspace.newInstallGuard(i.ctx, root, i.request.checkID)
 	for index, input := range inputs {
-		if !i.installDirectory(index, input, scan, repositoryRel) {
+		if !i.installDirectory(index, input, scan, guard, repositoryRel) {
 			return
 		}
 	}
@@ -176,14 +177,14 @@ func (i *checkInstall) readInputs() ([]installInput, bool) {
 	return inputs, true
 }
 
-func (i *checkInstall) readToolVersion() bool {
+func (i *checkInstall) readToolVersion(dir, directory string) bool {
 	if err := prepareNPMCache(i.workspace.npmCache, i.workspace.npmCacheByteLimit); err != nil {
 		i.fail("internal", i.message("could not prepare the npm cache"))
 		return false
 	}
 	versionCtx, cancel := context.WithTimeout(i.ctx, npmVersionTimeout)
 	defer cancel()
-	out, _, err := i.jr.runInstallCommand(versionCtx, i.request, i.location.dirs[i.request.repository.ID], []string{"--version"}, i.workspace.npmCache, 4096)
+	out, _, err := i.jr.runInstallCommand(versionCtx, i.request, dir, []string{"--version"}, i.workspace.npmCache, 4096)
 	if err != nil {
 		i.commandFailed(versionCtx, err, out, false, "npm --version", npmVersionTimeout)
 		return false
@@ -194,7 +195,12 @@ func (i *checkInstall) readToolVersion() bool {
 		i.fail("internal", i.message("failed: npm reported an unusable version"))
 		return false
 	}
-	i.report.ToolVersion = &version
+	if i.report.ToolVersion != nil && *i.report.ToolVersion != version {
+		i.fail("internal", i.message(fmt.Sprintf("needs one npm version; the check environment has npm %s in %s and npm %s in %s",
+			*i.report.ToolVersion, displayInstallDirectory(i.versionDirectory), version, displayInstallDirectory(directory))))
+		return false
+	}
+	i.report.ToolVersion, i.versionDirectory = &version, directory
 	if !parsed.atLeast(minimumNPMVersion) {
 		i.fail("internal", i.message("needs npm "+minimumNPMVersionID+" or later; the check environment has npm "+version))
 		return false
@@ -202,10 +208,19 @@ func (i *checkInstall) readToolVersion() bool {
 	return true
 }
 
-func (i *checkInstall) installDirectory(index int, input installInput, scan *installedTreeScan, repositoryRel string) bool {
+func (i *checkInstall) installDirectory(index int, input installInput, scan *installedTreeScan, guard *installGuard, repositoryRel string) bool {
 	directory := &i.report.Directories[index]
 	started := time.Now()
 	defer func() { directory.DurationMS = time.Since(started).Milliseconds() }()
+	before, err := guard.snapshot()
+	if err != nil {
+		directory.Result = i.verificationFailed(err)
+		return false
+	}
+	dir := filepath.Join(i.location.dirs[i.request.repository.ID], filepath.FromSlash(input.directory))
+	if !i.readToolVersion(dir, input.directory) {
+		return false
+	}
 	if err := prepareNPMCache(i.workspace.npmCache, i.workspace.npmCacheByteLimit); err != nil {
 		directory.Result = installResultFailed
 		i.fail("internal", i.message("could not prepare the npm cache"))
@@ -214,30 +229,55 @@ func (i *checkInstall) installDirectory(index int, input installInput, scan *ins
 	timeout := time.Duration(i.request.check.Install.InstallTimeoutSeconds()) * time.Second
 	installCtx, cancel := context.WithTimeout(i.ctx, timeout)
 	defer cancel()
-	dir := filepath.Join(i.location.dirs[i.request.repository.ID], filepath.FromSlash(input.directory))
 	out, capped, err := i.jr.runInstallCommand(installCtx, i.request, dir, i.report.Argv[1:], i.workspace.npmCache, maxInstallOutputBytes)
 	if err != nil {
 		directory.Result = i.commandFailed(installCtx, err, out, capped, "npm ci", timeout)
 		return false
 	}
-	summary, err := scan.scan(repositoryRel, input.directory)
+	summary, err := scan.scan(repositoryRel, input.directory, input.installRoots)
 	if err != nil {
-		directory.Result = installResultRefused
-		var refusal *installRefusal
-		switch {
-		case errors.As(err, &refusal):
-			i.fail("internal", refusal.message)
-		case i.ctx.Err() != nil:
-			directory.Result = installResultCancelled
-			i.fail(classifyInstallContext(i.ctx), i.message("was cancelled"))
-		default:
-			i.fail("internal", i.message("could not be verified"))
+		directory.Result = i.verificationFailed(err)
+		return false
+	}
+	installRel := path.Join(repositoryRel, input.directory)
+	skip := map[string]bool{}
+	for _, nested := range append([]string{""}, input.installRoots...) {
+		installed := path.Join(installRel, nested, installedDependencyDirectory)
+		if _, existed := before[installed]; !existed {
+			skip[installed] = true
 		}
+	}
+	changed, found, err := guard.changed(before, skip)
+	if err != nil {
+		directory.Result = i.verificationFailed(err)
+		return false
+	}
+	if found {
+		directory.Result = installResultRefused
+		display := strings.TrimPrefix(changed, repositoryRel+"/")
+		if display == changed {
+			display = checkWorkspacePlaceholder + "/" + changed
+		}
+		i.fail("internal", i.message(fmt.Sprintf("changed %s outside %s", display, path.Join(input.directory, installedDependencyDirectory))))
 		return false
 	}
 	directory.Result = installResultInstalled
 	directory.Entries, directory.Bytes, directory.TreeDigest = &summary.entries, &summary.bytes, &summary.digest
 	return true
+}
+
+func (i *checkInstall) verificationFailed(err error) string {
+	var refusal *installRefusal
+	switch {
+	case errors.As(err, &refusal):
+		i.fail("internal", refusal.message)
+	case i.ctx.Err() != nil:
+		i.fail(classifyInstallContext(i.ctx), i.message("was cancelled"))
+		return installResultCancelled
+	default:
+		i.fail("internal", i.message("could not be verified"))
+	}
+	return installResultRefused
 }
 
 func (i *checkInstall) commandFailed(ctx context.Context, err error, out string, capped bool, command string, timeout time.Duration) string {

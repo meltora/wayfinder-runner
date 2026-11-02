@@ -132,9 +132,9 @@ func TestManifestBundlesReadsOnlyTheExactBundleKeys(t *testing.T) {
 		"trailing data":                 {`{} {}`, false, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			bundles, ok := manifestBundles([]byte(tc.content))
-			if bundles != tc.bundles || ok != tc.valid {
-				t.Fatalf("bundles = %v ok = %v, want %v %v", bundles, ok, tc.bundles, tc.valid)
+			manifest, ok := parseNPMManifest([]byte(tc.content))
+			if manifest.bundles != tc.bundles || ok != tc.valid {
+				t.Fatalf("bundles = %v ok = %v, want %v %v", manifest.bundles, ok, tc.bundles, tc.valid)
 			}
 		})
 	}

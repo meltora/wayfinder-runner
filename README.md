@@ -256,19 +256,29 @@ shipped inside a non-root package's tarball; git dependencies are refused; no
 `inBundle` exemption applies anywhere when the root bundles (the published
 `package.json` or the lockfile root declares `bundleDependencies` or
 `bundledDependencies`, or a top-level entry is `inBundle`); the published `package.json`
-must be a JSON object with unique keys; a published `node_modules` is refused).
+must be a JSON object with unique keys, and a `packageManager` in it must name
+npm; a published `node_modules` is refused).
 A published `.npmrc` in the install directory or any of its ancestors up to
 the repository root is refused before npm runs: npm reads project
 configuration from there, so the registry, scoped registries and other npm
 settings come only from the operator's user or global npm configuration or
-environment. npm 10.9.4 or later is required in both direct and Docker mode
-(tested on npm 10.9.4 and 12); an older or unparseable `npm --version` stops
-the install before `npm ci`. Each `npm ci` is limited to
+environment. A published `package.json` in any ancestor of the install
+directory up to the repository root is refused too, because npm would treat
+the directory as part of that ancestor's project (for example an npm
+workspace) and install from the ancestor's lockfile; configure the workspace
+root as the install directory instead. npm 10.9.4 or later is required in
+both direct and Docker mode (tested on npm 10.9.4 and 12); `npm --version`
+runs in each install directory, and an older, unparseable or differing
+version stops the install before `npm ci`. Each `npm ci` is limited to
 `install.timeout_seconds` (default 600, at most 1800). The installed
-`node_modules` is scanned without following links: at most 1,000,000 entries,
-4 GiB and 256 levels, no special files, and no symbolic link that leaves the
-check workspace. A refused, failed or timed-out install reports the check as
-`error` without running it.
+`node_modules`, and the `node_modules` of the workspace and nested folders
+the lockfile names, are scanned without following links: at most 1,000,000
+entries, 4 GiB and 256 levels, no special files, and no symbolic link that
+leaves the check workspace. The runner also compares the check workspace
+before and after each `npm ci` and refuses the install if npm created,
+changed or removed anything outside those `node_modules` directories. A
+refused, failed or timed-out install reports the check as `error` without
+running it.
 
 The npm cache is per job, at `job-results/<job>.npm-cache` (mode 0700), outside
 the job workspace. Only the install container mounts it; agent and check

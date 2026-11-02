@@ -26,6 +26,7 @@ type installInput struct {
 	lockfile           string
 	lockfileBlobSHA    string
 	packageJSONBlobSHA string
+	installRoots       []string
 }
 
 type publishedEntry struct {
@@ -78,6 +79,14 @@ func readInstallInput(ctx context.Context, trusted *trustedResultRepository, che
 	if found {
 		return installInput{}, refuse("cannot use %s: the runner does not read npm configuration from the published tree", config)
 	}
+	ancestor, found, err := publishedAncestorManifest(ctx, trusted, commit, directory)
+	if err != nil {
+		return installInput{}, err
+	}
+	if found {
+		return installInput{}, refuse("cannot install into %s: %s makes npm treat %s as part of another project; install %s instead",
+			directory, ancestor, directory, displayInstallDirectory(path.Dir(ancestor)))
+	}
 	if _, ok := entries[installedDependencyDirectory]; ok {
 		return installInput{}, refuse("cannot install into %s: the published tree has node_modules there; the runner installs it from the lockfile", displayInstallDirectory(directory))
 	}
@@ -97,21 +106,26 @@ func readInstallInput(ctx context.Context, trusted *trustedResultRepository, che
 	if err != nil {
 		return installInput{}, err
 	}
-	rootBundles, ok := manifestBundles(manifestContent)
+	parsed, ok := parseNPMManifest(manifestContent)
 	if !ok {
 		return installInput{}, refuse("cannot use %s: it is not a JSON object with unique keys", path.Join(directory, npmPackageManifestFile))
+	}
+	if !parsed.npmPackageManager {
+		return installInput{}, refuse("cannot use %s: its packageManager is not npm", path.Join(directory, npmPackageManifestFile))
 	}
 	content, err := trusted.gitAt(ctx, trustedGitOptions{gitDir: trusted.gitDir, limit: int(lockfile.size) + 1}, "cat-file", "blob", lockfile.sha)
 	if err != nil {
 		return installInput{}, err
 	}
 	display := path.Join(directory, input.lockfile)
-	switch problem, key := inspectNPMLockfile(content, rootBundles); problem {
+	problem, key, packages := inspectLockfilePackages(content, parsed.bundles)
+	switch problem {
 	case lockfileMalformed:
 		return installInput{}, refuse("cannot use %s: it is not an npm lockfile of version 2 or 3", display)
 	case lockfileMissingIntegrity:
 		return installInput{}, refuse("cannot use %s: the registry package %s has no integrity", display, key)
 	}
+	input.installRoots = lockfileInstallRoots(packages)
 	input.lockfileBlobSHA, input.packageJSONBlobSHA = lockfile.sha, manifest.sha
 	return input, nil
 }
@@ -172,14 +186,6 @@ var (
 	bundleFields      = []string{"bundleDependencies", "bundledDependencies"}
 )
 
-func manifestBundles(content []byte) (bool, bool) {
-	fields, err := strictjson.Object(content)
-	if err != nil {
-		return false, false
-	}
-	return declaresBundle(fields), true
-}
-
 func declaresBundle(fields map[string]json.RawMessage) bool {
 	for _, field := range bundleFields {
 		if _, ok := fields[field]; ok {
@@ -190,13 +196,18 @@ func declaresBundle(fields map[string]json.RawMessage) bool {
 }
 
 func inspectNPMLockfile(content []byte, rootBundles bool) (lockfileProblem, string) {
+	problem, key, _ := inspectLockfilePackages(content, rootBundles)
+	return problem, key
+}
+
+func inspectLockfilePackages(content []byte, rootBundles bool) (lockfileProblem, string, map[string]npmLockedPackage) {
 	top, err := strictjson.Object(content)
 	if err != nil || !supportedLockfileVersion(top["lockfileVersion"]) {
-		return lockfileMalformed, ""
+		return lockfileMalformed, "", nil
 	}
 	packages, ok := lockedPackages(top["packages"])
 	if !ok {
-		return lockfileMalformed, ""
+		return lockfileMalformed, "", nil
 	}
 	keys := make([]string, 0, len(packages))
 	for key := range packages {
@@ -206,10 +217,10 @@ func inspectNPMLockfile(content []byte, rootBundles bool) (lockfileProblem, stri
 	bundles := newLockfileBundles(packages, rootBundles || rootBundlesInLockfile(packages))
 	for _, key := range keys {
 		if installedPackageKey(key) && !packages[key].integrityBound() && !bundles.ships(key) {
-			return lockfileMissingIntegrity, key
+			return lockfileMissingIntegrity, key, nil
 		}
 	}
-	return lockfileValid, ""
+	return lockfileValid, "", packages
 }
 
 func supportedLockfileVersion(raw json.RawMessage) bool {

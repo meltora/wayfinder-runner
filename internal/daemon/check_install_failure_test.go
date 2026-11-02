@@ -191,7 +191,8 @@ func TestInstalledNodeModulesThatIsNotADirectory(t *testing.T) {
 		name, body, script string
 		want               string
 	}{
-		{"a link inside the repository", "mkdir -p mods/pkg && ln -s mods node_modules", "test -L node_modules", "passed"},
+		{"a link inside the repository", "ln -s . node_modules", "test -L node_modules", "passed"},
+		{"a link to a directory npm created outside node_modules", "mkdir -p mods/pkg && ln -s mods node_modules", "true", "error"},
 		{"a regular file", "printf x > node_modules", "test -f node_modules", "passed"},
 		{"a link outside the workspace", "ln -s /tmp node_modules", "true", "error"},
 	} {

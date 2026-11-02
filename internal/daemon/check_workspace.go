@@ -31,6 +31,7 @@ type checkWorkspace struct {
 	depthLimit        int
 	lockfileByteLimit int64
 	npmCacheByteLimit int64
+	guardEntryLimit   int
 }
 
 type checkLocation struct {
@@ -52,6 +53,7 @@ func (jr *jobRunner) checkWorkspace() *checkWorkspace {
 			depthLimit:        maxCheckDependencyDepth,
 			lockfileByteLimit: maxInstallInputBytes,
 			npmCacheByteLimit: maxNPMCacheBytes,
+			guardEntryLimit:   maxGuardEntries,
 		}
 	})
 	return jr.checkSpace
