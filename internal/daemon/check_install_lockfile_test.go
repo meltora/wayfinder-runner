@@ -30,6 +30,7 @@ func seedBaseCommit(t *testing.T, origin string) {
 type installRefusalCase struct {
 	name        string
 	seed        func(t *testing.T, origin string)
+	agent       func(t *testing.T, checkout string)
 	limit       int64
 	directories []string
 	want        string
@@ -38,6 +39,9 @@ type installRefusalCase struct {
 func runInstallRefusalCase(t *testing.T, tc installRefusalCase) {
 	t.Helper()
 	f := newAgentResultTestWith(t, func(origin string) { tc.seed(t, origin) })
+	if tc.agent != nil {
+		tc.agent(t, f.checkout)
+	}
 	npm := useFakeNPM(t, fakeNPMInstallBody)
 	if tc.limit != 0 {
 		f.jr.checkWorkspace().lockfileByteLimit = tc.limit
@@ -120,7 +124,7 @@ func TestInstallInputsAreRefusedBeforeAnythingRuns(t *testing.T) {
 		{name: "registry package without integrity", seed: func(t *testing.T, origin string) {
 			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
 			writeAgentFile(t, origin, "package-lock.json", lockfileWithPackages(
-				`,"node_modules/a-ok":{"version":"1.0.0","resolved":"https://registry.npmjs.org/a-ok/-/a-ok-1.0.0.tgz","integrity":"sha512-AAAA"}`+
+				`,"node_modules/a-ok":{"version":"1.0.0","resolved":"https://registry.npmjs.org/a-ok/-/a-ok-1.0.0.tgz","integrity":`+testIntegrity+`}`+
 					`,"node_modules/left-pad":{"version":"1.3.0","resolved":"HTTPS://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz"}`))
 		}, want: prefix + "cannot use package-lock.json: the registry package node_modules/left-pad has no integrity"},
 		{name: "plain HTTP package with blank integrity", seed: func(t *testing.T, origin string) {
@@ -146,6 +150,63 @@ func TestInstallInputsAreRefusedBeforeAnythingRuns(t *testing.T) {
 			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
 			writeAgentFile(t, origin, "package-lock.json", `{"lockfileVersion":2,"requires":true,"dependencies":{"evil":{"version":"1.0.0","resolved":"http://127.0.0.1:18765/evil-1.0.0.tgz"}}}`)
 		}, want: prefix + "cannot use package-lock.json: it is not an npm lockfile of version 2 or 3"},
+		{name: "pinned git package", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
+			writeAgentFile(t, origin, "package-lock.json", lockfileEntry("node_modules/g",
+				`"version":"1.0.0","resolved":"git+https://example.test/g.git#0123456789abcdef0123456789abcdef01234567"`))
+		}, want: prefix + "cannot use package-lock.json: the registry package node_modules/g has no integrity"},
+		{name: "sha1 integrity", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
+			writeAgentFile(t, origin, "package-lock.json", lockfileEntry("node_modules/x",
+				`"resolved":`+testHTTPSTgz+`,"integrity":"sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA="`))
+		}, want: prefix + "cannot use package-lock.json: the registry package node_modules/x has no integrity"},
+		{name: "bundled package under a root-bundled parent", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", `{"name":"fixture","version":"1.0.0","dependencies":{"p":"1.0.0"},"bundledDependencies":["p"]}`)
+			writeAgentFile(t, origin, "package-lock.json", rootBundledLockfile(``, ``))
+		}, want: prefix + "cannot use package-lock.json: the registry package node_modules/p/node_modules/evil has no integrity"},
+		{name: "package.json with duplicate keys", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", `{"name":"fixture","bundleDependencies":[],"bundleDependencies":["p"]}`)
+			writeAgentFile(t, origin, "package-lock.json", fixtureLockfile)
+		}, want: prefix + "cannot use package.json: it is not a JSON object with unique keys"},
+		{name: "package.json in a directory that is not an object", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "web/package.json", `[]`)
+			writeAgentFile(t, origin, "web/package-lock.json", fixtureLockfile)
+		}, directories: []string{"web"}, want: prefix + "cannot use web/package.json: it is not a JSON object with unique keys"},
+		{name: "npmrc in the install directory", seed: func(t *testing.T, origin string) {
+			seedNPMProject(t, origin)
+		}, agent: func(t *testing.T, checkout string) {
+			agentCommit(t, checkout, ".npmrc", "git=./fakegit.sh\n")
+		}, want: prefix + "cannot use .npmrc: the runner does not read npm configuration from the published tree"},
+		{name: "npmrc in an ancestor of the install directory", seed: func(t *testing.T, origin string) {
+			seedNPMProject(t, origin, "web/app")
+		}, agent: func(t *testing.T, checkout string) {
+			agentCommit(t, checkout, "web/.npmrc", "registry=http://127.0.0.1:1/\n")
+		}, directories: []string{"web/app"}, want: prefix + "cannot use web/.npmrc: the runner does not read npm configuration from the published tree"},
+		{name: "npmrc at the repository root above an install directory", seed: func(t *testing.T, origin string) {
+			seedNPMProject(t, origin, "web/app")
+		}, agent: func(t *testing.T, checkout string) {
+			agentCommit(t, checkout, "web/app/.npmrc", "allow-git=all\n")
+			agentCommit(t, checkout, ".npmrc", "allow-remote=all\n")
+		}, directories: []string{"web/app"}, want: prefix + "cannot use .npmrc: the runner does not read npm configuration from the published tree"},
+		{name: "npmrc as a symbolic link", seed: func(t *testing.T, origin string) {
+			seedNPMProject(t, origin, "web")
+		}, agent: func(t *testing.T, checkout string) {
+			if err := os.Symlink("../shared/npmrc", filepath.Join(checkout, "web", ".npmrc")); err != nil {
+				t.Fatal(err)
+			}
+			agentGit(t, checkout, "add", "-f", "--", "web/.npmrc")
+			agentGit(t, checkout, "commit", "-q", "-m", "agent link")
+		}, directories: []string{"web"}, want: prefix + "cannot use web/.npmrc: the runner does not read npm configuration from the published tree"},
+		{name: "npmrc as a directory", seed: func(t *testing.T, origin string) {
+			seedNPMProject(t, origin)
+		}, agent: func(t *testing.T, checkout string) {
+			agentCommit(t, checkout, ".npmrc/inner", "x")
+		}, want: prefix + "cannot use .npmrc: the runner does not read npm configuration from the published tree"},
+		{name: "npmrc in the third of three directories", seed: func(t *testing.T, origin string) {
+			seedNPMProject(t, origin, "a", "b", "c")
+		}, agent: func(t *testing.T, checkout string) {
+			agentCommit(t, checkout, "c/.npmrc", "registry=http://127.0.0.1:1/\n")
+		}, directories: []string{"a", "b", "c"}, want: prefix + "cannot use c/.npmrc: the runner does not read npm configuration from the published tree"},
 		{name: "published node_modules file", seed: func(t *testing.T, origin string) {
 			seedNPMProject(t, origin)
 			writeAgentFile(t, origin, "node_modules/pkg/index.js", "published\n")
@@ -179,11 +240,10 @@ func TestInstallInputsAcceptExemptAndShrinkwrapLockfiles(t *testing.T) {
 		name string
 		seed func(t *testing.T, origin string)
 	}{
-		{"file, git and link entries need no integrity", func(t *testing.T, origin string) {
+		{"file and link entries need no integrity", func(t *testing.T, origin string) {
 			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
 			writeAgentFile(t, origin, "package-lock.json", lockfileWithPackages(
 				`,"node_modules/local":{"resolved":"file:vendor/local-1.0.0.tgz"}`+
-					`,"node_modules/fromgit":{"resolved":"git+ssh://git@example.test/x.git#0123456789abcdef0123456789abcdef01234567"}`+
 					`,"node_modules/linked":{"resolved":"https://example.test/linked","link":true}`+
 					`,"node_modules/bundler":{"resolved":`+testHTTPSTgz+`,"integrity":`+testIntegrity+`,"bundleDependencies":["bundled"]}`+
 					`,"node_modules/bundler/node_modules/bundled":{"version":"1.0.0","inBundle":true}`+
@@ -197,6 +257,10 @@ func TestInstallInputsAcceptExemptAndShrinkwrapLockfiles(t *testing.T) {
 			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
 			writeAgentFile(t, origin, "package-lock.json", "{broken")
 			writeAgentFile(t, origin, "npm-shrinkwrap.json", fixtureLockfile)
+		}},
+		{"a root bundle without bundled lockfile entries", func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", `{"name":"fixture","version":"1.0.0","bundleDependencies":["local"]}`)
+			writeAgentFile(t, origin, "package-lock.json", lockfileWithPackages(`,"node_modules/local":{"resolved":"file:vendor/local-1.0.0.tgz"}`))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

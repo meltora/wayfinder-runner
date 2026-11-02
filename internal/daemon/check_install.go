@@ -189,11 +189,16 @@ func (i *checkInstall) readToolVersion() bool {
 		return false
 	}
 	version := strings.TrimSpace(out)
-	if version == "" || len(version) > 64 || strings.ContainsFunc(version, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+	parsed, ok := parseNPMVersion(version)
+	if len(version) > 64 || !ok {
 		i.fail("internal", i.message("failed: npm reported an unusable version"))
 		return false
 	}
 	i.report.ToolVersion = &version
+	if !parsed.atLeast(minimumNPMVersion) {
+		i.fail("internal", i.message("needs npm "+minimumNPMVersionID+" or later; the check environment has npm "+version))
+		return false
+	}
 	return true
 }
 

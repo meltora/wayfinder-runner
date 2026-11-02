@@ -8,18 +8,20 @@ import (
 const installedKeyMarker = installedDependencyDirectory + "/"
 
 type lockfileBundles struct {
-	packages   map[string]npmLockedPackage
-	dependents map[string][]string
-	bundlers   map[string]string
-	visiting   map[string]bool
+	rootBundles bool
+	packages    map[string]npmLockedPackage
+	dependents  map[string][]string
+	bundlers    map[string]string
+	visiting    map[string]bool
 }
 
-func newLockfileBundles(packages map[string]npmLockedPackage) *lockfileBundles {
+func newLockfileBundles(packages map[string]npmLockedPackage, rootBundles bool) *lockfileBundles {
 	bundles := &lockfileBundles{
-		packages:   packages,
-		dependents: map[string][]string{},
-		bundlers:   map[string]string{},
-		visiting:   map[string]bool{},
+		rootBundles: rootBundles,
+		packages:    packages,
+		dependents:  map[string][]string{},
+		bundlers:    map[string]string{},
+		visiting:    map[string]bool{},
 	}
 	for key, locked := range packages {
 		for _, name := range locked.dependsOn {
@@ -32,7 +34,7 @@ func newLockfileBundles(packages map[string]npmLockedPackage) *lockfileBundles {
 }
 
 func (b *lockfileBundles) ships(key string) bool {
-	return b.packages[key].inBundle && b.bundler(key) != ""
+	return !b.rootBundles && b.packages[key].inBundle && b.bundler(key) != ""
 }
 
 func (b *lockfileBundles) bundler(key string) string {

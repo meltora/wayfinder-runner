@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	testIntegrity  = `"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="`
+	testSHA512     = `sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==`
+	testIntegrity  = `"` + testSHA512 + `"`
 	testHTTPSTgz   = `"https://registry.npmjs.org/x/-/x-1.0.0.tgz"`
 	testRootPrefix = `{"lockfileVersion":3,"packages":{"":{"name":"fixture","version":"1.0.0"}`
 )
@@ -25,7 +26,7 @@ func TestLockfileRulesAcceptTheJobImageNPMLockfile(t *testing.T) {
 	if bundled := strings.Count(string(raw), `"inBundle": true`); bundled < 100 {
 		t.Fatalf("the job image lockfile has %d bundled entries; this test needs a lockfile with bundled packages", bundled)
 	}
-	if problem, key := inspectNPMLockfile(raw); problem != lockfileValid {
+	if problem, key := inspectNPMLockfile(raw, false); problem != lockfileValid {
 		t.Fatalf("problem = %v key = %q", problem, key)
 	}
 }
@@ -55,7 +56,7 @@ func TestLockfileRulesRefuseMalformedLockfiles(t *testing.T) {
 		"not an object":                    `[3]`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if problem, key := inspectNPMLockfile([]byte(content)); problem != lockfileMalformed {
+			if problem, key := inspectNPMLockfile([]byte(content), false); problem != lockfileMalformed {
 				t.Fatalf("problem = %v key = %q, want malformed", problem, key)
 			}
 		})
@@ -81,7 +82,7 @@ func TestLockfileRulesRequireIntegrityForInstalledPackages(t *testing.T) {
 		"inBundle false":        `"version":"1.0.0","inBundle":false`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			problem, key := inspectNPMLockfile([]byte(lockfileEntry("node_modules/x", entry)))
+			problem, key := inspectNPMLockfile([]byte(lockfileEntry("node_modules/x", entry)), false)
 			if problem != lockfileMissingIntegrity || key != "node_modules/x" {
 				t.Fatalf("problem = %v key = %q, want missing integrity for node_modules/x", problem, key)
 			}
@@ -95,11 +96,11 @@ func TestLockfileRulesReportTheFirstNestedPackageWithoutIntegrity(t *testing.T) 
 		`,"packages/app/node_modules/zeta":{"version":"1.0.0"}` +
 		`,"node_modules/beta":{"version":"1.0.0"}` +
 		`,"node_modules/alpha":{"resolved":` + testHTTPSTgz + `,"integrity":` + testIntegrity + `}}}`
-	if problem, key := inspectNPMLockfile([]byte(content)); problem != lockfileMissingIntegrity || key != "node_modules/beta" {
+	if problem, key := inspectNPMLockfile([]byte(content), false); problem != lockfileMissingIntegrity || key != "node_modules/beta" {
 		t.Fatalf("problem = %v key = %q", problem, key)
 	}
 	nested := testRootPrefix + `,"packages/app/node_modules/zeta":{"version":"1.0.0"}}}`
-	if problem, key := inspectNPMLockfile([]byte(nested)); problem != lockfileMissingIntegrity || key != "packages/app/node_modules/zeta" {
+	if problem, key := inspectNPMLockfile([]byte(nested), false); problem != lockfileMissingIntegrity || key != "packages/app/node_modules/zeta" {
 		t.Fatalf("nested problem = %v key = %q", problem, key)
 	}
 }
@@ -109,11 +110,10 @@ func TestLockfileRulesAcceptExemptEntries(t *testing.T) {
 		`,"packages/app":{"name":"app","version":"1.0.0"}` +
 		`,"node_modules/app":{"resolved":"packages/app","link":true}` +
 		`,"node_modules/local":{"resolved":"file:vendor/local-1.0.0.tgz"}` +
-		`,"node_modules/fromgit":{"resolved":"git+https://example.test/x.git#0123456789abcdef0123456789abcdef01234567"}` +
 		`,"node_modules/registry":{"version":"1.0.0","resolved":` + testHTTPSTgz + `,"integrity":` + testIntegrity + `}` +
-		`,"node_modules/legacy":{"version":"1.0.0","integrity":"sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA= sha512-AAAA"}` +
+		`,"node_modules/legacy":{"version":"1.0.0","integrity":"sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA= ` + testSHA512 + `"}` +
 		`},"dependencies":{"anything":{"version":"1.0.0"}}}`
-	if problem, key := inspectNPMLockfile([]byte(content)); problem != lockfileValid {
+	if problem, key := inspectNPMLockfile([]byte(content), false); problem != lockfileValid {
 		t.Fatalf("problem = %v key = %q", problem, key)
 	}
 }
@@ -137,7 +137,7 @@ func TestLockfileRulesExemptOnlyPackagesTheirBundlerShips(t *testing.T) {
 				`,"node_modules/a/node_modules/inner/node_modules/child":{"version":"1.0.0","inBundle":true}`),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if problem, key := inspectNPMLockfile([]byte(content)); problem != lockfileValid {
+			if problem, key := inspectNPMLockfile([]byte(content), false); problem != lockfileValid {
 				t.Fatalf("problem = %v key = %q", problem, key)
 			}
 		})
@@ -170,7 +170,7 @@ func TestLockfileRulesRefuseBundlesNoPackageShips(t *testing.T) {
 		"a git package with a branch":            {lockfileEntry("node_modules/x", `"resolved":"git+https://127.0.0.1:18765/x.git#main"`), "node_modules/x"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if problem, key := inspectNPMLockfile([]byte(tc.content)); problem != lockfileMissingIntegrity || key != tc.key {
+			if problem, key := inspectNPMLockfile([]byte(tc.content), false); problem != lockfileMissingIntegrity || key != tc.key {
 				t.Fatalf("problem = %v key = %q, want missing integrity for %s", problem, key, tc.key)
 			}
 		})
@@ -187,7 +187,7 @@ func TestLockfileRulesRefuseMistypedBundleFields(t *testing.T) {
 		"null peerDependencies":       bundlerLockfile(`,"peerDependencies":null`, ``),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if problem, key := inspectNPMLockfile([]byte(content)); problem != lockfileMalformed {
+			if problem, key := inspectNPMLockfile([]byte(content), false); problem != lockfileMalformed {
 				t.Fatalf("problem = %v key = %q, want malformed", problem, key)
 			}
 		})

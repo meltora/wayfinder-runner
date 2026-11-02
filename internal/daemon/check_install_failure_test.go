@@ -42,7 +42,7 @@ func TestAnUnpreparableNPMCacheStopsTheInstall(t *testing.T) {
 		dir := t.TempDir()
 		parent := filepath.Dir(cache)
 		t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
-		script := "#!/bin/sh\nchmod 755 '" + cache + "' && chmod 500 '" + parent + "'\necho 10.0.0\n"
+		script := "#!/bin/sh\nchmod 755 '" + cache + "' && chmod 500 '" + parent + "'\necho " + fakeNPMVersion + "\n"
 		if err := os.WriteFile(filepath.Join(dir, "npm"), []byte(script), 0o700); err != nil {
 			t.Fatal(err)
 		}

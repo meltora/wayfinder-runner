@@ -115,7 +115,7 @@ func TestProvenanceArtifactHasTheExactDocument(t *testing.T) {
 		{"installed", func(t *testing.T, origin string) { seedNPMProject(t, origin) }, npmInstallCheck("exit 1"), func(commit string) string {
 			return `{"schema":"our-runner.check-install.v1","job_id":"j1","attempt_id":"a1","check_id":"lint","repository_id":"repo-1",` +
 				`"commit_sha":"` + commit + `","isolation":"direct","hermetic":false,"carried_directories":[],` +
-				`"install":{"ecosystem":"npm","network":"host","offline":false,"tool_version":"10.0.0-fake","argv":` + directArgvJSON + `,` +
+				`"install":{"ecosystem":"npm","network":"host","offline":false,"tool_version":"` + fakeNPMVersion + `","argv":` + directArgvJSON + `,` +
 				`"directories":[{"directory":".","lockfile":"package-lock.json","lockfile_blob_sha":"` + gitBlobSHA(fixtureLockfile) + `",` +
 				`"package_json_blob_sha":"` + gitBlobSHA(fixturePackageJSON) + `","result":"installed","duration_ms":0,` +
 				`"entries":2,"bytes":19,"tree_digest":"` + fixtureTreeDigest() + `"}]},"result":"failed"}`

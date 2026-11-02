@@ -12,7 +12,7 @@ import (
 const (
 	fixturePackageJSON = `{"name":"fixture","version":"1.0.0"}` + "\n"
 	fixtureLockfile    = `{"name":"fixture","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"fixture","version":"1.0.0"}}}` + "\n"
-	fakeNPMVersion     = "10.0.0-fake"
+	fakeNPMVersion     = "12.0.2"
 	fakeNPMInstallBody = "mkdir -p node_modules/fixture-dep && printf 'module.exports = 1\\n' > node_modules/fixture-dep/index.js"
 )
 

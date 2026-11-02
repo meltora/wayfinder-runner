@@ -71,6 +71,13 @@ func readInstallInput(ctx context.Context, trusted *trustedResultRepository, che
 	case !hasManifest:
 		return installInput{}, refuse("needs %s in %s", npmPackageManifestFile, displayInstallDirectory(directory))
 	}
+	config, found, err := publishedNPMConfig(ctx, trusted, commit, directory)
+	if err != nil {
+		return installInput{}, err
+	}
+	if found {
+		return installInput{}, refuse("cannot use %s: the runner does not read npm configuration from the published tree", config)
+	}
 	if _, ok := entries[installedDependencyDirectory]; ok {
 		return installInput{}, refuse("cannot install into %s: the published tree has node_modules there; the runner installs it from the lockfile", displayInstallDirectory(directory))
 	}
@@ -86,12 +93,20 @@ func readInstallInput(ctx context.Context, trusted *trustedResultRepository, che
 			return installInput{}, refuse("cannot use %s: it is larger than %d bytes", display, limit)
 		}
 	}
+	manifestContent, err := trusted.gitAt(ctx, trustedGitOptions{gitDir: trusted.gitDir, limit: int(manifest.size) + 1}, "cat-file", "blob", manifest.sha)
+	if err != nil {
+		return installInput{}, err
+	}
+	rootBundles, ok := manifestBundles(manifestContent)
+	if !ok {
+		return installInput{}, refuse("cannot use %s: it is not a JSON object with unique keys", path.Join(directory, npmPackageManifestFile))
+	}
 	content, err := trusted.gitAt(ctx, trustedGitOptions{gitDir: trusted.gitDir, limit: int(lockfile.size) + 1}, "cat-file", "blob", lockfile.sha)
 	if err != nil {
 		return installInput{}, err
 	}
 	display := path.Join(directory, input.lockfile)
-	switch problem, key := inspectNPMLockfile(content); problem {
+	switch problem, key := inspectNPMLockfile(content, rootBundles); problem {
 	case lockfileMalformed:
 		return installInput{}, refuse("cannot use %s: it is not an npm lockfile of version 2 or 3", display)
 	case lockfileMissingIntegrity:
@@ -141,21 +156,40 @@ const (
 )
 
 type npmLockedPackage struct {
-	resolved  string
-	integrity string
-	link      bool
-	inBundle  bool
-	bundled   []string
-	dependsOn []string
+	resolved       string
+	integrity      string
+	link           bool
+	inBundle       bool
+	declaresBundle bool
+	bundled        []string
+	dependsOn      []string
 }
 
 var (
-	ssriHashPattern  = regexp.MustCompile(`^(sha1|sha256|sha384|sha512)-[A-Za-z0-9+/]+={0,2}$`)
-	gitCommitPattern = regexp.MustCompile(`#([0-9a-f]{40}|[0-9a-f]{64})$`)
-	dependencyFields = []string{"dependencies", "optionalDependencies", "peerDependencies"}
+	ssriHashPattern   = regexp.MustCompile(`^(sha1|sha256|sha384|sha512)-[A-Za-z0-9+/]+={0,2}$`)
+	sha512HashPattern = regexp.MustCompile(`^sha512-[A-Za-z0-9+/]{86}==$`)
+	dependencyFields  = []string{"dependencies", "optionalDependencies", "peerDependencies"}
+	bundleFields      = []string{"bundleDependencies", "bundledDependencies"}
 )
 
-func inspectNPMLockfile(content []byte) (lockfileProblem, string) {
+func manifestBundles(content []byte) (bool, bool) {
+	fields, err := strictjson.Object(content)
+	if err != nil {
+		return false, false
+	}
+	return declaresBundle(fields), true
+}
+
+func declaresBundle(fields map[string]json.RawMessage) bool {
+	for _, field := range bundleFields {
+		if _, ok := fields[field]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func inspectNPMLockfile(content []byte, rootBundles bool) (lockfileProblem, string) {
 	top, err := strictjson.Object(content)
 	if err != nil || !supportedLockfileVersion(top["lockfileVersion"]) {
 		return lockfileMalformed, ""
@@ -169,7 +203,7 @@ func inspectNPMLockfile(content []byte) (lockfileProblem, string) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	bundles := newLockfileBundles(packages)
+	bundles := newLockfileBundles(packages, rootBundles || rootBundlesInLockfile(packages))
 	for _, key := range keys {
 		if installedPackageKey(key) && !packages[key].integrityBound() && !bundles.ships(key) {
 			return lockfileMissingIntegrity, key
@@ -217,7 +251,7 @@ func decodeLockedPackage(raw json.RawMessage) (npmLockedPackage, bool) {
 	if err != nil {
 		return npmLockedPackage{}, false
 	}
-	var locked npmLockedPackage
+	locked := npmLockedPackage{declaresBundle: declaresBundle(fields)}
 	ok := optionalLockString(fields["resolved"], &locked.resolved) &&
 		optionalLockString(fields["integrity"], &locked.integrity) &&
 		optionalLockBool(fields["link"], &locked.link) &&
@@ -296,14 +330,27 @@ func installedPackageKey(key string) bool {
 }
 
 func (p npmLockedPackage) integrityBound() bool {
-	if p.link || strings.HasPrefix(p.resolved, "file:") || (strings.HasPrefix(p.resolved, "git+") && gitCommitPattern.MatchString(p.resolved)) {
+	if p.link || strings.HasPrefix(p.resolved, "file:") {
 		return true
 	}
-	hashes := strings.Fields(p.integrity)
-	for _, hash := range hashes {
+	sha512 := false
+	for _, hash := range strings.Fields(p.integrity) {
 		if !ssriHashPattern.MatchString(hash) {
 			return false
 		}
+		sha512 = sha512 || sha512HashPattern.MatchString(hash)
 	}
-	return len(hashes) > 0
+	return sha512
+}
+
+func rootBundlesInLockfile(packages map[string]npmLockedPackage) bool {
+	if packages[""].declaresBundle {
+		return true
+	}
+	for key, locked := range packages {
+		if parent, _, ok := splitInstalledKey(key); ok && parent == "" && locked.inBundle {
+			return true
+		}
+	}
+	return false
 }
