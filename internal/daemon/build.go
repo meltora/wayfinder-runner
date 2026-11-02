@@ -94,7 +94,11 @@ func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string
 			})
 			continue
 		}
-		outcome := jr.requiredCheckOutcome(ctx, checkID, repository, check, results)
+		report := jr.requiredCheckOutcome(ctx, checkRequest{checkID: checkID, check: check, repository: repository}, results)
+		outcome := report.outcome
+		if report.reached {
+			jr.publishCheckProvenance(ctx, checkID, repository.ID, commitSet[repository.ID], report)
+		}
 		if outcome.Result != "passed" {
 			allOK = false
 		}
@@ -282,13 +286,36 @@ func (jr *jobRunner) commandPolicy(dir, root, home, attempt string, configuredNe
 	}
 }
 
+type workspaceTask struct {
+	purpose           string
+	ownershipPurpose  string
+	root              string
+	dir               string
+	command           string
+	args              []string
+	configuredNetwork bool
+	outputLimit       int
+	npmCache          string
+}
+
 func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, root, dir, command string, args []string, configuredNetwork bool, outputLimit int) (string, bool, error) {
+	return jr.runWorkspaceTask(ctx, workspaceTask{
+		purpose: purpose, ownershipPurpose: "check", root: root, dir: dir, command: command, args: args,
+		configuredNetwork: configuredNetwork, outputLimit: outputLimit,
+	})
+}
+
+func (jr *jobRunner) runWorkspaceTask(ctx context.Context, task workspaceTask) (string, bool, error) {
+	purpose, root, dir, command, configuredNetwork := task.purpose, task.root, task.dir, task.command, task.configuredNetwork
 	wrappedCommand := command
-	wrappedArgs := append([]string(nil), args...)
+	wrappedArgs := append([]string(nil), task.args...)
 	workDir := dir
 	containerAttempt := jr.job.AttemptID + "-task-" + shortDigest(purpose)
 	cleanup := func() error { return nil }
 	commandEnvironment := allowedCheckEnvironment()
+	if task.npmCache != "" {
+		commandEnvironment = installEnvironment(commandEnvironment, task.npmCache)
+	}
 	if jr.d.cfg.Isolation == "docker" {
 		iso, err := isolation.Select("docker", false)
 		if err != nil {
@@ -310,14 +337,19 @@ func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, root, dir
 			return isolation.CleanupHome(home)
 		}
 		policy := jr.commandPolicy(dir, root, home, containerAttempt, configuredNetwork)
+		policy.NPMCacheDir = task.npmCache
 		wrappedCommand, wrappedArgs, err = iso.Wrap(command, wrappedArgs, policy)
 		if err != nil {
 			_ = isolation.CleanupHome(home)
 			return "", false, err
 		}
+		private := []string{home}
+		if task.npmCache != "" {
+			private = append(private, task.npmCache)
+		}
 		scope, err = handOffOwnership(ctx, jr.d.ownership, jr.d.containerRemover(), isolation.OwnershipRequest{
-			RunnerID: jr.d.runnerID, AttemptID: containerAttempt, Purpose: "check",
-			Workspace: []string{root}, Private: []string{home},
+			RunnerID: jr.d.runnerID, AttemptID: containerAttempt, Purpose: task.ownershipPurpose,
+			Workspace: []string{root}, Private: private,
 		})
 		if err != nil {
 			return "", false, errors.Join(err, cleanup())
@@ -331,7 +363,7 @@ func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, root, dir
 	cmd.Dir = workDir
 	cmd.Env = commandEnvironment
 	var output cappedBuffer
-	output.limit = outputLimit
+	output.limit = task.outputLimit
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	runErr := cmd.Run()

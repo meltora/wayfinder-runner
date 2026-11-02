@@ -2,15 +2,25 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"path"
 	"sort"
+	"strings"
+	"syscall"
 )
 
-type dependencyCopy struct {
+const installedDependencyDirectory = "node_modules"
+
+type installedTreeScan struct {
 	ctx        context.Context
-	tree       *copyTarget
+	root       *os.Root
+	checkID    string
 	entryLimit int
 	byteLimit  int64
 	depthLimit int
@@ -18,138 +28,162 @@ type dependencyCopy struct {
 	bytes      int64
 }
 
-func (w *checkWorkspace) syncDependencies(ctx context.Context, root *os.Root, workDir string, dependencies []checkDependency) error {
-	previous := w.copied
-	w.copied = nil
-	if len(dependencies) == 0 {
-		return nil
+type installedTreeSummary struct {
+	entries int
+	bytes   int64
+	digest  string
+}
+
+type installedTreeRecord struct {
+	path       string
+	kind       string
+	executable bool
+	size       int64
+	sha256     string
+}
+
+func (w *checkWorkspace) newInstalledTreeScan(ctx context.Context, root *os.Root, checkID string) *installedTreeScan {
+	return &installedTreeScan{
+		ctx: ctx, root: root, checkID: checkID,
+		entryLimit: w.entryLimit, byteLimit: w.byteLimit, depthLimit: w.depthLimit,
 	}
-	source, err := os.OpenRoot(workDir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = source.Close() }()
-	copied := &dependencyCopy{
-		ctx:        ctx,
-		tree:       &copyTarget{root: root, racyWindow: candidateRacyWindow, previous: previous},
-		entryLimit: w.entryLimit,
-		byteLimit:  w.byteLimit,
-		depthLimit: w.depthLimit,
-	}
-	for _, dependency := range dependencies {
-		if err := copied.dependency(source, dependency); err != nil {
-			return err
+}
+
+func (s *installedTreeScan) scan(repositoryRel, directory string) (installedTreeSummary, error) {
+	installRel := path.Join(repositoryRel, directory)
+	startEntries, startBytes := s.entries, s.bytes
+	records := []installedTreeRecord{}
+	info, err := s.root.Lstat(path.Join(installRel, installedDependencyDirectory))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return installedTreeSummary{}, err
+	case info.IsDir():
+		if err := s.directory(repositoryRel, installRel, installedDependencyDirectory, 1, &records); err != nil {
+			return installedTreeSummary{}, err
+		}
+	default:
+		if err := s.entry(repositoryRel, installRel, installedDependencyDirectory, info, 1, &records); err != nil {
+			return installedTreeSummary{}, err
 		}
 	}
-	w.copied = copied.tree.next
-	return nil
+	return installedTreeSummary{
+		entries: s.entries - startEntries,
+		bytes:   s.bytes - startBytes,
+		digest:  installedTreeDigest(records),
+	}, nil
 }
 
-func (c *dependencyCopy) dependency(source *os.Root, dependency checkDependency) error {
-	info, err := source.Lstat(dependency.source)
-	if err != nil || !info.IsDir() || info.Mode()&fs.ModeSymlink != 0 {
-		return errCopySourceChanged
+func (s *installedTreeScan) directory(repositoryRel, installRel, rel string, depth int, records *[]installedTreeRecord) error {
+	if depth > s.depthLimit {
+		return installedDependencyLimit("are more than %d directories deep", s.depthLimit)
 	}
-	dir, err := source.OpenRoot(dependency.source)
+	handle, err := s.root.Open(path.Join(installRel, rel))
 	if err != nil {
-		return errCopySourceChanged
-	}
-	defer func() { _ = dir.Close() }()
-	if !sameDirectory(dir, info) {
-		return errCopySourceChanged
-	}
-	if err := c.tree.root.MkdirAll(dependency.target, 0o755); err != nil {
 		return err
-	}
-	return c.directory(dir, dependency.target, 1)
-}
-
-func (c *dependencyCopy) directory(dir *os.Root, rel string, depth int) error {
-	if depth > c.depthLimit {
-		return checkDependencyLimit("are more than %d directories deep", c.depthLimit)
-	}
-	handle, err := dir.Open(".")
-	if err != nil {
-		return errCopySourceChanged
 	}
 	names, err := handle.Readdirnames(-1)
 	closeErr := handle.Close()
 	if err := errors.Join(err, closeErr); err != nil {
-		return errCopySourceChanged
+		return err
 	}
 	sort.Strings(names)
-	keep := make(map[string]bool, len(names))
 	for _, name := range names {
-		keep[name] = true
-	}
-	if err := c.tree.removeExcept(rel, keep); err != nil {
-		return err
-	}
-	for _, name := range names {
-		if err := c.entry(dir, rel, name, depth); err != nil {
+		child := rel + "/" + name
+		info, err := s.root.Lstat(path.Join(installRel, child))
+		if err != nil {
+			return err
+		}
+		if err := s.entry(repositoryRel, installRel, child, info, depth, records); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *dependencyCopy) entry(dir *os.Root, rel, name string, depth int) error {
-	if err := c.ctx.Err(); err != nil {
+func (s *installedTreeScan) entry(repositoryRel, installRel, rel string, info fs.FileInfo, depth int, records *[]installedTreeRecord) error {
+	if err := s.ctx.Err(); err != nil {
 		return err
 	}
-	c.entries++
-	if c.entries > c.entryLimit {
-		return checkDependencyLimit("have more than %d entries", c.entryLimit)
+	s.entries++
+	if s.entries > s.entryLimit {
+		return installedDependencyLimit("have more than %d entries", s.entryLimit)
 	}
-	child := joinRel(rel, name)
-	info, err := dir.Lstat(name)
-	if err != nil {
-		return errCopySourceChanged
-	}
-	if err := c.tree.clearDifferentKind(child, info.Mode()); err != nil {
-		return err
-	}
+	full := path.Join(installRel, rel)
+	display := strings.TrimPrefix(strings.TrimPrefix(full, repositoryRel), "/")
 	switch mode := info.Mode(); {
 	case mode&fs.ModeSymlink != 0:
-		destination, err := dir.Readlink(name)
+		target, err := s.root.Readlink(full)
 		if err != nil {
-			return errCopySourceChanged
-		}
-		if err := c.count(int64(len(destination))); err != nil {
 			return err
 		}
-		return c.tree.placeSymlink(child, destination)
+		if leavesCheckRoot(full, target) {
+			return &installRefusal{message: fmt.Sprintf("dependency install for check %s produced a symbolic link that leaves the check workspace: %s", s.checkID, display)}
+		}
+		*records = append(*records, installedTreeRecord{path: rel, kind: "symlink", size: int64(len(target)), sha256: sha256Hex([]byte(target))})
+		return nil
 	case mode.IsDir():
-		if err := c.tree.root.Mkdir(child, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-			return err
-		}
-		sub, err := dir.OpenRoot(name)
-		if err != nil {
-			return errCopySourceChanged
-		}
-		defer func() { _ = sub.Close() }()
-		if !sameDirectory(sub, info) {
-			return errCopySourceChanged
-		}
-		return c.directory(sub, child, depth+1)
+		*records = append(*records, installedTreeRecord{path: rel, kind: "dir"})
+		return s.directory(repositoryRel, installRel, rel, depth+1, records)
 	case mode.IsRegular():
-		if c.tree.reusable(child, info) {
-			return c.count(info.Size())
+		s.bytes += info.Size()
+		if s.bytes > s.byteLimit {
+			return installedDependencyLimit("have more than %d bytes", s.byteLimit)
 		}
-		written, err := c.tree.copyRegular(dir, child, name, info, c.byteLimit-c.bytes)
+		sum, err := s.fileDigest(full, info.Size())
 		if err != nil {
 			return err
 		}
-		return c.count(written)
+		*records = append(*records, installedTreeRecord{path: rel, kind: "file", executable: mode&0o111 != 0, size: info.Size(), sha256: sum})
+		return nil
 	default:
-		return c.tree.root.RemoveAll(child)
+		return &installRefusal{message: fmt.Sprintf("dependency install for check %s produced a special file: %s", s.checkID, display)}
 	}
 }
 
-func (c *dependencyCopy) count(size int64) error {
-	c.bytes += size
-	if c.bytes > c.byteLimit {
-		return checkDependencyLimit("have more than %d bytes", c.byteLimit)
+func (s *installedTreeScan) fileDigest(rel string, size int64) (string, error) {
+	file, err := s.root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", err
 	}
-	return nil
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	written, err := io.Copy(hash, io.LimitReader(file, size+1))
+	if err != nil {
+		return "", err
+	}
+	if written != size {
+		return "", fmt.Errorf("installed file %s changed while it was scanned", rel)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func leavesCheckRoot(linkRel, target string) bool {
+	if target == "" || path.IsAbs(target) {
+		return true
+	}
+	resolved := path.Join(path.Dir(linkRel), target)
+	return resolved == ".." || strings.HasPrefix(resolved, "../")
+}
+
+func installedTreeDigest(records []installedTreeRecord) string {
+	sort.Slice(records, func(i, j int) bool { return records[i].path < records[j].path })
+	hash := sha256.New()
+	for _, record := range records {
+		executable := 0
+		if record.executable {
+			executable = 1
+		}
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00%d\x00%d\x00%s\n", record.path, record.kind, executable, record.size, record.sha256)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func installedDependencyLimit(format string, args ...any) error {
+	return &installRefusal{message: "installed dependencies " + fmt.Sprintf(format, args...)}
 }

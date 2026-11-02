@@ -300,6 +300,7 @@ func removeTrustedResults(stateDir, workDir string) error {
 	return errors.Join(
 		removeRunnerTree(trustedResultsRoot(stateDir, workDir)),
 		removeRunnerTree(checkWorkspaceRoot(stateDir, workDir)),
+		removeRunnerTree(npmCacheRoot(stateDir, workDir)),
 	)
 }
 

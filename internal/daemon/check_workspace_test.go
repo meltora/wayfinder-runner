@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/example/app-runner/internal/config"
@@ -61,14 +60,15 @@ func TestChecksRunAgainstThePublishedTree(t *testing.T) {
 		{"a published change is present", func(t *testing.T, f agentResultTest) {
 			writeAgentFile(t, f.checkout, "feature.txt", "real\n")
 		}, "grep -q real feature.txt", "passed"},
-		{"the dependency directory is carried", func(t *testing.T, f agentResultTest) {
+		{"the agent's dependency directory is absent", func(t *testing.T, f agentResultTest) {
 			writeAgentFile(t, f.checkout, ".gitignore", "node_modules/\n")
 			writeAgentFile(t, f.checkout, "node_modules/pkg/index.js", "original\n")
-		}, "grep -q original node_modules/pkg/index.js", "passed"},
-		{"a nested dependency directory is carried", func(t *testing.T, f agentResultTest) {
+		}, "test ! -e node_modules", "passed"},
+		{"the agent's nested dependency directory is absent", func(t *testing.T, f agentResultTest) {
 			writeAgentFile(t, f.checkout, ".gitignore", "node_modules/\n")
 			writeAgentFile(t, f.checkout, "packages/a/node_modules/pkg/index.js", "nested\n")
-		}, "grep -q nested packages/a/node_modules/pkg/index.js", "passed"},
+			writeAgentFile(t, f.checkout, "packages/a/index.js", "published\n")
+		}, "test -f packages/a/index.js && test ! -e packages/a/node_modules", "passed"},
 		{"a build cache is absent", func(t *testing.T, f agentResultTest) {
 			writeAgentFile(t, f.checkout, ".gitignore", ".next/\nnode_modules/\n")
 			writeAgentFile(t, f.checkout, ".next/cache/data", "stale\n")
@@ -86,21 +86,65 @@ func TestChecksRunAgainstThePublishedTree(t *testing.T) {
 	}
 }
 
-func TestCheckDependencyDirectoriesFollowTheCheckConfiguration(t *testing.T) {
-	f := newAgentResultTest(t)
-	writeAgentFile(t, f.checkout, ".gitignore", "node_modules/\n.venv/\n")
-	writeAgentFile(t, f.checkout, "node_modules/pkg/index.js", "js\n")
-	writeAgentFile(t, f.checkout, ".venv/lib/site.py", "py\n")
+var agentOnlyDirectories = []string{"node_modules", "vendor", ".venv", "target", ".gradle", "bin", "dist", "packages/a/node_modules"}
 
-	none := shellCheck("test ! -e node_modules && test ! -e .venv")
-	none.DependencyDirectories = []string{}
-	assertCheckResult(t, f.runCheck(t, none), "passed")
+func plantIgnoredDirectories(t *testing.T, checkout string, directories []string) {
+	t.Helper()
+	ignore := ""
+	for _, directory := range directories {
+		ignore += "/" + directory + "/\n"
+		writeAgentFile(t, checkout, directory+"/planted.txt", "agent content\n")
+	}
+	writeAgentFile(t, checkout, ".gitignore", ignore)
+	writeAgentFile(t, checkout, "packages/a/index.js", "published\n")
+}
 
-	both := shellCheck("test -f node_modules/pkg/index.js && test -f .venv/lib/site.py")
-	both.DependencyDirectories = []string{"node_modules", ".venv"}
-	assertCheckResult(t, f.runCheck(t, both), "passed")
+func absentScript(prefix string, directories []string) string {
+	script := "true"
+	for _, directory := range directories {
+		script += " && test ! -e " + prefix + directory
+	}
+	return script
+}
 
-	assertCheckResult(t, f.runCheck(t, shellCheck("test -e node_modules && test ! -e .venv")), "passed")
+func TestNoAgentDirectoryReachesTheCheckWorkspace(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		directories []string
+	}{
+		{"zero ignored directories", nil},
+		{"one ignored directory", []string{"node_modules"}},
+		{"many ignored directories", agentOnlyDirectories},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAgentResultTest(t)
+			plantIgnoredDirectories(t, f.checkout, tc.directories)
+			script := absentScript("", agentOnlyDirectories) + " && test -f packages/a/index.js"
+
+			assertCheckResult(t, f.runCheck(t, shellCheck(script)), "passed")
+			empty := shellCheck(script)
+			empty.DependencyDirectories = []string{}
+			assertCheckResult(t, f.runCheck(t, empty), "passed")
+		})
+	}
+}
+
+func TestNoAgentDirectoryReachesAnyRepositoryOfTheCheckWorkspace(t *testing.T) {
+	jr, _ := runCheckFixture(t)
+	for _, repository := range jr.repositories {
+		plantIgnoredDirectories(t, repository.WorkDir, agentOnlyDirectories)
+	}
+	script := absentScript("", agentOnlyDirectories) + " && " + absentScript("../secondary/", agentOnlyDirectories) +
+		" && test -f packages/a/index.js && test -f ../secondary/packages/a/index.js"
+	jr.d.cfg.Checks["absent"] = shellCheck(script)
+	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "absent")
+
+	response, err := call(t, jr, "platform_run_check", `{"check_id":"absent","idempotency_key":"rc-absent"}`)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCheckResult(t, response.(map[string]any), "passed")
 }
 
 func TestCheckWorkspaceIsFreshForEveryCheck(t *testing.T) {
@@ -108,9 +152,12 @@ func TestCheckWorkspaceIsFreshForEveryCheck(t *testing.T) {
 	writeAgentFile(t, f.checkout, ".gitignore", "node_modules/\n")
 	writeAgentFile(t, f.checkout, "node_modules/pkg/index.js", "original\n")
 
-	assertCheckResult(t, f.runCheck(t, shellCheck("touch generated.txt && echo tampered > node_modules/pkg/index.js && touch node_modules/extra.js && rm README.md")), "passed")
+	assertCheckResult(t, f.runCheck(t, shellCheck("test ! -e node_modules && touch generated.txt && mkdir -p node_modules/pkg && touch node_modules/extra.js && rm README.md")), "passed")
 
-	assertCheckResult(t, f.runCheck(t, shellCheck("test ! -e generated.txt && test ! -e node_modules/extra.js && grep -q original node_modules/pkg/index.js && test -f README.md")), "passed")
+	assertCheckResult(t, f.runCheck(t, shellCheck("test ! -e generated.txt && test ! -e node_modules && test -f README.md")), "passed")
+	if got, err := os.ReadFile(filepath.Join(f.checkout, "node_modules", "pkg", "index.js")); err != nil || string(got) != "original\n" {
+		t.Fatalf("a check changed the agent's dependency directory: %q, %v", got, err)
+	}
 	if _, err := os.Stat(filepath.Join(f.checkout, "README.md")); err != nil {
 		t.Fatalf("a check changed the agent's files: %v", err)
 	}
@@ -126,15 +173,19 @@ func TestCheckWorkspaceKeepsPublishedContentOverACarriedDirectory(t *testing.T) 
 		buildWorkspaceGit(t, origin, "add", "-f", "node_modules/pkg/index.js")
 	})
 	writeAgentFile(t, f.checkout, "node_modules/other.js", "ignored\n")
+	writeAgentFile(t, f.checkout, "node_modules/pkg/extra.js", "ignored\n")
 	writeAgentFile(t, f.checkout, "feature.txt", "real\n")
 	commit := f.publish(t)
 	published := f.publishedContent(t, commit, "node_modules/pkg/index.js")
 
-	result := f.runCheck(t, shellCheck("cat node_modules/pkg/index.js && test -f node_modules/other.js && false"))
-
-	if !strings.Contains(fmt.Sprint(result["output"]), published) {
-		t.Fatalf("check saw %v, want the published %q", result, published)
+	if strings.TrimSpace(published) != "published" {
+		t.Fatalf("published content = %q", published)
 	}
+
+	result := f.runCheck(t, shellCheck("test \"$(cat node_modules/pkg/index.js)\" = published && "+
+		"test \"$(find node_modules | sort | tr '\\n' ' ')\" = 'node_modules node_modules/pkg node_modules/pkg/index.js '"))
+
+	assertCheckResult(t, result, "passed")
 }
 
 func TestCheckSeesOutOfConeSparseFiles(t *testing.T) {
@@ -174,22 +225,19 @@ func TestCheckReadsAnotherRepositoryThroughItsPublishedTree(t *testing.T) {
 }
 
 func TestCheckWorkspaceFailuresAreTypedWithoutHostPaths(t *testing.T) {
-	f := newAgentResultTest(t)
-	writeAgentFile(t, f.checkout, ".gitignore", "node_modules/\n")
-	for _, name := range []string{"a", "b", "c", "d"} {
-		writeAgentFile(t, f.checkout, "node_modules/"+name+".js", name)
-	}
+	f := newNPMResultTest(t)
+	useFakeNPM(t, "mkdir -p node_modules && for name in a b c d; do echo $name > node_modules/$name.js; done")
 	f.jr.checkWorkspace().entryLimit = 2
 
-	_, err := f.runCheckTry(t, shellCheck("true"))
+	result := f.runCheck(t, npmInstallCheck("true"))
 
-	if err == nil || !strings.Contains(err.Error(), "dependency directories have more than 2 entries") {
-		t.Fatalf("err = %v, want the dependency limit", err)
+	if result["result"] != "error" || result["error_classification"] != "internal" || result["output"] != "installed dependencies have more than 2 entries" {
+		t.Fatalf("result = %v, want the installed dependency limit", result)
 	}
-	assertNoHostPath(t, err.Error(), f.jr.d.cfg.StateDir, f.checkout)
+	assertNoHostPath(t, fmt.Sprint(result["output"]), f.jr.d.cfg.StateDir, f.checkout)
 
 	f.jr.job.RequiredChecks = []string{"limited"}
-	f.jr.d.cfg.Checks["limited"] = shellCheck("true")
+	f.jr.d.cfg.Checks["limited"] = npmInstallCheck("true")
 	if f.jr.runRequiredChecks(context.Background(), map[string]string{"repo-1": f.base}, nil) {
 		t.Fatal("a required check passed without its workspace")
 	}
@@ -284,44 +332,42 @@ func TestCheckPolicyMountsOnlyTheCheckWorkspace(t *testing.T) {
 	}
 }
 
-func TestCheckDependencyCopyKeepsLinksAndSkipsSpecialFiles(t *testing.T) {
-	f := newAgentResultTest(t)
-	writeAgentFile(t, f.checkout, ".gitignore", "node_modules/\n")
-	writeAgentFile(t, f.checkout, "node_modules/pkg/bin/run.js", "run\n")
-	if err := os.MkdirAll(filepath.Join(f.checkout, "node_modules", ".bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("../pkg/bin/run.js", filepath.Join(f.checkout, "node_modules", ".bin", "run")); err != nil {
-		t.Fatal(err)
-	}
-	if err := syscall.Mkfifo(filepath.Join(f.checkout, "node_modules", "pipe"), 0o600); err != nil {
-		t.Fatal(err)
+func TestInstalledDependenciesKeepLinksAndRefuseSpecialFiles(t *testing.T) {
+	f := newNPMResultTest(t)
+	npm := useFakeNPM(t, "mkdir -p node_modules/pkg/bin node_modules/.bin && echo run > node_modules/pkg/bin/run.js && ln -s ../pkg/bin/run.js node_modules/.bin/run")
+
+	script := "test -L node_modules/.bin/run && grep -q run node_modules/.bin/run"
+	assertCheckResult(t, f.runCheck(t, npmInstallCheck(script)), "passed")
+	assertCheckResult(t, f.runCheck(t, npmInstallCheck(script)), "passed")
+	if got := len(npm.ciCalls(t)); got != 2 {
+		t.Fatalf("npm ci ran %d times, want once per check run", got)
 	}
 
-	script := "test -L node_modules/.bin/run && grep -q run node_modules/.bin/run && test ! -e node_modules/pipe"
-	assertCheckResult(t, f.runCheck(t, shellCheck(script)), "passed")
-	assertCheckResult(t, f.runCheck(t, shellCheck(script)), "passed")
+	useFakeNPM(t, "mkdir -p node_modules && mkfifo node_modules/pipe")
+	result := f.runCheck(t, npmInstallCheck("true"))
+	if result["result"] != "error" || result["output"] != "dependency install for check check-2 produced a special file: node_modules/pipe" {
+		t.Fatalf("result = %v", result)
+	}
 }
 
-func TestCheckDependencyLimitsAreTyped(t *testing.T) {
+func TestInstalledDependencyLimitsAreTyped(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		limit func(*checkWorkspace)
 		want  string
 	}{
-		{"bytes", func(w *checkWorkspace) { w.byteLimit = 3 }, "dependency directories have more than 3 bytes"},
-		{"depth", func(w *checkWorkspace) { w.depthLimit = 1 }, "dependency directories are more than 1 directories deep"},
+		{"bytes", func(w *checkWorkspace) { w.byteLimit = 3 }, "installed dependencies have more than 3 bytes"},
+		{"depth", func(w *checkWorkspace) { w.depthLimit = 1 }, "installed dependencies are more than 1 directories deep"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newAgentResultTest(t)
-			writeAgentFile(t, f.checkout, ".gitignore", "node_modules/\n")
-			writeAgentFile(t, f.checkout, "node_modules/pkg/index.js", "content\n")
+			f := newNPMResultTest(t)
+			useFakeNPM(t, "mkdir -p node_modules/pkg && echo content > node_modules/pkg/index.js")
 			tc.limit(f.jr.checkWorkspace())
 
-			_, err := f.runCheckTry(t, shellCheck("true"))
+			result := f.runCheck(t, npmInstallCheck("true"))
 
-			if err == nil || err.Error() != tc.want {
-				t.Fatalf("err = %v, want %q", err, tc.want)
+			if result["result"] != "error" || result["error_classification"] != "internal" || result["output"] != tc.want {
+				t.Fatalf("result = %v, want %q", result, tc.want)
 			}
 		})
 	}

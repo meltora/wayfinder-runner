@@ -24,7 +24,7 @@ var (
 		"job-homes":             regexp.MustCompile(`^home-[A-Za-z0-9]+$`),
 		"check-homes":           regexp.MustCompile(`^home-[A-Za-z0-9]+$`),
 		"sockets":               regexp.MustCompile(`^job-[A-Za-z0-9]+$`),
-		"job-results":           regexp.MustCompile(`^job-[A-Za-z0-9]+\.checks$`),
+		"job-results":           regexp.MustCompile(`^job-[A-Za-z0-9]+\.(checks|npm-cache)$`),
 		"work-intake-proposals": regexp.MustCompile(`^execution-[A-Za-z0-9]+$`),
 		"doctor":                regexp.MustCompile(`^sandbox-[A-Za-z0-9]+$`),
 	}

@@ -300,16 +300,17 @@ func cleanupOrphanedJobState(ctx context.Context, stateDir string, reclaim func(
 	var errs []error
 	var leftovers, owned []string
 	for _, target := range []struct {
-		dir, prefix, ownedSuffix string
-		jobOwned                 bool
+		dir, prefix   string
+		ownedSuffixes []string
+		jobOwned      bool
 	}{
-		{filepath.Join(stateDir, "jobs"), "job-", "", true},
-		{filepath.Join(stateDir, trustedResultsDirectory), "job-", checkWorkspaceSuffix, true},
-		{filepath.Join(stateDir, "job-homes"), "home-", "", true},
-		{filepath.Join(stateDir, "check-homes"), "home-", "", true},
-		{filepath.Join(stateDir, "sockets"), "job-", "", true},
-		{filepath.Join(stateDir, "tmux"), "job-", "", false},
-		{filepath.Join(stateDir, "supervisor"), ".herdr-exit-", "", false},
+		{filepath.Join(stateDir, "jobs"), "job-", []string{""}, true},
+		{filepath.Join(stateDir, trustedResultsDirectory), "job-", []string{checkWorkspaceSuffix, npmCacheSuffix}, true},
+		{filepath.Join(stateDir, "job-homes"), "home-", []string{""}, true},
+		{filepath.Join(stateDir, "check-homes"), "home-", []string{""}, true},
+		{filepath.Join(stateDir, "sockets"), "job-", []string{""}, true},
+		{filepath.Join(stateDir, "tmux"), "job-", nil, false},
+		{filepath.Join(stateDir, "supervisor"), ".herdr-exit-", nil, false},
 	} {
 		entries, err := os.ReadDir(target.dir)
 		if os.IsNotExist(err) {
@@ -325,7 +326,9 @@ func cleanupOrphanedJobState(ctx context.Context, stateDir string, reclaim func(
 			}
 			path := filepath.Join(target.dir, entry.Name())
 			leftovers = append(leftovers, path)
-			if target.jobOwned && entry.IsDir() && strings.HasSuffix(entry.Name(), target.ownedSuffix) {
+			if target.jobOwned && entry.IsDir() && slices.ContainsFunc(target.ownedSuffixes, func(suffix string) bool {
+				return strings.HasSuffix(entry.Name(), suffix)
+			}) {
 				owned = append(owned, path)
 			}
 		}

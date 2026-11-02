@@ -8,48 +8,34 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"sync"
 
-	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/safeio"
 )
 
 const (
-	checkWorkspaceSuffix       = ".checks"
-	checkIndexName             = "check.index"
-	maxCheckDependencyEntries  = 1_000_000
-	maxCheckDependencyBytes    = 4 << 30
-	maxCheckDependencyDepth    = 256
-	checkWorkspaceUnavailable  = "the check workspace could not be prepared"
-	defaultDependencyDirectory = "node_modules"
+	checkWorkspaceSuffix      = ".checks"
+	checkIndexName            = "check.index"
+	maxCheckDependencyEntries = 1_000_000
+	maxCheckDependencyBytes   = 4 << 30
+	maxCheckDependencyDepth   = 256
+	checkWorkspaceUnavailable = "the check workspace could not be prepared"
 )
 
-type checkWorkspaceError struct {
-	message string
-}
-
-func (e *checkWorkspaceError) Error() string {
-	return e.message
-}
-
 type checkWorkspace struct {
-	mu         sync.Mutex
-	root       string
-	entryLimit int
-	byteLimit  int64
-	depthLimit int
-	copied     map[string]copiedFile
+	mu                sync.Mutex
+	root              string
+	npmCache          string
+	entryLimit        int
+	byteLimit         int64
+	depthLimit        int
+	lockfileByteLimit int64
+	npmCacheByteLimit int64
 }
 
 type checkLocation struct {
 	root string
 	dirs map[string]string
-}
-
-type checkDependency struct {
-	source string
-	target string
 }
 
 func checkWorkspaceRoot(stateDir, workDir string) string {
@@ -59,20 +45,16 @@ func checkWorkspaceRoot(stateDir, workDir string) string {
 func (jr *jobRunner) checkWorkspace() *checkWorkspace {
 	jr.checkSpaceOnce.Do(func() {
 		jr.checkSpace = &checkWorkspace{
-			root:       checkWorkspaceRoot(jr.d.cfg.StateDir, jr.workDir),
-			entryLimit: maxCheckDependencyEntries,
-			byteLimit:  maxCheckDependencyBytes,
-			depthLimit: maxCheckDependencyDepth,
+			root:              checkWorkspaceRoot(jr.d.cfg.StateDir, jr.workDir),
+			npmCache:          npmCacheRoot(jr.d.cfg.StateDir, jr.workDir),
+			entryLimit:        maxCheckDependencyEntries,
+			byteLimit:         maxCheckDependencyBytes,
+			depthLimit:        maxCheckDependencyDepth,
+			lockfileByteLimit: maxInstallInputBytes,
+			npmCacheByteLimit: maxNPMCacheBytes,
 		}
 	})
 	return jr.checkSpace
-}
-
-func checkDependencyNames(check config.CheckConfig) []string {
-	if check.DependencyDirectories == nil {
-		return []string{defaultDependencyDirectory}
-	}
-	return check.DependencyDirectories
 }
 
 func (jr *jobRunner) checkResults(ctx context.Context, results map[string]agentResult, use string) (map[string]agentResult, error) {
@@ -91,43 +73,39 @@ func (jr *jobRunner) checkResults(ctx context.Context, results map[string]agentR
 	return resolved, nil
 }
 
-func (jr *jobRunner) runInCheckWorkspace(ctx context.Context, check config.CheckConfig, results map[string]agentResult, run func(checkLocation) checkOutcome) (checkOutcome, error) {
+func (jr *jobRunner) runInCheckWorkspace(ctx context.Context, results map[string]agentResult, run func(*checkWorkspace, checkLocation) checkOutcome) (checkOutcome, error) {
 	workspace := jr.checkWorkspace()
 	workspace.mu.Lock()
 	defer workspace.mu.Unlock()
-	location, err := jr.prepareCheckWorkspace(ctx, workspace, check, results)
+	location, err := jr.prepareCheckWorkspace(ctx, workspace, results)
 	if err != nil {
-		var limit *checkWorkspaceError
-		if errors.As(err, &limit) || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return checkOutcome{}, err
 		}
 		if wipeErr := workspace.wipe(); wipeErr != nil {
 			return checkOutcome{}, errors.Join(err, wipeErr)
 		}
-		if location, err = jr.prepareCheckWorkspace(ctx, workspace, check, results); err != nil {
+		if location, err = jr.prepareCheckWorkspace(ctx, workspace, results); err != nil {
 			return checkOutcome{}, err
 		}
 	}
-	return run(location), nil
+	return run(workspace, location), nil
 }
 
-func (jr *jobRunner) requiredCheckOutcome(ctx context.Context, checkID string, repository checkedOutRepository, check config.CheckConfig, results map[string]agentResult) checkOutcome {
+func (jr *jobRunner) requiredCheckOutcome(ctx context.Context, request checkRequest, results map[string]agentResult) checkReport {
 	resolved, err := jr.checkResults(ctx, results, "required check")
 	if err == nil {
-		var outcome checkOutcome
-		outcome, err = jr.runInCheckWorkspace(ctx, check, resolved, func(location checkLocation) checkOutcome {
-			return jr.executeConfiguredCheck(ctx, checkID, location.root, location.dirs[repository.ID], check)
-		})
+		var report checkReport
+		report, err = jr.runCheckRequest(ctx, request, resolved)
 		if err == nil {
-			return outcome
+			return report
 		}
 	}
-	jr.logger.Warn("check workspace preparation failed", "check", checkID, "err", err)
-	return checkOutcome{Result: "error", Class: "internal", Output: checkWorkspaceMessage(err)}
+	jr.logger.Warn("check workspace preparation failed", "check", request.checkID, "err", err)
+	return checkReport{outcome: checkOutcome{Result: "error", Class: "internal", Output: checkWorkspaceMessage(err)}}
 }
 
 func (w *checkWorkspace) wipe() error {
-	w.copied = nil
 	if _, err := os.Lstat(w.root); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -138,10 +116,6 @@ func (w *checkWorkspace) wipe() error {
 }
 
 func checkWorkspaceMessage(err error) string {
-	var limit *checkWorkspaceError
-	if errors.As(err, &limit) {
-		return limit.message
-	}
 	var refusal *agentResultError
 	if errors.As(err, &refusal) {
 		return refusal.Error()
@@ -157,7 +131,7 @@ func (jr *jobRunner) checkRepositoryRel(repository checkedOutRepository) (string
 	return filepath.ToSlash(rel), nil
 }
 
-func (jr *jobRunner) prepareCheckWorkspace(ctx context.Context, workspace *checkWorkspace, check config.CheckConfig, results map[string]agentResult) (checkLocation, error) {
+func (jr *jobRunner) prepareCheckWorkspace(ctx context.Context, workspace *checkWorkspace, results map[string]agentResult) (checkLocation, error) {
 	if err := os.MkdirAll(workspace.root, 0o700); err != nil {
 		return checkLocation{}, err
 	}
@@ -168,43 +142,22 @@ func (jr *jobRunner) prepareCheckWorkspace(ctx context.Context, workspace *check
 	defer func() { _ = root.Close() }()
 	location := checkLocation{root: workspace.root, dirs: map[string]string{}}
 	repositoryRels := map[string]string{}
-	dependencies := []checkDependency{}
-	names := checkDependencyNames(check)
 	for _, repository := range jr.repositories {
 		rel, err := jr.checkRepositoryRel(repository)
 		if err != nil {
 			return checkLocation{}, err
 		}
-		result, ok := results[repository.ID]
-		if !ok {
+		if _, ok := results[repository.ID]; !ok {
 			return checkLocation{}, fmt.Errorf("repository %s has no resolved result", repository.ID)
 		}
 		repositoryRels[repository.ID] = rel
 		location.dirs[repository.ID] = filepath.Join(workspace.root, filepath.FromSlash(rel))
-		for _, ignored := range result.candidate.ignoredDirs {
-			if slices.Contains(names, path.Base(ignored)) {
-				dependencies = append(dependencies, checkDependency{
-					source: path.Join(result.candidate.relPath, ignored),
-					target: path.Join(rel, ignored),
-				})
-			}
-		}
-	}
-	kept := map[string]bool{}
-	for _, dependency := range dependencies {
-		kept[dependency.target] = true
 	}
 	ancestors := map[string]bool{}
 	for _, rel := range repositoryRels {
-		markAncestors(ancestors, rel, true)
+		markAncestors(ancestors, rel)
 	}
-	for target := range kept {
-		markAncestors(ancestors, target, false)
-	}
-	if err := pruneCheckTree(root, ".", kept, ancestors); err != nil {
-		return checkLocation{}, err
-	}
-	if err := workspace.syncDependencies(ctx, root, jr.workDir, dependencies); err != nil {
+	if err := pruneCheckTree(root, ".", ancestors); err != nil {
 		return checkLocation{}, err
 	}
 	for _, repository := range jr.repositories {
@@ -219,18 +172,13 @@ func (jr *jobRunner) prepareCheckWorkspace(ctx context.Context, workspace *check
 	return location, nil
 }
 
-func markAncestors(ancestors map[string]bool, rel string, inclusive bool) {
-	current := rel
-	if !inclusive {
-		current = path.Dir(rel)
-	}
-	for current != "." && current != "/" && current != "" {
+func markAncestors(ancestors map[string]bool, rel string) {
+	for current := rel; current != "." && current != "/" && current != ""; current = path.Dir(current) {
 		ancestors[current] = true
-		current = path.Dir(current)
 	}
 }
 
-func pruneCheckTree(root *os.Root, rel string, kept, ancestors map[string]bool) error {
+func pruneCheckTree(root *os.Root, rel string, ancestors map[string]bool) error {
 	handle, err := root.Open(rel)
 	if err != nil {
 		return err
@@ -246,17 +194,14 @@ func pruneCheckTree(root *os.Root, rel string, kept, ancestors map[string]bool) 
 		if err != nil {
 			return err
 		}
-		realDirectory := info.IsDir() && info.Mode()&fs.ModeSymlink == 0
-		switch {
-		case kept[child] && realDirectory:
-		case ancestors[child] && realDirectory:
-			if err := pruneCheckTree(root, child, kept, ancestors); err != nil {
+		if ancestors[child] && info.IsDir() && info.Mode()&fs.ModeSymlink == 0 {
+			if err := pruneCheckTree(root, child, ancestors); err != nil {
 				return err
 			}
-		default:
-			if err := root.RemoveAll(child); err != nil {
-				return err
-			}
+			continue
+		}
+		if err := root.RemoveAll(child); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -278,8 +223,4 @@ func materialiseCheckTree(ctx context.Context, repository checkedOutRepository, 
 	options.workTree = dir
 	_, err := trusted.gitAt(ctx, options, "checkout-index", "--all", "--force")
 	return err
-}
-
-func checkDependencyLimit(format string, args ...any) error {
-	return &checkWorkspaceError{message: "dependency directories " + fmt.Sprintf(format, args...)}
 }

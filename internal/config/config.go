@@ -79,7 +79,8 @@ type CheckConfig struct {
 	TimeoutSeconds int      `yaml:"timeout_seconds,omitempty"`
 	RepositoryID   string   `yaml:"repository_id,omitempty"`
 
-	DependencyDirectories []string `yaml:"dependency_directories,omitempty"`
+	DependencyDirectories []string            `yaml:"dependency_directories,omitempty"`
+	Install               *CheckInstallConfig `yaml:"install,omitempty"`
 }
 
 // SourcePublicationInstallationConfig binds a control-plane installation ID
@@ -196,6 +197,7 @@ func Normalize(in Config) Config {
 			if value.DependencyDirectories != nil {
 				copyValue.DependencyDirectories = append([]string{}, value.DependencyDirectories...)
 			}
+			copyValue.Install = value.Install.clone()
 			out.Checks[key] = copyValue
 		}
 	}
@@ -398,7 +400,7 @@ func (c Config) Validate() error {
 				return fmt.Errorf("check %s references unregistered repository %s", id, check.RepositoryID)
 			}
 		}
-		if err := validateCheckDependencyDirectories(check.DependencyDirectories); err != nil {
+		if err := validateCheckDependencySettings(check); err != nil {
 			return fmt.Errorf("check %s: %w", id, err)
 		}
 	}
@@ -530,21 +532,6 @@ func validateServiceURL(raw, secureScheme, developmentScheme string, allowInsecu
 
 var immutableImagePattern = regexp.MustCompile(`^[^\s@]+@sha256:[a-fA-F0-9]{64}$`)
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-var dependencyDirectoryPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-
-const MaxCheckDependencyDirectories = 16
-
-func validateCheckDependencyDirectories(names []string) error {
-	if len(names) > MaxCheckDependencyDirectories {
-		return fmt.Errorf("dependency_directories must contain at most %d names", MaxCheckDependencyDirectories)
-	}
-	for _, name := range names {
-		if !dependencyDirectoryPattern.MatchString(name) || name == "." || name == ".." || strings.EqualFold(name, ".git") {
-			return fmt.Errorf("dependency directory %q must be a single directory name", name)
-		}
-	}
-	return nil
-}
 
 var gitHostPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 var workIntakeProposalModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$`)

@@ -23,7 +23,7 @@ check_vet() {
 }
 
 check_test() {
-	go test -race -count=1 ./...
+	RUNNER_REQUIRE_NPM_TESTS=1 go test -race -count=1 ./...
 }
 
 check_vuln() {

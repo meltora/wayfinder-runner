@@ -103,12 +103,11 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 	if err != nil {
 		return nil, err
 	}
-	outcome, err := jr.runInCheckWorkspace(runCtx, check, results, func(location checkLocation) checkOutcome {
-		return jr.executeConfiguredCheck(runCtx, checkID, location.root, location.dirs[repository.ID], check)
-	})
+	report, err := jr.runCheckRequest(runCtx, checkRequest{checkID: checkID, check: check, repository: repository}, results)
 	if err != nil {
 		return nil, errors.New(checkWorkspaceMessage(err))
 	}
+	outcome := report.outcome
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
 		return nil, fmt.Errorf("lease validation after check execution: %w", err)
 	}

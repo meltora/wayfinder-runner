@@ -20,6 +20,34 @@ type checkOutcome struct {
 	Duration  time.Duration
 }
 
+type checkRequest struct {
+	checkID    string
+	check      config.CheckConfig
+	repository checkedOutRepository
+}
+
+type checkReport struct {
+	outcome checkOutcome
+	install *installReport
+	commit  string
+	reached bool
+}
+
+func (jr *jobRunner) runCheckRequest(ctx context.Context, request checkRequest, results map[string]agentResult) (checkReport, error) {
+	report := checkReport{commit: results[request.repository.ID].commit}
+	outcome, err := jr.runInCheckWorkspace(ctx, results, func(workspace *checkWorkspace, location checkLocation) checkOutcome {
+		report.reached = true
+		install, refusal := jr.installCheckDependencies(ctx, request, workspace, location, report.commit)
+		report.install = install
+		if refusal != nil {
+			return *refusal
+		}
+		return jr.executeConfiguredCheck(ctx, request.checkID, location.root, location.dirs[request.repository.ID], request.check)
+	})
+	report.outcome = outcome
+	return report, err
+}
+
 func (jr *jobRunner) executeConfiguredCheck(ctx context.Context, checkID, root, dir string, check config.CheckConfig) checkOutcome {
 	timeout := 10 * time.Minute
 	if check.TimeoutSeconds > 0 {

@@ -32,6 +32,12 @@ func newAgentResultTest(t *testing.T) agentResultTest {
 
 func newAgentResultTestWith(t *testing.T, seed func(origin string)) agentResultTest {
 	t.Helper()
+	jr, events := testJobRunner(t)
+	return newAgentResultTestOn(t, jr, events, seed)
+}
+
+func newAgentResultTestOn(t *testing.T, jr *jobRunner, events *capturedEvents, seed func(origin string)) agentResultTest {
+	t.Helper()
 	origin := t.TempDir()
 	buildWorkspaceGit(t, origin, "init", "-b", "main")
 	buildWorkspaceGit(t, origin, "config", "user.email", "runner@example.test")
@@ -46,7 +52,6 @@ func newAgentResultTestWith(t *testing.T, seed func(origin string)) agentResultT
 	writeAgentFile(t, origin, "advanced-only.txt", "outside approved snapshot\n")
 	buildWorkspaceGit(t, origin, "add", ".")
 	buildWorkspaceGit(t, origin, "commit", "-m", "branch advanced after authorization")
-	jr, events := testJobRunner(t)
 	jr.d.cfg.AllowUnsafeDirect = true
 	jr.d.cfg.Isolation = "direct"
 	jr.d.cfg.Repositories = map[string]config.RepositoryConfig{"repo-1": {URL: origin}}

@@ -64,9 +64,18 @@ labels:
 #     args: [test, --, --runInBand]
 #     timeout_seconds: 900
 #     repository_id: web-app
-#     # Git-ignored directories carried into the published check workspace.
-#     # Omit for [node_modules]; [] carries none.
-#     dependency_directories: [node_modules]
+#     # Checks run on the published tree only; nothing is carried from the
+#     # agent's directory. dependency_directories is no longer supported.
+#     # install runs npm ci --ignore-scripts from the published lockfile
+#     # (version 2 or 3, registry packages with integrity) before the check.
+#     # With job_network: none the install is --offline, so registry packages
+#     # need job_network: restricted with an egress policy to the registry.
+#     # Artifact names starting with runner- are reserved for the runner's
+#     # runner-check-install-<check id>.json provenance.
+#     install:
+#       ecosystem: npm
+#       directories: [.]
+#       timeout_seconds: 600
 
 # Preview observation is a daemon-owned HTTPS operation, never an agent-provided
 # request. The blueprint identity and complete health-check inventory must match

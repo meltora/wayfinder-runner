@@ -227,18 +227,56 @@ checks:
     args: [test, --, --runInBand]
     timeout_seconds: 900
     repository_id: web-app
-    dependency_directories: [node_modules]
+    install:
+      ecosystem: npm
+      directories: [.]
+      timeout_seconds: 600
 ```
 
 Checks never run in the agent's directory. Before every check, on demand or
 terminal, the runner rebuilds a check workspace under
 `job-results/<job>.checks` from the published commit of every job repository,
-so files ignored by Git, the agent's `.git` metadata, and anything a previous
-check wrote are absent. Only Git-ignored directories whose name is listed in
-`dependency_directories` are carried over from the agent's result (default
-`[node_modules]`; `[]` carries none), copied incrementally and bounded to
-1,000,000 entries and 4 GiB. A check therefore cannot change the agent's files,
-and its result names the commit it actually tested.
+so files ignored by Git, the agent's `.git` metadata, anything a previous check
+wrote, and every directory the agent installed or built (`node_modules`,
+`vendor`, `.venv`, `target`, ...) are absent. Nothing is carried over from the
+agent's directory. A check therefore cannot change the agent's files, a planted
+dependency cannot decide its result, and its result names the commit it
+actually tested.
+
+`dependency_directories` is no longer supported; a configuration that sets it
+to a non-empty list is refused (`[]` is accepted and means nothing). A check
+that needs npm dependencies sets `install`. Before the check command, the
+runner then runs, in each listed directory in order (default `[.]`, at most
+16 clean repository-relative paths), `npm --version` and
+`npm ci --ignore-scripts --no-audit --no-fund --no-update-notifier` against the
+**published** `package-lock.json` or `npm-shrinkwrap.json` (lockfile version 2
+or 3; every registry package must carry `integrity`; a published
+`node_modules` is refused). Each `npm ci` is limited to
+`install.timeout_seconds` (default 600, at most 1800). The installed
+`node_modules` is scanned without following links: at most 1,000,000 entries,
+4 GiB and 256 levels, no special files, and no symbolic link that leaves the
+check workspace. A refused, failed or timed-out install reports the check as
+`error` without running it.
+
+The npm cache is per job, at `job-results/<job>.npm-cache` (mode 0700), outside
+the job workspace. Only the install container mounts it; agent and check
+containers never do. It is wiped when it exceeds 4 GiB and removed with the
+job's results. In Docker the install runs in its own container with the same
+limits as checks. With `job_network: none` it runs with `--offline`, so only
+dependencies already in the published tree (for example `file:` tarballs) or
+in the cache install; a registry dependency needs `job_network: restricted`
+with an egress policy that reaches the registry. During the pilot, Node checks
+on a runner with `job_network: none` that depend on registry packages fail.
+Direct mode runs the same commands unisolated, with the host `HOME` (D52).
+
+For every terminal required check that reached its check workspace, the runner
+publishes `runner-check-install-<check id>.json` (schema
+`our-runner.check-install.v1`) before the check's `test_results` event. It
+records the job, attempt, repository, commit, isolation, `carried_directories:
+[]`, the install report (tool version, argv, lockfile blob IDs, result and tree
+digest per directory) and the check result, without host paths, environment
+values or output. Artifact names starting with `runner-` (any ASCII case) are
+reserved for the runner; the agent's `platform_publish_artifact` refuses them.
 
 For GitHub repositories, configure an HTTPS URL on the runner's GitHub Git host
 (for example `https://github.com/company/web-app.git`) and let the platform's

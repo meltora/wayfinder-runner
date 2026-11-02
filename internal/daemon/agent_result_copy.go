@@ -42,12 +42,10 @@ type candidateCopy struct {
 	label        string
 	entries      int
 	bytes        int64
-	ignoredDirs  []string
 }
 
 type snapshotOutcome struct {
-	tree        string
-	ignoredDirs []string
+	tree string
 }
 
 func (t *trustedResultRepository) snapshot(ctx context.Context, workspace *os.Root, input agentSnapshot) (snapshotOutcome, error) {
@@ -95,7 +93,7 @@ func (t *trustedResultRepository) snapshotInto(ctx context.Context, workspace *o
 		return snapshotOutcome{}, err
 	}
 	cache.copied = copied.out().next
-	return snapshotOutcome{tree: strings.TrimSpace(string(tree)), ignoredDirs: copied.ignoredDirs}, nil
+	return snapshotOutcome{tree: strings.TrimSpace(string(tree))}, nil
 }
 
 func readOptionalWorkspaceFile(workspace *os.Root, rel string, limit int64) ([]byte, error) {
@@ -279,7 +277,6 @@ func (c *candidateCopy) subdirectory(parent *os.Root, child, name string, info f
 		return err
 	}
 	if ignored {
-		c.ignoredDirs = append(c.ignoredDirs, child)
 		return c.target.RemoveAll(child)
 	}
 	sub, err := parent.OpenRoot(name)

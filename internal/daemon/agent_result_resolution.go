@@ -30,12 +30,11 @@ func agentResultAmbiguity(repositoryID, format string, args ...any) error {
 }
 
 type agentCandidate struct {
-	source      string
-	relPath     string
-	adminRel    string
-	tree        string
-	changes     map[string]string
-	ignoredDirs []string
+	source   string
+	relPath  string
+	adminRel string
+	tree     string
+	changes  map[string]string
 }
 
 type agentResult struct {
@@ -101,7 +100,7 @@ func (jr *jobRunner) resolveWithinBound(ctx context.Context, trusted *trustedRes
 		if err != nil {
 			return agentResult{}, trusted.stepRefusal(ctx, repository.ID, label, err)
 		}
-		candidate.tree, candidate.changes, candidate.ignoredDirs = outcome.tree, changes, outcome.ignoredDirs
+		candidate.tree, candidate.changes = outcome.tree, changes
 	}
 	winner, err := selectAgentResult(repository.ID, candidates)
 	if err != nil {

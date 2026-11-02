@@ -26,6 +26,7 @@ type Policy struct {
 	WorkspaceRoot       string
 	AgentPackDir        string
 	JobHome             string
+	NPMCacheDir         string
 	MCPSock             string
 	MCPTokenFile        string
 	Image               string
@@ -166,6 +167,12 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 	if p.JobHome != "" {
 		dockerArgs = append(dockerArgs, "-v", p.JobHome+":/home/runner:rw", "-e", "HOME=/home/runner")
 	}
+	if p.NPMCacheDir != "" {
+		if err := validateNPMCacheDir(p.NPMCacheDir); err != nil {
+			return "", nil, err
+		}
+		dockerArgs = append(dockerArgs, "-v", p.NPMCacheDir+":"+p.NPMCacheDir+":rw", "-e", "npm_config_cache="+p.NPMCacheDir)
+	}
 	if p.MCPSock != "" {
 		mcpDir := filepath.Dir(p.MCPSock)
 		if p.MCPTokenFile == "" || filepath.Dir(p.MCPTokenFile) == mcpDir {
@@ -208,6 +215,14 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 }
 
 var containerEnvironmentKey = regexp.MustCompile(`^(CLAUDE_CODE_SUBPROCESS_ENV_SCRUB|OPENCODE_(CONFIG_CONTENT|CONFIG_DIR|DISABLE_[A-Z0-9_]+))$`)
+
+func validateNPMCacheDir(dir string) error {
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == string(filepath.Separator) ||
+		strings.ContainsFunc(dir, func(r rune) bool { return r == ':' || r == ',' || r < 0x20 || r == 0x7f }) {
+		return fmt.Errorf("docker isolation requires an absolute clean npm cache path")
+	}
+	return nil
+}
 
 func validateManagedConfigMount(mount supervisor.ManagedConfigMount, mcpSocket string) error {
 	if mount.Target != "/etc/codex/requirements.toml" || !filepath.IsAbs(mount.Source) || mcpSocket == "" {

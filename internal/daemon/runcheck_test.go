@@ -715,3 +715,59 @@ func TestPlanJobContextExposesNoRunnableChecks(t *testing.T) {
 		t.Fatalf("plan job advertised runnable checks from stale input: %v", checks)
 	}
 }
+
+func TestRunCheckReportsInstallRefusalsAndFailuresAsToolResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+		seed             bool
+	}{
+		{"refusal", fakeNPMInstallBody, "dependency install for check check-0 needs package-lock.json or npm-shrinkwrap.json in the repository root; publish the lockfile", false},
+		{"failure", "echo boom; exit 3", "dependency install for check check-0 failed (npm ci exited 3): boom\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAgentResultTestWith(t, func(origin string) {
+				if tc.seed {
+					seedNPMProject(t, origin)
+				}
+			})
+			useFakeNPM(t, tc.body)
+
+			result := f.runCheck(t, npmInstallCheck("true"))
+
+			if result["result"] != "error" || result["error_classification"] != "internal" || result["output"] != tc.want {
+				t.Fatalf("result = %v", result)
+			}
+			events := f.events.byKind("test_results")
+			if len(events) != 1 || events[0]["phase"] != "iterative" || events[0]["result"] != "error" ||
+				!slices.Equal(stringSlice(events[0]["failures"]), []string{tc.want}) {
+				t.Fatalf("events = %v", events)
+			}
+			if artifacts := uploadedArtifacts(t, f.jr); len(artifacts) != 0 {
+				t.Fatalf("iterative install published %+v", artifacts)
+			}
+		})
+	}
+}
+
+func TestRunCheckReplayAfterAnInstallFailureDoesNotReinstall(t *testing.T) {
+	f := newNPMResultTest(t)
+	npm := useFakeNPM(t, "echo boom; exit 3")
+	first := f.runCheck(t, npmInstallCheck("true"))
+	calls := len(npm.calls(t))
+
+	replay, err := call(t, f.jr, "platform_run_check", `{"check_id":"check-0","idempotency_key":"key-check-0"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := len(npm.calls(t)); got != calls {
+		t.Fatalf("replay ran npm again: %d calls, then %d", calls, got)
+	}
+	replayed := replay.(map[string]any)
+	if replayed["result"] != first["result"] || replayed["output"] != first["output"] || replayed["error_classification"] != first["error_classification"] {
+		t.Fatalf("replay = %v, first = %v", replayed, first)
+	}
+	if got := len(f.events.byKind("test_results")); got != 1 {
+		t.Fatalf("replay emitted evidence again: %d events", got)
+	}
+}

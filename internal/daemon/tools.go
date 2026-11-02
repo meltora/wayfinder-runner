@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"mime"
 	"os"
@@ -385,6 +386,9 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 		return jr.executePreviewPublication(ctx, raw)
 
 	case "platform_publish_artifact":
+		if reservedRunnerArtifactName(str(raw, "name")) {
+			return nil, fmt.Errorf("artifact names starting with %s are reserved for the runner", runnerArtifactPrefix)
+		}
 		return jr.handlePublishArtifact(ctx, raw)
 
 	case runCheckTool:
@@ -507,6 +511,10 @@ func (jr *jobRunner) handlePublishArtifact(ctx context.Context, raw map[string]a
 		return nil, fmt.Errorf("artifact source: %w", err)
 	}
 	defer func() { _ = f.Close() }()
+	return jr.publishArtifactContent(ctx, name, contentType, f)
+}
+
+func (jr *jobRunner) publishArtifactContent(ctx context.Context, name, contentType string, f io.Reader) (any, error) {
 	ref, storedPath, err := jr.d.collectors.SaveArtifact(jr.job.JobID, jr.job.AttemptID, jr.job.FencingToken, name, contentType, f)
 	if err != nil {
 		return nil, err
