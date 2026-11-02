@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/example/app-runner/internal/strictjson"
 )
 
 const (
@@ -30,17 +33,6 @@ type publishedEntry struct {
 	kind string
 	sha  string
 	size int64
-}
-
-type npmLockfile struct {
-	LockfileVersion any                         `json:"lockfileVersion"`
-	Packages        map[string]npmLockedPackage `json:"packages"`
-}
-
-type npmLockedPackage struct {
-	Resolved  string `json:"resolved"`
-	Integrity string `json:"integrity"`
-	Link      bool   `json:"link"`
 }
 
 type installRefusal struct {
@@ -99,11 +91,10 @@ func readInstallInput(ctx context.Context, trusted *trustedResultRepository, che
 		return installInput{}, err
 	}
 	display := path.Join(directory, input.lockfile)
-	parsed, ok := parseNPMLockfile(content)
-	if !ok {
+	switch problem, key := inspectNPMLockfile(content); problem {
+	case lockfileMalformed:
 		return installInput{}, refuse("cannot use %s: it is not an npm lockfile of version 2 or 3", display)
-	}
-	if key, missing := packageWithoutIntegrity(parsed); missing {
+	case lockfileMissingIntegrity:
 		return installInput{}, refuse("cannot use %s: the registry package %s has no integrity", display, key)
 	}
 	input.lockfileBlobSHA, input.packageJSONBlobSHA = lockfile.sha, manifest.sha
@@ -141,31 +132,178 @@ func publishedEntries(ctx context.Context, trusted *trustedResultRepository, com
 	return entries, nil
 }
 
-func parseNPMLockfile(content []byte) (npmLockfile, bool) {
-	var parsed npmLockfile
-	if err := json.Unmarshal(content, &parsed); err != nil {
-		return npmLockfile{}, false
-	}
-	version, ok := parsed.LockfileVersion.(float64)
-	if !ok || (version != 2 && version != 3) {
-		return npmLockfile{}, false
-	}
-	return parsed, true
+type lockfileProblem int
+
+const (
+	lockfileValid lockfileProblem = iota
+	lockfileMalformed
+	lockfileMissingIntegrity
+)
+
+type npmLockedPackage struct {
+	resolved  string
+	integrity string
+	link      bool
+	inBundle  bool
+	bundled   []string
+	dependsOn []string
 }
 
-func packageWithoutIntegrity(lockfile npmLockfile) (string, bool) {
-	keys := make([]string, 0, len(lockfile.Packages))
-	for key := range lockfile.Packages {
+var (
+	ssriHashPattern  = regexp.MustCompile(`^(sha1|sha256|sha384|sha512)-[A-Za-z0-9+/]+={0,2}$`)
+	gitCommitPattern = regexp.MustCompile(`#([0-9a-f]{40}|[0-9a-f]{64})$`)
+	dependencyFields = []string{"dependencies", "optionalDependencies", "peerDependencies"}
+)
+
+func inspectNPMLockfile(content []byte) (lockfileProblem, string) {
+	top, err := strictjson.Object(content)
+	if err != nil || !supportedLockfileVersion(top["lockfileVersion"]) {
+		return lockfileMalformed, ""
+	}
+	packages, ok := lockedPackages(top["packages"])
+	if !ok {
+		return lockfileMalformed, ""
+	}
+	keys := make([]string, 0, len(packages))
+	for key := range packages {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	bundles := newLockfileBundles(packages)
 	for _, key := range keys {
-		locked := lockfile.Packages[key]
-		resolved := strings.ToLower(locked.Resolved)
-		remote := strings.HasPrefix(resolved, "http://") || strings.HasPrefix(resolved, "https://")
-		if remote && !locked.Link && strings.TrimSpace(locked.Integrity) == "" {
-			return key, true
+		if installedPackageKey(key) && !packages[key].integrityBound() && !bundles.ships(key) {
+			return lockfileMissingIntegrity, key
 		}
 	}
-	return "", false
+	return lockfileValid, ""
+}
+
+func supportedLockfileVersion(raw json.RawMessage) bool {
+	if raw == nil {
+		return false
+	}
+	number, err := strictjson.Number(raw)
+	if err != nil {
+		return false
+	}
+	version, err := number.Float64()
+	return err == nil && (version == 2 || version == 3)
+}
+
+func lockedPackages(raw json.RawMessage) (map[string]npmLockedPackage, bool) {
+	if raw == nil {
+		return nil, false
+	}
+	entries, err := strictjson.Object(raw)
+	if err != nil {
+		return nil, false
+	}
+	if _, ok := entries[""]; !ok {
+		return nil, false
+	}
+	packages := make(map[string]npmLockedPackage, len(entries))
+	for key, value := range entries {
+		locked, ok := decodeLockedPackage(value)
+		if !ok {
+			return nil, false
+		}
+		packages[key] = locked
+	}
+	return packages, true
+}
+
+func decodeLockedPackage(raw json.RawMessage) (npmLockedPackage, bool) {
+	fields, err := strictjson.Object(raw)
+	if err != nil {
+		return npmLockedPackage{}, false
+	}
+	var locked npmLockedPackage
+	ok := optionalLockString(fields["resolved"], &locked.resolved) &&
+		optionalLockString(fields["integrity"], &locked.integrity) &&
+		optionalLockBool(fields["link"], &locked.link) &&
+		optionalLockBool(fields["inBundle"], &locked.inBundle) &&
+		optionalLockNames(fields["bundleDependencies"], &locked.bundled)
+	for _, field := range dependencyFields {
+		ok = ok && appendDependencyNames(fields[field], &locked.dependsOn)
+	}
+	return locked, ok
+}
+
+func optionalLockNames(raw json.RawMessage, target *[]string) bool {
+	var ignored bool
+	if raw == nil || optionalLockBool(raw, &ignored) {
+		return true
+	}
+	items, err := strictjson.Array(raw)
+	if err != nil {
+		return false
+	}
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		name, err := strictjson.String(item)
+		if err != nil {
+			return false
+		}
+		names = append(names, name)
+	}
+	*target = names
+	return true
+}
+
+func appendDependencyNames(raw json.RawMessage, target *[]string) bool {
+	if raw == nil {
+		return true
+	}
+	dependencies, err := strictjson.Object(raw)
+	if err != nil {
+		return false
+	}
+	for name := range dependencies {
+		*target = append(*target, name)
+	}
+	return true
+}
+
+func optionalLockString(raw json.RawMessage, target *string) bool {
+	if raw == nil {
+		return true
+	}
+	value, err := strictjson.String(raw)
+	*target = value
+	return err == nil
+}
+
+func optionalLockBool(raw json.RawMessage, target *bool) bool {
+	switch string(bytes.TrimSpace(raw)) {
+	case "":
+		return raw == nil
+	case "true":
+		*target = true
+	case "false":
+	default:
+		return false
+	}
+	return true
+}
+
+func installedPackageKey(key string) bool {
+	for _, component := range strings.Split(key, "/") {
+		if component == installedDependencyDirectory {
+			return true
+		}
+	}
+	return false
+}
+
+func (p npmLockedPackage) integrityBound() bool {
+	if p.link || strings.HasPrefix(p.resolved, "file:") || (strings.HasPrefix(p.resolved, "git+") && gitCommitPattern.MatchString(p.resolved)) {
+		return true
+	}
+	hashes := strings.Fields(p.integrity)
+	for _, hash := range hashes {
+		if !ssriHashPattern.MatchString(hash) {
+			return false
+		}
+	}
+	return len(hashes) > 0
 }

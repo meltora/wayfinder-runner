@@ -128,6 +128,24 @@ func TestInstallInputsAreRefusedBeforeAnythingRuns(t *testing.T) {
 			writeAgentFile(t, origin, "package-lock.json", lockfileWithPackages(
 				`,"node_modules/x":{"version":"1.0.0","resolved":"http://mirror.example/x.tgz","integrity":" "}`))
 		}, want: prefix + "cannot use package-lock.json: the registry package node_modules/x has no integrity"},
+		{name: "capitalised Integrity key", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
+			writeAgentFile(t, origin, "package-lock.json", lockfileEntry("node_modules/evil",
+				`"resolved":"http://127.0.0.1:18765/evil-1.0.0.tgz","Integrity":`+testIntegrity))
+		}, want: prefix + "cannot use package-lock.json: the registry package node_modules/evil has no integrity"},
+		{name: "registry package without resolved or integrity", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
+			writeAgentFile(t, origin, "package-lock.json", lockfileEntry("node_modules/evil", `"version":"1.0.0"`))
+		}, want: prefix + "cannot use package-lock.json: the registry package node_modules/evil has no integrity"},
+		{name: "duplicate integrity keys", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
+			writeAgentFile(t, origin, "package-lock.json", lockfileEntry("node_modules/x",
+				`"resolved":`+testHTTPSTgz+`,"integrity":`+testIntegrity+`,"integrity":""`))
+		}, want: prefix + "cannot use package-lock.json: it is not an npm lockfile of version 2 or 3"},
+		{name: "legacy dependencies without packages", seed: func(t *testing.T, origin string) {
+			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
+			writeAgentFile(t, origin, "package-lock.json", `{"lockfileVersion":2,"requires":true,"dependencies":{"evil":{"version":"1.0.0","resolved":"http://127.0.0.1:18765/evil-1.0.0.tgz"}}}`)
+		}, want: prefix + "cannot use package-lock.json: it is not an npm lockfile of version 2 or 3"},
 		{name: "published node_modules file", seed: func(t *testing.T, origin string) {
 			seedNPMProject(t, origin)
 			writeAgentFile(t, origin, "node_modules/pkg/index.js", "published\n")
@@ -165,13 +183,15 @@ func TestInstallInputsAcceptExemptAndShrinkwrapLockfiles(t *testing.T) {
 			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
 			writeAgentFile(t, origin, "package-lock.json", lockfileWithPackages(
 				`,"node_modules/local":{"resolved":"file:vendor/local-1.0.0.tgz"}`+
-					`,"node_modules/fromgit":{"resolved":"git+ssh://git@example.test/x.git#abc"}`+
+					`,"node_modules/fromgit":{"resolved":"git+ssh://git@example.test/x.git#0123456789abcdef0123456789abcdef01234567"}`+
 					`,"node_modules/linked":{"resolved":"https://example.test/linked","link":true}`+
-					`,"node_modules/bundled":{"version":"1.0.0","inBundle":true}`))
+					`,"node_modules/bundler":{"resolved":`+testHTTPSTgz+`,"integrity":`+testIntegrity+`,"bundleDependencies":["bundled"]}`+
+					`,"node_modules/bundler/node_modules/bundled":{"version":"1.0.0","inBundle":true}`+
+					`,"packages/app":{"name":"app","version":"1.0.0"}`))
 		}},
 		{"version 2 lockfile", func(t *testing.T, origin string) {
 			writeAgentFile(t, origin, "package.json", fixturePackageJSON)
-			writeAgentFile(t, origin, "package-lock.json", `{"lockfileVersion":2,"packages":{}}`)
+			writeAgentFile(t, origin, "package-lock.json", `{"lockfileVersion":2,"packages":{"":{"name":"fixture"}}}`)
 		}},
 		{"a valid shrinkwrap wins over an invalid package lock", func(t *testing.T, origin string) {
 			writeAgentFile(t, origin, "package.json", fixturePackageJSON)

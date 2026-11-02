@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/example/app-runner/internal/safeio"
 )
@@ -32,7 +34,15 @@ type checkProvenance struct {
 }
 
 func reservedRunnerArtifactName(name string) bool {
-	return len(name) >= len(runnerArtifactPrefix) && asciiLower(name[:len(runnerArtifactPrefix)]) == runnerArtifactPrefix
+	visible := strings.TrimLeftFunc(strings.Map(dropFormatRune, name), unicode.IsSpace)
+	return len(visible) >= len(runnerArtifactPrefix) && asciiLower(visible[:len(runnerArtifactPrefix)]) == runnerArtifactPrefix
+}
+
+func dropFormatRune(r rune) rune {
+	if unicode.Is(unicode.Cf, r) {
+		return -1
+	}
+	return r
 }
 
 func asciiLower(value string) string {

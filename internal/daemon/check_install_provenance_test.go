@@ -260,7 +260,8 @@ func TestTheAgentCannotPublishARunnerReservedArtifactName(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(jr.workDir, "report.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for index, name := range []string{"runner-x", "Runner-x", "RUNNER-x", "runner-check-install-go-test.json"} {
+	for index, name := range []string{"runner-x", "Runner-x", "RUNNER-x", "runner-check-install-go-test.json",
+		" runner-x", "\trunner-x", "\xc2\xa0runner-x", "\xe2\x80\x8brunner-x", "run\xe2\x80\x8dner-x", "\xef\xbb\xbfRunner-x", "runner\xe2\x81\xa0-x"} {
 		_, err := call(t, jr, "platform_publish_artifact", fmt.Sprintf(`{"name":%q,"path":"report.json","idempotency_key":"reserved-%d"}`, name, index))
 		if err == nil || err.Error() != "artifact names starting with runner- are reserved for the runner" {
 			t.Fatalf("name %q: err = %v", name, err)
