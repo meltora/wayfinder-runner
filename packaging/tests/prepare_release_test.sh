@@ -12,10 +12,26 @@ fail() {
     exit 1
 }
 
+command -v openssl >/dev/null 2>&1 || fail "openssl is required to generate the throwaway trust key"
+openssl ecparam -name prime256v1 -genkey -noout -out "$TEST_ROOT/throwaway-key.pem" 2>/dev/null
+THROWAWAY_PUBLIC_KEY=$(openssl ec -in "$TEST_ROOT/throwaway-key.pem" -pubout -outform DER 2>/dev/null | base64 | tr -d '\n')
+[ -n "$THROWAWAY_PUBLIC_KEY" ] || fail "could not derive the throwaway public key"
+PROVISIONED_TRUST="{\"schema_version\":1,\"signature_threshold\":1,\"keys\":[{\"key_id\":\"release-test\",\"public_key_b64\":\"$THROWAWAY_PUBLIC_KEY\",\"not_before\":\"2020-01-01T00:00:00Z\",\"not_after\":\"2099-01-01T00:00:00Z\"}]}"
+EMPTY_TRUST='{"schema_version":1,"signature_threshold":1,"keys":[]}'
+
 new_workspace() {
     rm -rf "$TEST_ROOT/work"
     mkdir -p "$TEST_ROOT/work/packaging"
     cp "$REPO_ROOT/packaging/bootstrap.sh" "$TEST_ROOT/work/packaging/bootstrap.sh"
+    if [ "${TEST_RELEASE_VERSION-1.2.3}" != absent ]; then
+        printf '%s\n' "${TEST_RELEASE_VERSION-1.2.3}" > "$TEST_ROOT/work/packaging/release-version"
+    fi
+    printf '%s\n' "${TEST_TRUST-$PROVISIONED_TRUST}" > "$TEST_ROOT/work/packaging/update-trust.json"
+    chmod 0644 "$TEST_ROOT/work/packaging/update-trust.json"
+    if [ "${TEST_JOB_IMAGE-ghcr.io/acme/runner-job@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}" != absent ]; then
+        mkdir -p "$TEST_ROOT/work/.release"
+        printf '%s\n' "${TEST_JOB_IMAGE-ghcr.io/acme/runner-job@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}" > "$TEST_ROOT/work/.release/job-image.txt"
+    fi
 }
 
 prepare() {
@@ -72,6 +88,32 @@ https://other.example.test' expect_refused "a control plane with two lines" v1.2
 TEST_REPOSITORY='acme/runner
 evil/runner' expect_refused "a repository with two lines" v1.2.3 false
 TEST_URL=' https://control.example.test' expect_refused "a control plane with whitespace" v1.2.3 false
+
+TEST_RELEASE_VERSION=1.2.4 expect_refused "a production tag that differs from the declared release version" v1.2.3 false
+TEST_CHANNEL=staging TEST_RELEASE_VERSION=1.2.4 expect_refused "a staging tag whose core differs from the declared release version" v1.2.3-staging.1 false
+TEST_RELEASE_VERSION=absent expect_refused "a missing release-version file" v1.2.3 false
+TEST_RELEASE_VERSION=v1.2.3 expect_refused "a v-prefixed release-version file" v1.2.3 false
+TEST_RELEASE_VERSION='1.2' expect_refused "a malformed release-version file" v1.2.3 false
+TEST_TRUST=$EMPTY_TRUST expect_refused "a production release with an empty update trust" v1.2.3 false
+TEST_TRUST='{"schema_version":1,"signature_threshold":1,"keys":[],"extra":1}' TEST_CHANNEL=staging expect_refused "a staging release with a malformed update trust" v1.2.3-staging.1 false
+TEST_TRUST='{"schema_version":1,"signature_threshold":1,"keys":[{"key_id":"broken","public_key_b64":"bm90LWRlcg==","not_before":"2020-01-01T00:00:00Z","not_after":"2099-01-01T00:00:00Z"}]}' expect_refused "a production release with an invalid trust key" v1.2.3 false
+TEST_TRUST="{\"schema_version\":1,\"signature_threshold\":1,\"keys\":[{\"key_id\":\"expired\",\"public_key_b64\":\"$THROWAWAY_PUBLIC_KEY\",\"not_before\":\"2020-01-01T00:00:00Z\",\"not_after\":\"2021-01-01T00:00:00Z\"}]}" expect_refused "a production release whose only trust key expired" v1.2.3 false
+
+TEST_TRUST=$EMPTY_TRUST new_workspace
+TEST_CHANNEL=staging prepare v1.2.3-staging.2 false >/dev/null || fail "a staging release with an empty update trust was refused"
+TEST_TRUST=$EMPTY_TRUST new_workspace
+TEST_CHANNEL=develop prepare v1.2.3-develop.3 false >/dev/null || fail "a develop release with an empty update trust was refused"
+TEST_TRUST=$EMPTY_TRUST TEST_RELEASE_VERSION=9.9.9 new_workspace
+TEST_CHANNEL=production prepare v0.0.0 true >/dev/null || fail "a snapshot was held to the release gates"
+new_workspace
+prepare v1.2.3 false >/dev/null || fail "a production release with a provisioned trust was refused"
+
+TEST_JOB_IMAGE=absent expect_refused "a release without a published job image" v1.2.3 false
+TEST_JOB_IMAGE=ghcr.io/acme/runner-job:v1.2.3 expect_refused "a release whose job image is pinned only by tag" v1.2.3 false
+TEST_JOB_IMAGE=unpublished-snapshot expect_refused "a release carrying the snapshot placeholder" v1.2.3 false
+TEST_JOB_IMAGE=absent new_workspace
+TEST_CHANNEL=develop prepare v0.0.0 true >/dev/null || fail "a snapshot without a published job image was refused"
+[ "$(cat "$TEST_ROOT/work/.release/job-image.txt")" = unpublished-snapshot ] || fail "a snapshot did not write the job image placeholder"
 
 new_workspace
 mkdir -p "$TEST_ROOT/work/.release"

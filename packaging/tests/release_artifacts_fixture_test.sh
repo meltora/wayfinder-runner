@@ -55,6 +55,8 @@ build_fixture() {
         printf '%s  %s\n' "$(sha "$archive")" "$(basename "$archive")" >> "$dist/checksums.txt"
     done
     printf '%s  install.sh\n' "$(sha "$fixture/.release/install.sh")" >> "$dist/checksums.txt"
+    printf '%s\n' "${FIXTURE_JOB_IMAGE-ghcr.io/acme/runner-job@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}" > "$fixture/.release/job-image.txt"
+    printf '%s  job-image.txt\n' "$(sha "$fixture/.release/job-image.txt")" >> "$dist/checksums.txt"
 }
 
 run_check() {
@@ -99,5 +101,31 @@ make_archive "$fixture/dist/our-runner_1.2.3_linux_amd64.tar.gz" \
     packaging/systemd/our-runner-updater.socket packaging/tmpfiles/our-runner-updater.conf \
     packaging/updater.yaml packaging/update-trust.json config.example.yaml README.md
 expect_fail "$fixture" "agentpack inside the runner install archive" "Linux archive unexpectedly contains agentpack"
+
+build_fixture "$fixture"
+rm "$fixture/.release/job-image.txt"
+expect_fail "$fixture" "missing job image reference" "job-image.txt was not produced"
+
+for unpinned in 'ghcr.io/acme/runner-job:v1.2.3' 'ghcr.io/acme/runner-job@sha256:abc' 'unpublished-snapshot' 'docker.io/acme/runner-job@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'; do
+    FIXTURE_JOB_IMAGE=$unpinned build_fixture "$fixture"
+    expect_fail "$fixture" "unpinned job image $unpinned" "job-image.txt must hold one ghcr.io reference pinned by sha256 digest"
+done
+
+FIXTURE_JOB_IMAGE=unpublished-snapshot build_fixture "$fixture"
+(cd "$fixture" && sh "$CHECK" dist snapshot) > "$WORK/out.log" 2>&1 || \
+    fail "a snapshot with the job image placeholder failed: $(cat "$WORK/out.log")"
+FIXTURE_JOB_IMAGE=ghcr.io/acme/runner-job:v1.2.3 build_fixture "$fixture"
+if (cd "$fixture" && sh "$CHECK" dist snapshot) > "$WORK/out.log" 2>&1; then
+    fail "a snapshot with a tag-only job image passed"
+fi
+
+build_fixture "$fixture"
+grep -v ' job-image.txt$' "$fixture/dist/checksums.txt" > "$WORK/checksums.txt"
+cp "$WORK/checksums.txt" "$fixture/dist/checksums.txt"
+expect_fail "$fixture" "job image outside checksums" "checksums.txt must contain exactly one job-image.txt entry"
+
+build_fixture "$fixture"
+printf '%s\n' 'ghcr.io/acme/runner-job@sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210' > "$fixture/.release/job-image.txt"
+expect_fail "$fixture" "job image changed after checksumming" "job-image.txt checksum does not match the signed manifest input"
 
 printf 'release artifact fixture tests passed\n'

@@ -31,18 +31,20 @@ Coverage and the packaging checks are run separately:
 ```sh
 go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh
+sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh
 sh packaging/tests/systemd_test.sh
 sh packaging/tests/prepare_release_test.sh
+sh packaging/tests/release_artifacts_fixture_test.sh
+sh packaging/tests/fresh_host_doctor_test.sh
 docker run --rm -v "$PWD:/work" -w /work \
   -e OUR_RUNNER_RELEASE_REPOSITORY=example/app-runner -e OUR_RUNNER_CHANNEL=develop -e OUR_RUNNER_CONTROL_PLANE_URL=https://control.example.test \
   goreleaser/goreleaser:v2.17.1 check
 docker run --rm -v "$PWD:/work" -w /work \
   -e OUR_RUNNER_RELEASE_REPOSITORY=example/app-runner -e OUR_RUNNER_CHANNEL=develop -e OUR_RUNNER_CONTROL_PLANE_URL=https://control.example.test \
   goreleaser/goreleaser:v2.17.1 release --snapshot --clean --skip=publish,sign,sbom
-sh packaging/tests/release_artifacts_test.sh
+sh packaging/tests/release_artifacts_test.sh dist snapshot
 ./dist/our-runner-darwin-development_darwin_arm64_v8.0/our-runner version
 ```
 

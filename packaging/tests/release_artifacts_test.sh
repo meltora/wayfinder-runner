@@ -2,6 +2,11 @@
 set -eu
 
 DIST_DIR=${1:-dist}
+MODE=${2:-release}
+case "$MODE" in
+    release|snapshot) ;;
+    *) printf 'usage: %s [DIST_DIR] [release|snapshot]\n' "$0" >&2; exit 2 ;;
+esac
 
 fail() {
     printf 'release artifact test failed: %s\n' "$*" >&2
@@ -88,5 +93,23 @@ else
     shasum -a 256 .release/install.sh | awk '{print $1}'
 fi)
 [ "$actual" = "$expected" ] || fail "install.sh checksum does not match the signed manifest input"
+
+[ -f .release/job-image.txt ] && [ ! -L .release/job-image.txt ] || fail "job-image.txt was not produced"
+if [ "$MODE" = snapshot ] && [ "$(cat .release/job-image.txt)" = unpublished-snapshot ]; then
+    :
+else
+    [ "$(wc -l < .release/job-image.txt | tr -d '[:space:]')" -eq 1 ] && \
+        grep -Eqx 'ghcr\.io/[a-z0-9]([a-z0-9._-]*[a-z0-9])?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}' .release/job-image.txt || \
+        fail "job-image.txt must hold one ghcr.io reference pinned by sha256 digest"
+fi
+[ "$(awk '$2 == "job-image.txt" { count++ } END { print count + 0 }' "$DIST_DIR/checksums.txt")" -eq 1 ] || \
+    fail "checksums.txt must contain exactly one job-image.txt entry"
+expected=$(awk '$2 == "job-image.txt" { print $1 }' "$DIST_DIR/checksums.txt")
+actual=$(if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum .release/job-image.txt | awk '{print $1}'
+else
+    shasum -a 256 .release/job-image.txt | awk '{print $1}'
+fi)
+[ "$actual" = "$expected" ] || fail "job-image.txt checksum does not match the signed manifest input"
 
 printf 'release artifact tests passed\n'

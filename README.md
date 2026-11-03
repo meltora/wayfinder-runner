@@ -677,15 +677,39 @@ sudo -u our-runner /usr/bin/our-runner enroll \
   --url https://control-plane.example.com
 sudo rm /var/lib/our-runner/enrollment-code
 
-sudo -u our-runner /usr/bin/our-runner doctor \
-  --config /etc/our-runner/config.yaml
+runner_uid=$(id -u our-runner)
+sudo -u our-runner env XDG_RUNTIME_DIR=/run/user/$runner_uid \
+  DOCKER_HOST=unix:///run/user/$runner_uid/docker.sock \
+  /usr/bin/our-runner doctor --config /etc/our-runner/config.yaml
 sudo systemctl start our-runner
 sudo systemctl status our-runner
 ```
 
-For a manually configured rootless daemon, confirm the service's `DOCKER_HOST`
-matches the socket created for the `our-runner` UID. Before enabling restricted
-network access, create the egress-enforced network and apply the discovery
+`sudo -u` does not set the runner user's runtime directory, so without these
+two variables `doctor` reaches the system Docker socket and reports
+`docker-mode` as rootful or unavailable. The service sets the same
+`DOCKER_HOST` in its unit. For a manually configured rootless daemon, confirm
+the service's `DOCKER_HOST` matches the socket created for the `our-runner` UID.
+
+To prove the release path on a fresh Ubuntu host, download the release
+`install.sh`, then run `packaging/scripts/fresh-host-doctor.sh` as root:
+
+```sh
+sudo sh packaging/scripts/fresh-host-doctor.sh --version v0.3.0 \
+  --installer ./install.sh --installer-sha256 <published install.sh SHA-256> \
+  --url https://control-plane.example.com --enrollment-code-file ./code
+```
+
+It requires Ubuntu and the rootless prerequisites (`docker-ce`,
+`docker-ce-rootless-extras`, `uidmap`, `systemd-container`), checks the
+installer SHA-256, installs the pinned version with rootless Docker setup,
+checks that the installed binary is that release build, enrolls with the
+one-time code, and runs `doctor` with the runner user's rootless socket
+(`--state-dir /var/lib/our-runner` by default, or `--config FILE`). It passes
+only when `doctor` exits 0, prints no `[FAIL]` line, and reports
+`docker-mode: rootless docker`. Warnings are listed but do not fail it.
+
+Before enabling restricted network access, create the egress-enforced network and apply the discovery
 labels checked by the runner:
 
 ```text
@@ -1219,11 +1243,28 @@ repository rename needs no file change. A rename does change the signing identit
 `https://github.com/<repository>/.github/workflows/release.yml@refs/tags/<tag>`,
 so releases signed under the old repository name fail verification once the
 installer points at the new name. This fails closed (nothing is installed);
-re-release those versions under the new name instead of weakening the check. With the `publish_job_image` input, a
-manual run also builds the job image with `packaging/job-image/build.sh`,
+re-release those versions under the new name instead of weakening the check.
+
+Before anything is built, the release job refuses a tag whose commit is not on
+`main`, then runs `sh scripts/check.sh format vet test` on the tagged commit.
+Every release then builds the job image with `packaging/job-image/build.sh`,
 pushes it to `ghcr.io/<owner>/<repository>-job:<tag>`, signs the digest with
-Cosign and prints the digest-pinned reference for the dashboard's
-`RUNNER_DEFAULT_JOB_IMAGE`.
+Cosign, verifies that signature against the release workflow identity, and
+writes the digest-pinned reference to `job-image.txt`. GoReleaser lists
+`job-image.txt` in `checksums.txt`, so the reference is covered by the same
+Cosign bundle as the archives. Put that reference in the dashboard's
+`RUNNER_DEFAULT_JOB_IMAGE`. The job image is built for the release runner's
+architecture (linux/amd64) only.
+
+`packaging/release-version` holds the next release version (`X.Y.Z`). The
+source default of `internal/daemon.Version` must equal it (a unit test checks
+this), and `prepare-release.sh` refuses a tag whose `X.Y.Z` core differs from
+it. A production tag also needs a provisioned `packaging/update-trust.json`:
+`go run ./cmd/update-manifest check-trust packaging/update-trust.json` must
+pass, so at least `signature_threshold` P-256 keys are currently valid.
+Staging and develop tags accept the empty file, which keeps automatic updates
+disabled. Snapshot builds skip these gates and write the placeholder
+`unpublished-snapshot` to `.release/job-image.txt`.
 
 Build the job image locally (nothing is pushed without `--push`):
 
@@ -1243,11 +1284,13 @@ pinned once in the script. `docs/TESTING.md` describes each subcommand.
 sh scripts/check.sh
 go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh
+sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh
 sh packaging/tests/systemd_test.sh
 sh packaging/tests/prepare_release_test.sh
+sh packaging/tests/release_artifacts_fixture_test.sh
+sh packaging/tests/fresh_host_doctor_test.sh
 ```
 
 `doctor --config` validates the identity, Docker/rootless boundary, restricted

@@ -51,6 +51,33 @@ if [ "$SNAPSHOT" != true ]; then
         fail "release tag $TAG must be vX.Y.Z, vX.Y.Z-staging.N or vX.Y.Z-develop.N"
     [ "$expected" = "$CHANNEL" ] || \
         fail "release tag $TAG belongs to the $expected channel, not $CHANNEL"
+    [ -f packaging/release-version ] && [ ! -L packaging/release-version ] || \
+        fail "packaging/release-version is missing"
+    declared=$(cat packaging/release-version)
+    printf '%s\n' "$declared" | grep -Eqx '(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)' && \
+        [ "$(wc -l < packaging/release-version | tr -d '[:space:]')" -eq 1 ] || \
+        fail "packaging/release-version must hold one X.Y.Z line"
+    core=${TAG#v}
+    core=${core%%-*}
+    [ "$core" = "$declared" ] || \
+        fail "release tag $TAG does not match the declared release version $declared"
+    SCRIPT_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
+    command -v go >/dev/null 2>&1 || fail "go is required to check the update trust"
+    if [ "$CHANNEL" = production ]; then
+        go -C "$SCRIPT_ROOT" run ./cmd/update-manifest check-trust "$PWD/packaging/update-trust.json" || \
+            fail "a production release requires a provisioned packaging/update-trust.json"
+    else
+        go -C "$SCRIPT_ROOT" run ./cmd/update-manifest check-trust --allow-empty "$PWD/packaging/update-trust.json" || \
+            fail "packaging/update-trust.json is invalid"
+    fi
+    [ -f .release/job-image.txt ] && [ ! -L .release/job-image.txt ] || \
+        fail "the job image must be published before the release; .release/job-image.txt is missing"
+    [ "$(wc -l < .release/job-image.txt | tr -d '[:space:]')" -eq 1 ] && \
+        grep -Eqx 'ghcr\.io/[a-z0-9]([a-z0-9._-]*[a-z0-9])?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}' .release/job-image.txt || \
+        fail ".release/job-image.txt must hold one ghcr.io reference pinned by sha256 digest"
+elif [ ! -e .release/job-image.txt ]; then
+    mkdir -p .release
+    printf '%s\n' unpublished-snapshot > .release/job-image.txt
 fi
 
 mkdir -p .release

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -211,39 +213,60 @@ func LoadTrustFile(path string, requireRoot bool) (updatecatalog.TrustPolicy, er
 	if err != nil {
 		return updatecatalog.TrustPolicy{}, err
 	}
+	return ParseTrustDocument(raw)
+}
+
+var (
+	ErrTrustEmpty   = errors.New("update trust has no keys")
+	ErrTrustInvalid = errors.New("invalid update trust")
+)
+
+func ParseTrustDocument(raw []byte) (updatecatalog.TrustPolicy, error) {
+	if len(raw) == 0 || len(raw) > 256<<10 {
+		return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: document size is out of bounds", ErrTrustInvalid)
+	}
 	if err := rejectDuplicateJSON(raw); err != nil {
-		return updatecatalog.TrustPolicy{}, err
+		return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: %v", ErrTrustInvalid, err)
 	}
 	var doc trustDocument
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&doc); err != nil {
-		return updatecatalog.TrustPolicy{}, err
+		return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: %v", ErrTrustInvalid, err)
 	}
 	if dec.Decode(&struct{}{}) != io.EOF {
-		return updatecatalog.TrustPolicy{}, fmt.Errorf("trust file has trailing data")
+		return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: trailing data", ErrTrustInvalid)
 	}
-	if doc.SchemaVersion != 1 || doc.SignatureThreshold < 1 || doc.SignatureThreshold > len(doc.Keys) {
-		return updatecatalog.TrustPolicy{}, fmt.Errorf("invalid trust policy")
+	if doc.SchemaVersion != 1 || doc.SignatureThreshold < 1 {
+		return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: schema or threshold", ErrTrustInvalid)
+	}
+	if len(doc.Keys) == 0 {
+		return updatecatalog.TrustPolicy{}, ErrTrustEmpty
+	}
+	if doc.SignatureThreshold > len(doc.Keys) || len(doc.Keys) > 32 {
+		return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: threshold exceeds the trusted keys", ErrTrustInvalid)
 	}
 	seen := map[string]bool{}
 	keys := make([]updatecatalog.TrustedKey, 0, len(doc.Keys))
 	for _, k := range doc.Keys {
 		if !safeComponent(k.KeyID) || seen[k.KeyID] {
-			return updatecatalog.TrustPolicy{}, fmt.Errorf("invalid or duplicate key id")
+			return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: invalid or duplicate key id", ErrTrustInvalid)
 		}
 		seen[k.KeyID] = true
 		der, err := base64.StdEncoding.Strict().DecodeString(k.PublicKeyB64)
 		if err != nil {
-			return updatecatalog.TrustPolicy{}, err
+			return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: key %s encoding", ErrTrustInvalid, k.KeyID)
 		}
 		parsed, err := x509.ParsePKIXPublicKey(der)
 		if err != nil {
-			return updatecatalog.TrustPolicy{}, err
+			return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: key %s is not a public key", ErrTrustInvalid, k.KeyID)
 		}
 		pub, ok := parsed.(*ecdsa.PublicKey)
-		if !ok {
-			return updatecatalog.TrustPolicy{}, fmt.Errorf("trusted key must be ECDSA")
+		if !ok || pub.Curve != elliptic.P256() {
+			return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: key %s must be ECDSA P-256", ErrTrustInvalid, k.KeyID)
+		}
+		if k.NotBefore.IsZero() || k.NotAfter.IsZero() || !k.NotAfter.After(k.NotBefore) {
+			return updatecatalog.TrustPolicy{}, fmt.Errorf("%w: key %s has an invalid validity window", ErrTrustInvalid, k.KeyID)
 		}
 		keys = append(keys, updatecatalog.TrustedKey{KeyID: k.KeyID, PublicKey: pub, NotBefore: k.NotBefore, NotAfter: k.NotAfter, RevokedAt: k.RevokedAt})
 	}

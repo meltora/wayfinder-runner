@@ -27,13 +27,15 @@ func main() {
 
 func run(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: update-manifest generate|assemble [flags]")
+		return fmt.Errorf("usage: update-manifest generate|assemble|check-trust [flags]")
 	}
 	switch args[0] {
 	case "generate":
 		return runGenerate(args[1:], stdout)
 	case "assemble":
 		return runAssemble(args[1:], stdout)
+	case "check-trust":
+		return runCheckTrust(args[1:], stdout)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}

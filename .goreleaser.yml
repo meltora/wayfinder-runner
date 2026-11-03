@@ -78,6 +78,8 @@ checksum:
   extra_files:
     - glob: .release/install.sh
       name_template: install.sh
+    - glob: .release/job-image.txt
+      name_template: job-image.txt
 
 sboms:
   - artifacts: archive
@@ -94,3 +96,5 @@ release:
   extra_files:
     - glob: .release/install.sh
       name_template: install.sh
+    - glob: .release/job-image.txt
+      name_template: job-image.txt
