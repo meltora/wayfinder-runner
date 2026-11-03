@@ -23,7 +23,7 @@ func TestQueuedArtifactRetryPreservesOriginalAuthorityAfterLeaseRelease(t *testi
 	agentAuthority := v1.AgentRunAuthority{SchemaVersion: 1, AgentRunID: "agent-run-1", StepRunID: "step-run-1", StepSequence: 3}
 	jr.job.AgentRunAuthority = &agentAuthority
 	var requests []http.Header
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	jr.d.uploader = newInMemoryArtifactUploader(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Header.Clone())
 		if r.URL.Path != "/v1/artifacts/j1/a1/result.txt" || r.Method != http.MethodPut {
 			t.Errorf("unexpected upload route: %s %s", r.Method, r.URL.Path)
@@ -38,8 +38,6 @@ func TestQueuedArtifactRetryPreservesOriginalAuthorityAfterLeaseRelease(t *testi
 		}
 		writeArtifactReceipt(w, r)
 	}))
-	defer server.Close()
-	jr.d.uploader = newArtifactUploader(server.URL)
 	if err := os.WriteFile(filepath.Join(jr.workDir, "result.txt"), []byte("artifact body"), 0o600); err != nil {
 		t.Fatal(err)
 	}

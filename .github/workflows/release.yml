@@ -82,11 +82,28 @@ jobs:
           OUR_RUNNER_RELEASE_REPOSITORY: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: sh packaging/scripts/prepare-release.sh "$TAG" false preflight
+      - name: Refuse a tag that already has a release or a job image
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          owner=$(printf '%s' "$REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          name=$(printf '%s' "$REPOSITORY_NAME" | tr '[:upper:]' '[:lower:]')
+          repository="ghcr.io/$owner/$name-job"
+          sh packaging/scripts/refuse-published-tag.sh "$TAG" "$repository"
+          echo "JOB_IMAGE_REPOSITORY=$repository" >> "$GITHUB_ENV"
       - name: Run the format, vet and test gates on the tagged commit
         run: sh scripts/check.sh format vet test
       - name: Run packaging tests
         run: |
           sh packaging/tests/prepare_release_test.sh
+          sh packaging/tests/published_tag_test.sh
           sh packaging/tests/bootstrap_test.sh
           sh packaging/tests/systemd_test.sh
           sh packaging/tests/release_artifacts_fixture_test.sh
@@ -96,14 +113,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REGISTRY_USER: ${{ github.actor }}
-          REPOSITORY_OWNER: ${{ github.repository_owner }}
-          REPOSITORY_NAME: ${{ github.event.repository.name }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          owner=$(printf '%s' "$REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
-          name=$(printf '%s' "$REPOSITORY_NAME" | tr '[:upper:]' '[:lower:]')
-          image="ghcr.io/$owner/$name-job:$TAG"
+          [[ "$JOB_IMAGE_REPOSITORY" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]] || { echo "the job image repository was not checked" >&2; exit 1; }
+          image="$JOB_IMAGE_REPOSITORY:$TAG"
           printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
           sh packaging/job-image/build.sh "$image" --push | tee job-image.log
           pinned=$(sed -n 's/^pinned: //p' job-image.log)

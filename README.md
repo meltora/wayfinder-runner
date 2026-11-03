@@ -1251,7 +1251,16 @@ Before anything is built, the release job refuses a tag whose commit is not on
 `main`, runs `sh packaging/scripts/prepare-release.sh <tag> false preflight`
 (the tag, channel, release-version and update-trust gates below, without the
 job image), then runs `sh scripts/check.sh format vet test` on the tagged
-commit. A tag that fails these gates publishes nothing. Every release then builds the job image with `packaging/job-image/build.sh`,
+commit. A tag that fails these gates publishes nothing. The job also runs
+`packaging/scripts/refuse-published-tag.sh`, which refuses the tag when it
+already has a GitHub release (draft or published) or when
+`ghcr.io/<owner>/<repository>-job:<tag>` already exists, and refuses when it
+cannot tell. A rerun on an existing tag therefore never pushes and signs a
+second digest under that tag. To recover from a run that failed after the push,
+cut the next tag (for example `-staging.N+1`, or the next patch version with a
+`packaging/release-version` change), or, with the owner's approval, delete the
+draft release and the job image version with its signature before rerunning.
+Every release then builds the job image with `packaging/job-image/build.sh`,
 pushes it to `ghcr.io/<owner>/<repository>-job:<tag>`, signs the digest with
 Cosign, verifies that signature against the release workflow identity, and
 writes the digest-pinned reference to `job-image.txt`. GoReleaser lists
@@ -1288,11 +1297,12 @@ pinned once in the script. `docs/TESTING.md` describes each subcommand.
 sh scripts/check.sh
 go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh
+sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh packaging/scripts/refuse-published-tag.sh packaging/tests/published_tag_test.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh
 sh packaging/tests/systemd_test.sh
 sh packaging/tests/prepare_release_test.sh
+sh packaging/tests/published_tag_test.sh
 sh packaging/tests/release_artifacts_fixture_test.sh
 sh packaging/tests/fresh_host_doctor_test.sh
 ```

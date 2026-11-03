@@ -103,9 +103,7 @@ func TestUploadBatchRetiresDefinitivelyRejectedUploadAndContinues(t *testing.T) 
 	jr, cap := testJobRunner(t)
 	ids := queueTestArtifactUploads(t, jr, 2)
 	server := &scriptedUploadServer{statuses: map[string]int{ids[0]: http.StatusForbidden}}
-	httpServer := httptest.NewServer(server)
-	defer httpServer.Close()
-	jr.d.uploader = newArtifactUploader(httpServer.URL)
+	jr.d.uploader = newInMemoryArtifactUploader(t, server)
 
 	if err := jr.d.processArtifactUploadBatch(context.Background()); err != nil {
 		t.Fatalf("batch=%v", err)
@@ -129,9 +127,7 @@ func TestUploadBatchTransientRecordFailureDoesNotStarveLaterRecords(t *testing.T
 	jr, cap := testJobRunner(t)
 	ids := queueTestArtifactUploads(t, jr, 3)
 	server := &scriptedUploadServer{statuses: map[string]int{ids[0]: http.StatusInternalServerError}}
-	httpServer := httptest.NewServer(server)
-	defer httpServer.Close()
-	jr.d.uploader = newArtifactUploader(httpServer.URL)
+	jr.d.uploader = newInMemoryArtifactUploader(t, server)
 
 	err := jr.d.processArtifactUploadBatch(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "status 500") {
@@ -151,9 +147,7 @@ func TestUploadBatchStopsOnControlPlaneBackpressure(t *testing.T) {
 			jr, cap := testJobRunner(t)
 			ids := queueTestArtifactUploads(t, jr, 2)
 			server := &scriptedUploadServer{statuses: map[string]int{ids[0]: status}}
-			httpServer := httptest.NewServer(server)
-			defer httpServer.Close()
-			jr.d.uploader = newArtifactUploader(httpServer.URL)
+			jr.d.uploader = newInMemoryArtifactUploader(t, server)
 
 			if err := jr.d.processArtifactUploadBatch(context.Background()); err == nil {
 				t.Fatal("backpressure accepted")

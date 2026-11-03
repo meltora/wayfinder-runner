@@ -22,7 +22,7 @@ func TestQueuedArtifactUploadsWithFencingAndReceiptWithoutMetadataEvent(t *testi
 	authority := v1.AgentRunAuthority{SchemaVersion: 1, AgentRunID: "agent-run-1", StepRunID: "step-run-1", StepSequence: 1}
 	jr.job.AgentRunAuthority = &authority
 	var uploads int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	jr.d.uploader = newInMemoryArtifactUploader(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		uploads++
 		if r.Method != http.MethodPut || r.Header.Get("X-Fencing-Token") != "7" {
 			t.Errorf("upload request = %s fencing=%q", r.Method, r.Header.Get("X-Fencing-Token"))
@@ -33,8 +33,6 @@ func TestQueuedArtifactUploadsWithFencingAndReceiptWithoutMetadataEvent(t *testi
 		}
 		writeArtifactReceipt(w, r)
 	}))
-	defer server.Close()
-	jr.d.uploader = newArtifactUploader(server.URL)
 
 	source := filepath.Join(jr.workDir, "result.txt")
 	if err := os.WriteFile(source, []byte("artifact body"), 0o600); err != nil {

@@ -163,5 +163,15 @@ push_line=$(grep -n 'packaging/job-image/build.sh .*--push' "$WORKFLOW" | head -
 [ -n "$preflight_line" ] || fail "release.yml does not run the release preflight"
 [ -n "$push_line" ] || fail "release.yml does not push the job image"
 [ "$preflight_line" -lt "$push_line" ] || fail "release.yml pushes the job image before the release preflight"
+preflight_step=$(awk '
+    /^      - name:/ { if (found) exit; block = "" }
+    { block = block $0 "\n" }
+    index($0, "prepare-release.sh \"$TAG\" false preflight") { found = 1 }
+    END { if (found) printf "%s", block }
+' "$WORKFLOW")
+[ -n "$preflight_step" ] || fail "release.yml has no preflight step"
+if printf '%s\n' "$preflight_step" | grep -Eq '^        (if|continue-on-error):'; then
+    fail "the release.yml preflight step can be skipped or ignored"
+fi
 
 printf 'prepare release tests passed\n'
