@@ -78,6 +78,7 @@ jobs:
           sh packaging/tests/prepare_release_test.sh
           sh packaging/tests/bootstrap_test.sh
           sh packaging/tests/systemd_test.sh
+          sh packaging/tests/release_artifacts_fixture_test.sh
       - name: Build, sign, and draft release
         uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
         with:

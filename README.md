@@ -1182,6 +1182,14 @@ its Sigstore bundle separately, verify them, and execute the local script.
 Package and self-update signing keys should be separated and protected by the
 release system. Operators must test rollback in their environment.
 
+Each release also ships the Agent Pack CLI as
+`agentpack_<version>_<os>_<arch>.tar.gz` for `linux` and `darwin` on `amd64`
+and `arm64`. Each archive contains exactly the `agentpack` binary, and
+`checksums.txt` covers every archive, so the same Sigstore bundle verifies it.
+`packaging/tests/release_artifacts_test.sh` fails when any of the four is
+missing, holds anything else, or is absent from `checksums.txt`. The runner
+archives do not contain `agentpack`.
+
 ## Release channels
 
 A release belongs to exactly one channel, chosen by its tag:

@@ -61,7 +61,23 @@ for minimal_archive in "$update_archive" "$update_archive_arm64"; do
         fail "minimal update archive must contain exactly our-runner and our-runner-updater: $minimal_archive"
 done
 
+for forbidden in agentpack; do
+    if archive_contains "$linux_archive" "$forbidden"; then
+        fail "Linux archive unexpectedly contains $forbidden"
+    fi
+done
+
 [ -f "$DIST_DIR/checksums.txt" ] || fail "checksums.txt was not produced"
+
+for platform in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+    agentpack_archive=$(find_archive "agentpack_*_$platform.tar.gz")
+    agentpack_entries=$(tar -tzf "$agentpack_archive" | sed 's#^\./##' | sed '/^$/d')
+    [ "$agentpack_entries" = agentpack ] || \
+        fail "agentpack archive must contain exactly agentpack: $agentpack_archive"
+    agentpack_name=$(basename "$agentpack_archive")
+    [ "$(awk -v name="$agentpack_name" '$2 == name { count++ } END { print count + 0 }' "$DIST_DIR/checksums.txt")" -eq 1 ] || \
+        fail "checksums.txt does not list $agentpack_name"
+done
 [ "$(awk '$2 == "install.sh" { count++ } END { print count + 0 }' "$DIST_DIR/checksums.txt")" -eq 1 ] || \
     fail "checksums.txt must contain exactly one install.sh entry"
 

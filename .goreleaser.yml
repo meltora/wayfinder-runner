@@ -30,6 +30,14 @@ builds:
     goarch: [amd64, arm64]
     ldflags:
       - -s -w -X main.version={{.Version}}
+  - id: agentpack
+    main: ./cmd/agentpack
+    binary: agentpack
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
 
 archives:
   - id: linux
@@ -55,6 +63,13 @@ archives:
     formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}-update_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - none*
+  - id: agentpack
+    ids: [agentpack]
+    formats: [tar.gz]
+    name_template: >-
+      agentpack_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     files:
       - none*
 
