@@ -29,7 +29,7 @@ stub() {
 
 stub id 'case "$*" in "-u") printf "%s\n" "${FRESH_TEST_EUID:-0}" ;; "-u our-runner") printf "%s\n" 991 ;; *) exit 1 ;; esac'
 stub install 'printf "install %s\n" "$*" >> "$FRESH_TEST_LOG"'
-stub systemctl 'case "$*" in "is-enabled our-runner.service") printf "enabled\n" ;; "is-active our-runner-updater.socket") printf "active\n" ;; *) exit 1 ;; esac'
+stub systemctl 'case "$*" in "is-enabled our-runner.service") printf "%s\n" "${FRESH_TEST_SERVICE_STATE:-enabled}" ;; "is-active our-runner-updater.socket") printf "%s\n" "${FRESH_TEST_SOCKET_STATE:-active}" ;; *) exit 1 ;; esac'
 for tool in curl tar machinectl loginctl dockerd-rootless-setuptool.sh newuidmap newgidmap docker; do
     stub "$tool" 'exit 0'
 done
@@ -39,6 +39,7 @@ printf 'runuser %s\n' "$*" >> "$FRESH_TEST_LOG"
 [ "$1" = -u ] && [ "$2" = our-runner ] && [ "$3" = -- ] || exit 97
 case "$*" in
     *" version") printf 'our-runner %s\nchannel: %s\n' "${FRESH_TEST_INSTALLED_VERSION:-1.2.3}" "${FRESH_TEST_CHANNEL:-production}" ;;
+    *" enroll "*) if [ "${FRESH_TEST_INTERRUPT_ENROLL:-0}" = 1 ]; then kill -TERM "$PPID"; fi; exit 0 ;;
     *" doctor "*) cat "$FRESH_TEST_DOCTOR_OUTPUT"; exit "${FRESH_TEST_DOCTOR_STATUS:-0}" ;;
     *) exit 0 ;;
 esac
@@ -49,6 +50,7 @@ INSTALLER="$TEST_ROOT/install.sh"
 cat > "$INSTALLER" <<'EOF'
 #!/bin/sh
 printf 'installer version=%s rootless=%s\n' "$OUR_RUNNER_VERSION" "$OUR_RUNNER_SETUP_ROOTLESS_DOCKER" >> "$FRESH_TEST_LOG"
+printf 'installer path=%s\n' "$0" >> "$FRESH_TEST_LOG"
 EOF
 INSTALLER_SHA=$(sha256sum "$INSTALLER" | awk '{print $1}')
 CODE="$TEST_ROOT/enrollment-code"
@@ -74,6 +76,8 @@ run_check() {
     env -i PATH="$FAKE_BIN:$SYS_BIN" FRESH_TEST_LOG="$LOG" FRESH_TEST_DOCTOR_OUTPUT="$DOCTOR_OUTPUT" \
         FRESH_TEST_DOCTOR_STATUS="${DOCTOR_STATUS:-0}" FRESH_TEST_EUID="${EUID_OVERRIDE:-0}" \
         FRESH_TEST_INSTALLED_VERSION="${INSTALLED_VERSION:-1.2.3}" FRESH_TEST_CHANNEL="${INSTALLED_CHANNEL:-production}" \
+        FRESH_TEST_SERVICE_STATE="${SERVICE_STATE:-enabled}" FRESH_TEST_SOCKET_STATE="${SOCKET_STATE:-active}" \
+        FRESH_TEST_INTERRUPT_ENROLL="${INTERRUPT_ENROLL:-0}" \
         FRESH_HOST_OS_RELEASE="$OS_RELEASE" \
         sh "$CHECK" --version "${VERSION_ARG:-v1.2.3}" --installer "$INSTALLER" \
         --installer-sha256 "${SHA_ARG:-$INSTALLER_SHA}" --url "${URL_ARG:-https://control.example.test}" \
@@ -108,9 +112,29 @@ grep -Fq 'enroll --state-dir /var/lib/our-runner --code-file /var/lib/our-runner
 grep -Fq 'XDG_RUNTIME_DIR=/run/user/991 DOCKER_HOST=unix:///run/user/991/docker.sock /opt/our-runner/current/our-runner doctor --state-dir /var/lib/our-runner' "$LOG" || \
     fail "doctor did not use the runner user's rootless Docker socket: $(cat "$LOG")"
 grep -Fq 'rm -f /var/lib/our-runner/enrollment-code' "$LOG" || fail "the enrollment code was not removed"
-installer_line=$(grep -n '^installer ' "$LOG" | cut -d: -f1)
+installer_line=$(grep -n '^installer version=' "$LOG" | cut -d: -f1)
 doctor_line=$(grep -n ' doctor ' "$LOG" | cut -d: -f1)
 [ "$installer_line" -lt "$doctor_line" ] || fail "doctor ran before the installer"
+executed=$(sed -n 's/^installer path=//p' "$LOG")
+[ -n "$executed" ] && [ "$executed" != "$INSTALLER" ] || fail "the installer ran from the operator path, not a private copy: $executed"
+[ ! -e "$executed" ] || fail "the private installer copy was left behind: $executed"
+
+reset
+SERVICE_STATE=disabled expect_refused "a service that the installer did not enable" "our-runner.service is not enabled"
+grep -q ' enroll ' "$LOG" && fail "enrollment ran although the service is not enabled"
+
+reset
+SOCKET_STATE=inactive expect_refused "an updater socket that is not active" "our-runner-updater.socket is not active"
+grep -q ' enroll ' "$LOG" && fail "enrollment ran although the updater socket is not active"
+
+reset
+if INTERRUPT_ENROLL=1 run_check; then
+    fail "an interrupted enrollment was reported green"
+fi
+grep -Fq 'rm -f /var/lib/our-runner/enrollment-code' "$LOG" || fail "an interrupted run left the enrollment code copy: $(cat "$LOG")"
+grep -q ' doctor ' "$LOG" && fail "doctor ran after an interrupted enrollment"
+interrupted=$(sed -n 's/^installer path=//p' "$LOG")
+[ ! -e "$interrupted" ] || fail "an interrupted run left the private installer copy: $interrupted"
 
 reset
 run_check --config /etc/our-runner/config.yaml || fail "--config run refused: $(cat "$TEST_ROOT/out")"

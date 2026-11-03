@@ -111,14 +111,57 @@ prepare v1.2.3 false >/dev/null || fail "a production release with a provisioned
 TEST_JOB_IMAGE=absent expect_refused "a release without a published job image" v1.2.3 false
 TEST_JOB_IMAGE=ghcr.io/acme/runner-job:v1.2.3 expect_refused "a release whose job image is pinned only by tag" v1.2.3 false
 TEST_JOB_IMAGE=unpublished-snapshot expect_refused "a release carrying the snapshot placeholder" v1.2.3 false
+TEST_JOB_IMAGE=ghcr.io/acme/runner-job@sha256:0123456789abcdef expect_refused "a release whose job image digest is short" v1.2.3 false
+TEST_JOB_IMAGE=docker.io/acme/runner-job@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef expect_refused "a release whose job image is outside GHCR" v1.2.3 false
 TEST_JOB_IMAGE=absent new_workspace
 TEST_CHANNEL=develop prepare v0.0.0 true >/dev/null || fail "a snapshot without a published job image was refused"
 [ "$(cat "$TEST_ROOT/work/.release/job-image.txt")" = unpublished-snapshot ] || fail "a snapshot did not write the job image placeholder"
+
+expect_preflight_refused() {
+    description=$1
+    expected=$2
+    shift 2
+    new_workspace
+    if prepare "$@" preflight >"$TEST_ROOT/out" 2>&1; then
+        fail "preflight: $description was accepted"
+    fi
+    grep -Fq "$expected" "$TEST_ROOT/out" || fail "preflight: $description gave: $(cat "$TEST_ROOT/out")"
+    [ ! -e "$TEST_ROOT/work/.release/install.sh" ] || fail "preflight: $description wrote .release/install.sh"
+}
+
+expect_preflight_passes() {
+    description=$1
+    shift
+    new_workspace
+    prepare "$@" preflight >"$TEST_ROOT/out" 2>&1 || fail "preflight: $description was refused: $(cat "$TEST_ROOT/out")"
+    [ ! -e "$TEST_ROOT/work/.release/install.sh" ] || fail "preflight: $description wrote .release/install.sh"
+    [ ! -e "$TEST_ROOT/work/.release/job-image.txt" ] || fail "preflight: $description wrote .release/job-image.txt"
+}
+
+TEST_JOB_IMAGE=absent TEST_TRUST=$EMPTY_TRUST expect_preflight_refused "a production tag with an empty update trust" \
+    "a production release requires a provisioned packaging/update-trust.json" v1.2.3 false
+TEST_JOB_IMAGE=absent TEST_RELEASE_VERSION=1.2.4 expect_preflight_refused "a tag that differs from the declared release version" \
+    "does not match the declared release version 1.2.4" v1.2.3 false
+TEST_JOB_IMAGE=absent TEST_CHANNEL=develop expect_preflight_refused "a production tag on the develop channel" \
+    "belongs to the production channel, not develop" v1.2.3 false
+TEST_JOB_IMAGE=absent TEST_CHANNEL=production expect_preflight_refused "a snapshot" \
+    "preflight applies only to a release tag" v1.2.3 true
+TEST_JOB_IMAGE=absent expect_preflight_refused "an unknown phase" "unknown preparation phase" v1.2.3 false publish
+TEST_JOB_IMAGE=absent TEST_TRUST=$EMPTY_TRUST TEST_CHANNEL=staging expect_preflight_passes \
+    "a staging tag with an empty update trust and no job image yet" v1.2.3-staging.1 false
+TEST_JOB_IMAGE=absent expect_preflight_passes "a production tag with a provisioned trust and no job image yet" v1.2.3 false
 
 new_workspace
 mkdir -p "$TEST_ROOT/work/.release"
 printf 'stale\n' > "$TEST_ROOT/work/.release/install.sh"
 TEST_CHANNEL=nightly prepare v1.2.3 false >/dev/null 2>&1 && fail "refused input was accepted over a stale installer"
 [ ! -e "$TEST_ROOT/work/.release/install.sh" ] || fail "a stale installer survived a refused preparation"
+
+WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
+preflight_line=$(grep -n 'prepare-release.sh "$TAG" false preflight' "$WORKFLOW" | head -n 1 | cut -d: -f1)
+push_line=$(grep -n 'packaging/job-image/build.sh .*--push' "$WORKFLOW" | head -n 1 | cut -d: -f1)
+[ -n "$preflight_line" ] || fail "release.yml does not run the release preflight"
+[ -n "$push_line" ] || fail "release.yml does not push the job image"
+[ "$preflight_line" -lt "$push_line" ] || fail "release.yml pushes the job image before the release preflight"
 
 printf 'prepare release tests passed\n'

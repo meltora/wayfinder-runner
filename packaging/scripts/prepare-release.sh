@@ -3,12 +3,19 @@ set -eu
 
 TAG=${1:-}
 SNAPSHOT=${2:-false}
+PHASE=${3:-release}
 OUTPUT=.release/install.sh
 
 fail() {
     printf 'release preparation failed: %s\n' "$*" >&2
     exit 1
 }
+
+case "$PHASE" in
+    release) ;;
+    preflight) [ "$SNAPSHOT" != true ] || fail "preflight applies only to a release tag, not a snapshot" ;;
+    *) fail "unknown preparation phase $PHASE; use release or preflight" ;;
+esac
 
 channel_for_tag() {
     if printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -70,11 +77,16 @@ if [ "$SNAPSHOT" != true ]; then
         go -C "$SCRIPT_ROOT" run ./cmd/update-manifest check-trust --allow-empty "$PWD/packaging/update-trust.json" || \
             fail "packaging/update-trust.json is invalid"
     fi
+    if [ "$PHASE" = preflight ]; then
+        printf 'release preflight passed for %s on the %s channel\n' "$TAG" "$CHANNEL"
+        exit 0
+    fi
     [ -f .release/job-image.txt ] && [ ! -L .release/job-image.txt ] || \
         fail "the job image must be published before the release; .release/job-image.txt is missing"
-    [ "$(wc -l < .release/job-image.txt | tr -d '[:space:]')" -eq 1 ] && \
-        grep -Eqx 'ghcr\.io/[a-z0-9]([a-z0-9._-]*[a-z0-9])?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}' .release/job-image.txt || \
+    if [ "$(wc -l < .release/job-image.txt | tr -d '[:space:]')" -ne 1 ] || \
+        ! grep -Eqx 'ghcr\.io/[a-z0-9]([a-z0-9._-]*[a-z0-9])?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}' .release/job-image.txt; then
         fail ".release/job-image.txt must hold one ghcr.io reference pinned by sha256 digest"
+    fi
 elif [ ! -e .release/job-image.txt ]; then
     mkdir -p .release
     printf '%s\n' unpublished-snapshot > .release/job-image.txt

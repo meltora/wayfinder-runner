@@ -77,6 +77,11 @@ jobs:
           echo "OUR_RUNNER_CHANNEL=$channel" >> "$GITHUB_ENV"
           echo "OUR_RUNNER_CONTROL_PLANE_URL=$url" >> "$GITHUB_ENV"
           echo "Channel $channel, default control plane: ${url:-none (enroll requires --url)}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the tag, declared release version and update trust before publishing anything
+        env:
+          OUR_RUNNER_RELEASE_REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: sh packaging/scripts/prepare-release.sh "$TAG" false preflight
       - name: Run the format, vet and test gates on the tagged commit
         run: sh scripts/check.sh format vet test
       - name: Run packaging tests

@@ -63,10 +63,24 @@ for tool in curl tar systemctl loginctl machinectl dockerd-rootless-setuptool.sh
 done
 [ -z "$missing" ] || fail "missing commands:$missing (install docker-ce docker-ce-rootless-extras uidmap systemd-container first)"
 
-actual_sha=$(sha256sum "$INSTALLER" | awk '{print $1}')
+WORK=$(mktemp -d)
+code_installed=0
+cleanup() {
+    if [ "$code_installed" -eq 1 ]; then
+        runuser -u our-runner -- rm -f "$CODE_TARGET" || rm -f "$CODE_TARGET"
+        code_installed=0
+    fi
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+PRIVATE_INSTALLER="$WORK/install.sh"
+cat -- "$INSTALLER" > "$PRIVATE_INSTALLER"
+actual_sha=$(sha256sum "$PRIVATE_INSTALLER" | awk '{print $1}')
 [ "$actual_sha" = "$INSTALLER_SHA256" ] || fail "installer SHA-256 does not match the published release value"
 
-OUR_RUNNER_VERSION=$VERSION OUR_RUNNER_SETUP_ROOTLESS_DOCKER=1 sh "$INSTALLER" || fail "the release installer failed"
+OUR_RUNNER_VERSION=$VERSION OUR_RUNNER_SETUP_ROOTLESS_DOCKER=1 sh "$PRIVATE_INSTALLER" || fail "the release installer failed"
 
 [ "$(systemctl is-enabled our-runner.service)" = enabled ] || fail "our-runner.service is not enabled"
 [ "$(systemctl is-active our-runner-updater.socket)" = active ] || fail "our-runner-updater.socket is not active"
@@ -80,10 +94,11 @@ case "$channel" in
     *) fail "installed our-runner is not a release build (channel ${channel:-unknown})" ;;
 esac
 
+code_installed=1
 install -o our-runner -g our-runner -m 0600 "$CODE_FILE" "$CODE_TARGET"
 enrolled=0
 runuser -u our-runner -- "$RUNNER" enroll --state-dir "$STATE_DIR" --code-file "$CODE_TARGET" --url "$CONTROL_PLANE_URL" && enrolled=1
-runuser -u our-runner -- rm -f "$CODE_TARGET"
+runuser -u our-runner -- rm -f "$CODE_TARGET" && code_installed=0
 [ "$enrolled" -eq 1 ] || fail "enrollment failed; create a new one-time code in the dashboard and retry"
 
 runner_uid=$(id -u our-runner)
@@ -92,8 +107,7 @@ if [ -n "$CONFIG" ]; then
 else
     set -- --state-dir "$STATE_DIR"
 fi
-REPORT=$(mktemp)
-trap 'rm -f "$REPORT"' EXIT HUP INT TERM
+REPORT="$WORK/doctor.report"
 status=0
 runuser -u our-runner -- env XDG_RUNTIME_DIR="/run/user/$runner_uid" DOCKER_HOST="unix:///run/user/$runner_uid/docker.sock" \
     "$RUNNER" doctor "$@" > "$REPORT" 2>&1 || status=$?

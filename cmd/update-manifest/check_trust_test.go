@@ -92,6 +92,49 @@ func TestCheckTrustRequiresProvisionedKeysUnlessEmptyIsAllowed(t *testing.T) {
 	}
 }
 
+func writeRevokedTrustFixture(t *testing.T, window [2]time.Time, revokedAt time.Time) string {
+	t.Helper()
+	path := writeTrustFixture(t, 1, window)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["keys"].([]any)[0].(map[string]any)["revoked_at"] = revokedAt
+	raw, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestCheckTrustCountsOnlyKeysValidNow(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	current := [2]time.Time{now.Add(-time.Hour), now.Add(365 * 24 * time.Hour)}
+	notYetValid := [2]time.Time{now.Add(time.Hour), now.Add(365 * 24 * time.Hour)}
+	var out bytes.Buffer
+
+	if err := run([]string{"check-trust", writeTrustFixture(t, 1, notYetValid)}, &out); err == nil || !strings.Contains(err.Error(), "currently valid") {
+		t.Fatalf("trust whose only key is not yet valid got %v", err)
+	}
+	if err := run([]string{"check-trust", writeTrustFixture(t, 2, current, notYetValid)}, &out); err == nil {
+		t.Fatal("trust with one current and one future key accepted at threshold 2")
+	}
+	if err := run([]string{"check-trust", writeRevokedTrustFixture(t, current, now.Add(-time.Minute))}, &out); err == nil || !strings.Contains(err.Error(), "currently valid") {
+		t.Fatalf("trust whose only key is revoked got %v", err)
+	}
+	out.Reset()
+	if err := run([]string{"check-trust", writeRevokedTrustFixture(t, current, now.Add(24*time.Hour))}, &out); err != nil || !strings.Contains(out.String(), "1 currently valid") {
+		t.Fatalf("trust whose key is revoked only in the future got %v, %q", err, out.String())
+	}
+}
+
 func TestShippedTrustPassesOnlyTheChannelGateItIsMeantFor(t *testing.T) {
 	shipped := filepath.Join("..", "..", "packaging", "update-trust.json")
 	var out bytes.Buffer

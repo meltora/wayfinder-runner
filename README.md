@@ -707,7 +707,9 @@ checks that the installed binary is that release build, enrolls with the
 one-time code, and runs `doctor` with the runner user's rootless socket
 (`--state-dir /var/lib/our-runner` by default, or `--config FILE`). It passes
 only when `doctor` exits 0, prints no `[FAIL]` line, and reports
-`docker-mode: rootless docker`. Warnings are listed but do not fail it.
+`docker-mode: rootless docker`. Warnings are listed but do not fail it. It
+hashes and runs a private root-owned copy of the installer, and removes that
+copy and the enrollment code copy even when interrupted.
 
 Before enabling restricted network access, create the egress-enforced network and apply the discovery
 labels checked by the runner:
@@ -1246,8 +1248,10 @@ installer points at the new name. This fails closed (nothing is installed);
 re-release those versions under the new name instead of weakening the check.
 
 Before anything is built, the release job refuses a tag whose commit is not on
-`main`, then runs `sh scripts/check.sh format vet test` on the tagged commit.
-Every release then builds the job image with `packaging/job-image/build.sh`,
+`main`, runs `sh packaging/scripts/prepare-release.sh <tag> false preflight`
+(the tag, channel, release-version and update-trust gates below, without the
+job image), then runs `sh scripts/check.sh format vet test` on the tagged
+commit. A tag that fails these gates publishes nothing. Every release then builds the job image with `packaging/job-image/build.sh`,
 pushes it to `ghcr.io/<owner>/<repository>-job:<tag>`, signs the digest with
 Cosign, verifies that signature against the release workflow identity, and
 writes the digest-pinned reference to `job-image.txt`. GoReleaser lists

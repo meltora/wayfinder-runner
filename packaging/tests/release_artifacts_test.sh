@@ -98,9 +98,10 @@ fi)
 if [ "$MODE" = snapshot ] && [ "$(cat .release/job-image.txt)" = unpublished-snapshot ]; then
     :
 else
-    [ "$(wc -l < .release/job-image.txt | tr -d '[:space:]')" -eq 1 ] && \
-        grep -Eqx 'ghcr\.io/[a-z0-9]([a-z0-9._-]*[a-z0-9])?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}' .release/job-image.txt || \
+    if [ "$(wc -l < .release/job-image.txt | tr -d '[:space:]')" -ne 1 ] || \
+        ! grep -Eqx 'ghcr\.io/[a-z0-9]([a-z0-9._-]*[a-z0-9])?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)+@sha256:[a-f0-9]{64}' .release/job-image.txt; then
         fail "job-image.txt must hold one ghcr.io reference pinned by sha256 digest"
+    fi
 fi
 [ "$(awk '$2 == "job-image.txt" { count++ } END { print count + 0 }' "$DIST_DIR/checksums.txt")" -eq 1 ] || \
     fail "checksums.txt must contain exactly one job-image.txt entry"
