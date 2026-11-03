@@ -146,3 +146,57 @@ func TestStateDirModeWarnsThatAConfigFileInTheStateDirectoryIsIgnored(t *testing
 		t.Fatalf("warnings without a config.yaml = %q err = %v", warnings.String(), err)
 	}
 }
+
+func TestStateDirModeWarnsAboutAnIgnoredConfigFileWhenTheConfigurationFails(t *testing.T) {
+	for name, test := range map[string]struct {
+		localYAML string
+		checks    bool
+	}{
+		"invalid local check":   {localYAML: "checks:\n  lint:\n    command: \"\"\n"},
+		"unreadable local file": {localYAML: "retries: 3\n"},
+		"invalid check id":      {localYAML: "checks:\n  \"bad id!\":\n    command: lint\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newConfigureHarness(t)
+			h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker"))
+			if err := h.run("", false, "--non-interactive"); err != nil {
+				t.Fatal(err)
+			}
+			appendToLocalFile(t, h.stateDir, test.localYAML)
+			configPath := filepath.Join(h.stateDir, "config.yaml")
+			if err := os.WriteFile(configPath, []byte("checks:\n  go-test:\n    command: go\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker"))
+			warnings := &bytes.Buffer{}
+			if _, err := loadStateDirConfiguration(context.Background(), h.stateDir, warnings); err == nil {
+				t.Fatal("an invalid runner.local.yaml was accepted")
+			}
+			text := warnings.String()
+			if strings.Count(text, configPath+" is not read with --state-dir") != 1 {
+				t.Fatalf("warnings = %s", text)
+			}
+			if mentions := strings.Contains(text, "its checks (go-test) are not registered"); mentions != test.checks {
+				t.Fatalf("checks named = %v, warnings = %s", mentions, text)
+			}
+		})
+	}
+	h := newConfigureHarness(t)
+	h.respond(http.StatusOK, configureDelivery(t, h.runnerID, "docker"))
+	if err := h.run("", false, "--non-interactive"); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(h.stateDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("checks:\n  go-test:\n    command: go\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.respond(http.StatusForbidden, []byte(`{"error":"forbidden"}`))
+	warnings := &bytes.Buffer{}
+	if _, err := loadStateDirConfiguration(context.Background(), h.stateDir, warnings); err == nil {
+		t.Fatal("a refused configuration fetch was accepted")
+	}
+	if text := warnings.String(); strings.Count(text, configPath+" is not read with --state-dir") != 1 ||
+		!strings.Contains(text, "its checks (go-test) are not registered: move them to "+filepath.Join(h.stateDir, remoteconfig.LocalFileName)) {
+		t.Fatalf("warnings after a refused fetch = %s", text)
+	}
+}

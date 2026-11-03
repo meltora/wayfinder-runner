@@ -37,6 +37,7 @@ func resolveStateDirConfiguration(ctx context.Context, stateDir string, warnings
 	if err != nil {
 		return stateDirConfiguration{}, remoteconfig.ErrNotEnrolled
 	}
+	warnAboutIgnoredConfigFile(warnings, stateDir)
 	resolved, err := remoteconfig.Resolve(ctx, stateDir, runnerID, func(gatewayURL string) (remoteconfig.FetchFunc, error) {
 		return newRemoteFetch(stateDir, gatewayURL)
 	}, remoteconfig.StartPolicy())
@@ -46,7 +47,7 @@ func resolveStateDirConfiguration(ctx context.Context, stateDir string, warnings
 	if resolved.FromCache {
 		fmt.Fprintf(warnings, "warning: using the cached runner configuration because the gateway could not be reached: %v\n", resolved.FetchErr)
 	}
-	warnAboutStateDirConfiguration(warnings, stateDir, resolved.Local, resolved.Merged)
+	warnAboutOmittedLocalChecks(warnings, resolved.Merged)
 	gatewayURL := resolved.Merged.Config.ControlPlaneURL
 	cfg := resolved.Merged.Config
 	cfg.RunnerConfigurationDigest = resolved.Delivery.Digest

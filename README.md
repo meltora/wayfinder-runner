@@ -953,8 +953,9 @@ them: a delivered document with a `checks` key is rejected as a whole. With a
 dashboard configuration, define checks in `<state-dir>/runner.local.yaml` with
 the same keys as in `config.yaml` (`command`, `args`, `timeout_seconds`,
 `repository_id`, `install`). A `config.yaml` in the state directory is not read
-in this mode: `start` and `doctor --state-dir` warn that it is ignored, and name
-its checks when `runner.local.yaml` defines none. For example, append:
+in this mode: `start` and `doctor --state-dir` warn that it is ignored, also when
+the configuration then fails to load, and name its checks when
+`runner.local.yaml` defines none. For example, append:
 
 ```yaml
 checks:

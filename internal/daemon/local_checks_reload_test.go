@@ -3,12 +3,15 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
-	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/remoteconfig"
 )
@@ -51,35 +54,111 @@ func TestReloadAppliesADocumentThatOmitsALocalCheckAndWarnsOnce(t *testing.T) {
 	}
 }
 
-func TestAJobKeepsTheChecksItStartedWith(t *testing.T) {
-	jr := workspaceValidationRunner(t, []v1.JobRepository{{RepositoryID: "repo-9", Primary: true}})
-	jr.job.Kind = v1.JobKindBuild
-	jr.job.RequiredChecks = []string{"lint"}
-	jr.repositories = []checkedOutRepository{{ID: "repo-9", Primary: true}}
-	jr.d.cfg.Checks = map[string]config.CheckConfig{"lint": {Command: "lint"}}
-	started := jr.d.hotConfiguration()
-	jr.configuration = &started
-	if err := jr.d.applyHotConfiguration(func() config.Config {
-		next := jr.d.cfg
-		next.Checks = map[string]config.CheckConfig{}
-		return next
-	}(), strings.Repeat("e", 64)); err != nil {
+func countingCheck(t *testing.T) (config.CheckConfig, func() int) {
+	t.Helper()
+	counter := filepath.Join(t.TempDir(), "runs")
+	check := config.CheckConfig{Command: "/bin/sh", Args: []string{"-c", "echo run >> \"" + counter + "\""}}
+	return check, func() int {
+		data, err := os.ReadFile(counter)
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(data), "run")
+	}
+}
+
+func applyChecksMidJob(t *testing.T, jr *jobRunner, checks map[string]config.CheckConfig) {
+	t.Helper()
+	next := jr.d.cfg
+	next.Checks = checks
+	if err := jr.d.applyHotConfiguration(next, strings.Repeat("e", 64)); err != nil {
 		t.Fatal(err)
 	}
-	if len(jr.d.hotConfiguration().checks) != 0 {
-		t.Fatal("the daemon did not apply the narrower check set")
+	if !reflect.DeepEqual(jr.d.hotConfiguration().checks, checks) {
+		t.Fatalf("the daemon did not apply the check set %v", checks)
 	}
-	if checks := jr.runnableChecks(); !slices.Equal(checks, []string{"lint"}) {
-		t.Fatalf("runnable checks = %v", checks)
+}
+
+func terminalCheckFailures(events []map[string]any) []string {
+	var failures []string
+	for _, event := range events {
+		if event["phase"] != "terminal" {
+			continue
+		}
+		if listed, ok := event["failures"].([]string); ok {
+			failures = append(failures, listed...)
+		}
 	}
-	jr.configuration = nil
-	if checks := jr.runnableChecks(); len(checks) != 0 {
-		t.Fatalf("a job started after the change sees %v", checks)
-	}
-	if _, err := jr.executeRunCheck(context.Background(), map[string]any{"check_id": "lint", "idempotency_key": "key-1"}); err == nil ||
-		!strings.Contains(err.Error(), "not registered on this runner") {
-		t.Fatalf("an omitted required check did not fail closed: %v", err)
-	}
+	return failures
+}
+
+func TestAJobKeepsTheChecksItStartedWith(t *testing.T) {
+	t.Run("a check omitted mid-job still runs for the job that started with it", func(t *testing.T) {
+		jr, cap := runCheckFixture(t)
+		check, runs := countingCheck(t)
+		jr.job.RequiredChecks = []string{"lint"}
+		jr.d.cfg.Checks = map[string]config.CheckConfig{"lint": check}
+		started := jr.d.hotConfiguration()
+		jr.configuration = &started
+		applyChecksMidJob(t, jr, map[string]config.CheckConfig{})
+		if checks := jr.runnableChecks(); !slices.Equal(checks, []string{"lint"}) {
+			t.Fatalf("runnable checks = %v", checks)
+		}
+		result, err := call(t, jr, "platform_run_check", `{"check_id":"lint","idempotency_key":"key-1"}`)
+		if err != nil {
+			t.Fatalf("the started check was refused after the omission: %v", err)
+		}
+		if result.(map[string]any)["result"] != "passed" || runs() != 1 {
+			t.Fatalf("on-demand result = %v, runs = %d", result, runs())
+		}
+		commitSet := map[string]string{"primary": gitHead(t, jr.repositories[0].WorkDir)}
+		if !jr.runRequiredChecks(context.Background(), commitSet, nil) {
+			t.Fatalf("terminal checks failed: %v", terminalCheckFailures(cap.byKind("test_results")))
+		}
+		if runs() != 2 {
+			t.Fatalf("terminal checks did not run the started check: %d runs", runs())
+		}
+		if failures := terminalCheckFailures(cap.byKind("test_results")); len(failures) != 0 {
+			t.Fatalf("terminal failures = %v", failures)
+		}
+		jr.configuration = nil
+		if checks := jr.runnableChecks(); len(checks) != 0 {
+			t.Fatalf("a job started after the change sees %v", checks)
+		}
+		if _, err := call(t, jr, "platform_run_check", `{"check_id":"lint","idempotency_key":"key-2"}`); err == nil ||
+			!strings.Contains(err.Error(), "not registered on this runner") {
+			t.Fatalf("an omitted required check did not fail closed for a job started after the change: %v", err)
+		}
+	})
+	t.Run("a check restored mid-job does not run for a job that started without it", func(t *testing.T) {
+		jr, cap := runCheckFixture(t)
+		check, runs := countingCheck(t)
+		jr.job.RequiredChecks = []string{"lint"}
+		jr.d.cfg.Checks = map[string]config.CheckConfig{}
+		started := jr.d.hotConfiguration()
+		jr.configuration = &started
+		applyChecksMidJob(t, jr, map[string]config.CheckConfig{"lint": check})
+		if checks := jr.runnableChecks(); len(checks) != 0 {
+			t.Fatalf("runnable checks = %v", checks)
+		}
+		if _, err := call(t, jr, "platform_run_check", `{"check_id":"lint","idempotency_key":"key-1"}`); err == nil ||
+			!strings.Contains(err.Error(), "not registered on this runner") {
+			t.Fatalf("a check outside the start snapshot was accepted: %v", err)
+		}
+		commitSet := map[string]string{"primary": gitHead(t, jr.repositories[0].WorkDir)}
+		if jr.runRequiredChecks(context.Background(), commitSet, nil) {
+			t.Fatal("terminal checks passed with a check outside the start snapshot")
+		}
+		if runs() != 0 {
+			t.Fatalf("a check outside the start snapshot ran %d times", runs())
+		}
+		if failures := terminalCheckFailures(cap.byKind("test_results")); !slices.Equal(failures, []string{"required check is not registered on this runner"}) {
+			t.Fatalf("terminal failures = %v", failures)
+		}
+	})
 }
 
 func TestPublishedCapabilityNeverCarriesLocalCheckDefinitions(t *testing.T) {
