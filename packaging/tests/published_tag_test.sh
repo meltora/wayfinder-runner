@@ -88,6 +88,8 @@ STUB_MANIFEST_STATUS=200 expect_refused "a tag whose job image was already pushe
     "ghcr.io/acme/runner-job:v1.2.3 already exists" v1.2.3 "$IMAGE_REPOSITORY"
 STUB_MANIFEST_STATUS=401 expect_refused "a registry probe that was not authorized" \
     "registry answered 401" v1.2.3 "$IMAGE_REPOSITORY"
+STUB_MANIFEST_STATUS=403 expect_refused "a registry probe that was forbidden" \
+    "registry answered 403" v1.2.3 "$IMAGE_REPOSITORY"
 STUB_MANIFEST_STATUS=500 expect_refused "a registry probe that failed on the server" \
     "registry answered 500" v1.2.3 "$IMAGE_REPOSITORY"
 STUB_MANIFEST_EXIT=7 expect_refused "a registry probe that could not connect" \
@@ -119,10 +121,12 @@ fi
 
 preflight_line=$(grep -n 'prepare-release.sh "$TAG" false preflight' "$WORKFLOW" | head -n 1 | cut -d: -f1)
 refuse_line=$(grep -n 'refuse-published-tag.sh' "$WORKFLOW" | head -n 1 | cut -d: -f1)
+check_line=$(grep -n 'scripts/check.sh format vet test' "$WORKFLOW" | head -n 1 | cut -d: -f1)
 push_line=$(grep -n 'packaging/job-image/build.sh .*--push' "$WORKFLOW" | head -n 1 | cut -d: -f1)
 goreleaser_line=$(grep -n 'goreleaser/goreleaser-action' "$WORKFLOW" | head -n 1 | cut -d: -f1)
-[ -n "$push_line" ] && [ -n "$goreleaser_line" ] || fail "release.yml does not push the job image or run GoReleaser"
+[ -n "$check_line" ] && [ -n "$push_line" ] && [ -n "$goreleaser_line" ] || fail "release.yml does not run the check suite, push the job image or run GoReleaser"
 [ "$preflight_line" -lt "$push_line" ] || fail "release.yml pushes the job image before the release preflight"
+[ "$refuse_line" -lt "$check_line" ] || fail "release.yml runs the check suite before refusing a published tag"
 [ "$refuse_line" -lt "$push_line" ] || fail "release.yml pushes the job image before refusing a published tag"
 [ "$refuse_line" -lt "$goreleaser_line" ] || fail "release.yml runs GoReleaser before refusing a published tag"
 grep -q 'JOB_IMAGE_REPOSITORY:\$TAG' "$WORKFLOW" || fail "release.yml does not push the job image to the repository it checked"
