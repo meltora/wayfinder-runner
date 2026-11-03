@@ -33,6 +33,7 @@ type hotConfiguration struct {
 	sourcePublicationInstallations map[string]config.SourcePublicationInstallationConfig
 	labels                         map[string]string
 	revokedAgentPackDigests        []string
+	checks                         map[string]config.CheckConfig
 	digest                         string
 }
 
@@ -59,6 +60,7 @@ func (d *Daemon) hotConfiguration() hotConfiguration {
 		sourcePublicationInstallations: d.cfg.SourcePublicationInstallations,
 		labels:                         d.cfg.Labels,
 		revokedAgentPackDigests:        d.cfg.RevokedAgentPackDigests,
+		checks:                         d.cfg.Checks,
 		digest:                         d.cfg.RunnerConfigurationDigest,
 	}
 }
@@ -102,8 +104,7 @@ func restartRequiredSettingsEqual(running, next config.Config) bool {
 		running.ControlPlaneURL == next.ControlPlaneURL &&
 		running.StateDir == next.StateDir &&
 		reflect.DeepEqual(running.ProviderBinaries, next.ProviderBinaries) &&
-		reflect.DeepEqual(running.ProviderEnvironment, next.ProviderEnvironment) &&
-		reflect.DeepEqual(running.Checks, next.Checks)
+		reflect.DeepEqual(running.ProviderEnvironment, next.ProviderEnvironment)
 }
 
 func (d *Daemon) applyHotConfiguration(next config.Config, digest string) error {
@@ -130,6 +131,7 @@ func (d *Daemon) applyHotConfiguration(next config.Config, digest string) error 
 	d.cfg.AgentPackPublicKeys = next.AgentPackPublicKeys
 	d.cfg.SourcePublicationInstallations = next.SourcePublicationInstallations
 	d.cfg.Labels = next.Labels
+	d.cfg.Checks = next.Checks
 	d.cfg.RevokedAgentPackDigests = next.RevokedAgentPackDigests
 	d.cfg.RunnerConfigurationDigest = digest
 	if rebuild {
@@ -190,6 +192,10 @@ func (d *Daemon) reloadConfiguration(ctx context.Context) bool {
 	d.configurationRestartDigest = ""
 	d.applyAgentPackRevocations()
 	d.applyConfiguredAgentPackTrust(ctx, reload.Merged.Config.AgentPackTrustedKeySet)
+	for _, omitted := range reload.Merged.OmittedChecks {
+		d.logger.Warn("local check is not registered: its repository is not in the delivered runner configuration",
+			"check_id", omitted.ID, "repository_id", omitted.RepositoryID, "digest", reload.Delivery.Digest)
+	}
 	if err := d.configurationReloader.Commit(reload); err != nil {
 		d.logger.Warn("cache the applied runner configuration", "err", err)
 	}

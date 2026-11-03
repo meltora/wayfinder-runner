@@ -46,6 +46,7 @@ func resolveStateDirConfiguration(ctx context.Context, stateDir string, warnings
 	if resolved.FromCache {
 		fmt.Fprintf(warnings, "warning: using the cached runner configuration because the gateway could not be reached: %v\n", resolved.FetchErr)
 	}
+	warnAboutStateDirConfiguration(warnings, stateDir, resolved.Local, resolved.Merged)
 	gatewayURL := resolved.Merged.Config.ControlPlaneURL
 	cfg := resolved.Merged.Config
 	cfg.RunnerConfigurationDigest = resolved.Delivery.Digest

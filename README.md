@@ -951,8 +951,10 @@ environment prompt only says whether a value is set and never prints it.
 Check commands stay on the host. The dashboard cannot define, replace or remove
 them: a delivered document with a `checks` key is rejected as a whole. With a
 dashboard configuration, define checks in `<state-dir>/runner.local.yaml` with
-the same keys as in `config.yaml`; a `config.yaml` in the state directory is not
-read in this mode. For example, append:
+the same keys as in `config.yaml` (`command`, `args`, `timeout_seconds`,
+`repository_id`, `install`). A `config.yaml` in the state directory is not read
+in this mode: `start` and `doctor --state-dir` warn that it is ignored, and name
+its checks when `runner.local.yaml` defines none. For example, append:
 
 ```yaml
 checks:
@@ -962,20 +964,26 @@ checks:
     timeout_seconds: 600
 ```
 
-Keep the file private (mode 0600). The merged configuration validates these
-checks exactly as `config.yaml` does, so a `repository_id` must name a
-repository the dashboard delivers; if a later document drops that repository,
-the runner keeps its running configuration and logs the refusal, and `start`
-refuses to start until the check or the repository is fixed. `configure` keeps
-the saved checks. The runner reads `checks` once at start: after editing them,
-restart `our-runner`; a dashboard change applied without a restart never changes
-the running checks. Checks are named only by ID outside this file: as
+Keep the file private (mode 0600). The runner validates these checks exactly as
+`config.yaml` does, and an invalid check stops `start`. A check whose
+`repository_id` is not in the delivered document (the dashboard dropped or
+omitted that repository) is not registered: `start` prints a warning naming the
+check and a hot reload logs one, while the rest of the document, including
+revoked Agent Packs, trusted keys, labels and repositories, still applies. A
+build that requires such a check fails it as "required check is not registered
+on this runner". When a later document delivers the repository again, the check
+is registered again. `configure` keeps the saved checks. The runner reads
+`checks` once at start: after editing them, restart `our-runner`; a hot reload
+only registers or withholds the checks read at start. A running job keeps the
+checks it started with. Checks are named only by ID outside this file: as
 `runnable_checks` in a build job's context and as the `check_id` of check
-results. Commands and arguments are not part of the capability manifest, the
-job context or check results. With `isolation: direct` a check
-runs on the host with the runner's `PATH`. With `isolation: docker` it runs
-inside the job image like any other check, so its command must exist in that
-image (the default job image has no Go toolchain).
+results and install provenance. Commands and arguments are not part of the
+capability manifest, the job context, check results or install provenance. Local
+checks use the same published check workspace and `install` rules as any other
+check. With `isolation: direct` a check runs on the host with the runner's
+`PATH`, without the Docker sandbox. With `isolation: docker` it runs inside the
+job image, so its command must exist in that image (the default job image has
+no Go toolchain).
 
 `start` and `doctor --state-dir DIR` fetch the latest document every time. Only
 after a network failure or a 5xx answer does `start` fall back to the cached

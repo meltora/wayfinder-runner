@@ -386,22 +386,13 @@ func (c Config) Validate() error {
 		}
 	}
 	for id, check := range c.Checks {
-		if len(id) > 128 || id == "." || id == ".." || !idPattern.MatchString(id) {
-			return fmt.Errorf("check ID %q is invalid", id)
-		}
-		if check.Command == "" || len(check.Command) > 512 || len(check.Args) > 128 {
-			return fmt.Errorf("check %s has an invalid command", id)
-		}
-		if check.TimeoutSeconds < 0 || check.TimeoutSeconds > 1800 {
-			return fmt.Errorf("check %s timeout must be between 0 and 1800 seconds", id)
+		if err := ValidateCheck(id, check); err != nil {
+			return err
 		}
 		if check.RepositoryID != "" {
 			if _, ok := c.Repositories[check.RepositoryID]; !ok {
 				return fmt.Errorf("check %s references unregistered repository %s", id, check.RepositoryID)
 			}
-		}
-		if err := validateCheckDependencySettings(check); err != nil {
-			return fmt.Errorf("check %s: %w", id, err)
 		}
 	}
 	if len(c.SourcePublicationInstallations) > MaxSourcePublicationInstallations {

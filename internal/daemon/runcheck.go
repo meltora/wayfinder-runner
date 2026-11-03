@@ -25,9 +25,10 @@ func (jr *jobRunner) runnableChecks() []string {
 	if jr.job.Kind != v1.JobKindBuild {
 		return nil
 	}
+	configured := jr.jobConfiguration().checks
 	checks := make([]string, 0, len(jr.job.RequiredChecks))
 	for _, id := range jr.job.RequiredChecks {
-		check, ok := jr.d.cfg.Checks[id]
+		check, ok := configured[id]
 		if !ok {
 			continue
 		}
@@ -64,7 +65,7 @@ func (jr *jobRunner) executeRunCheck(ctx context.Context, raw map[string]any) (a
 	if !slices.Contains(jr.job.RequiredChecks, checkID) {
 		return nil, fmt.Errorf("check %q is not required by this job", checkID)
 	}
-	check, ok := jr.d.cfg.Checks[checkID]
+	check, ok := jr.jobConfiguration().checks[checkID]
 	if !ok {
 		return nil, fmt.Errorf("check %q is not registered on this runner", checkID)
 	}

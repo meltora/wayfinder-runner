@@ -73,8 +73,9 @@ func (jr *jobRunner) finalizeBuild(
 
 func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string]string, results map[string]agentResult) bool {
 	allOK := true
+	configured := jr.jobConfiguration().checks
 	for _, checkID := range jr.job.RequiredChecks {
-		check, ok := jr.d.cfg.Checks[checkID]
+		check, ok := configured[checkID]
 		if !ok {
 			_ = jr.sendJobEvent(ctx, "test_results", map[string]any{
 				"suite": checkID, "check_id": checkID, "result": "error",

@@ -3,6 +3,8 @@ package remoteconfig
 import (
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/example/app-runner/internal/config"
 )
@@ -10,7 +12,33 @@ import (
 var ErrDirectNotAcknowledged = errors.New("the dashboard selected direct isolation, which runs jobs on this host without a sandbox; run our-runner configure and confirm it, or pass --acknowledge-direct")
 
 type Merged struct {
-	Config config.Config
+	Config        config.Config
+	OmittedChecks []OmittedCheck
+}
+
+type OmittedCheck struct {
+	ID           string
+	RepositoryID string
+}
+
+func registrableChecks(local map[string]config.CheckConfig, repositories map[string]string) (map[string]config.CheckConfig, []OmittedCheck, error) {
+	if local == nil {
+		return nil, nil, nil
+	}
+	checks := make(map[string]config.CheckConfig, len(local))
+	var omitted []OmittedCheck
+	for id, check := range local {
+		if err := config.ValidateCheck(id, check); err != nil {
+			return nil, nil, err
+		}
+		if _, ok := repositories[check.RepositoryID]; check.RepositoryID != "" && !ok {
+			omitted = append(omitted, OmittedCheck{ID: id, RepositoryID: check.RepositoryID})
+			continue
+		}
+		checks[id] = check
+	}
+	slices.SortFunc(omitted, func(a, b OmittedCheck) int { return strings.Compare(a.ID, b.ID) })
+	return checks, omitted, nil
 }
 
 func Merge(local Local, delivery Delivery) (Merged, error) {
@@ -27,7 +55,11 @@ func Merge(local Local, delivery Delivery) (Merged, error) {
 	cfg.StateDir = local.StateDir
 	cfg.ProviderEnvironment = local.ProviderEnvironment
 	cfg.ProviderBinaries = local.ProviderBinaries
-	cfg.Checks = local.Checks
+	checks, omitted, err := registrableChecks(local.Checks, remote.Repositories)
+	if err != nil {
+		return out, fmt.Errorf("merged runner configuration is invalid: %w", err)
+	}
+	cfg.Checks = checks
 	cfg.Isolation = remote.Isolation
 	cfg.AllowUnsafeDirect = remote.Isolation == "direct"
 	cfg.Provider = remote.Provider
@@ -65,5 +97,6 @@ func Merge(local Local, delivery Delivery) (Merged, error) {
 		return out, fmt.Errorf("merged runner configuration is invalid: %w", err)
 	}
 	out.Config = cfg
+	out.OmittedChecks = omitted
 	return out, nil
 }
