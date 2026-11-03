@@ -296,6 +296,7 @@ func startingLocal(opts configureOptions) (remoteconfig.Local, error) {
 			local.ProviderBinaries[provider] = binary
 		}
 		local.AcknowledgeDirect = existing.AcknowledgeDirect
+		local.Checks = existing.Checks
 	}
 	local.ControlPlaneURL = opts.gateway
 	local.StateDir = opts.stateDir

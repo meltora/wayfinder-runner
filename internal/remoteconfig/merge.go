@@ -27,6 +27,7 @@ func Merge(local Local, delivery Delivery) (Merged, error) {
 	cfg.StateDir = local.StateDir
 	cfg.ProviderEnvironment = local.ProviderEnvironment
 	cfg.ProviderBinaries = local.ProviderBinaries
+	cfg.Checks = local.Checks
 	cfg.Isolation = remote.Isolation
 	cfg.AllowUnsafeDirect = remote.Isolation == "direct"
 	cfg.Provider = remote.Provider

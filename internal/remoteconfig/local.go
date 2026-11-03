@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/safeio"
 	"gopkg.in/yaml.v3"
 )
@@ -23,11 +24,12 @@ const (
 var ErrNotConfigured = errors.New("this runner has no saved configuration; run our-runner configure first")
 
 type Local struct {
-	ControlPlaneURL     string                       `yaml:"control_plane_url"`
-	StateDir            string                       `yaml:"state_dir"`
-	ProviderEnvironment map[string]map[string]string `yaml:"provider_environment,omitempty"`
-	ProviderBinaries    map[string]string            `yaml:"provider_binaries,omitempty"`
-	AcknowledgeDirect   bool                         `yaml:"acknowledge_direct,omitempty"`
+	ControlPlaneURL     string                        `yaml:"control_plane_url"`
+	StateDir            string                        `yaml:"state_dir"`
+	ProviderEnvironment map[string]map[string]string  `yaml:"provider_environment,omitempty"`
+	ProviderBinaries    map[string]string             `yaml:"provider_binaries,omitempty"`
+	AcknowledgeDirect   bool                          `yaml:"acknowledge_direct,omitempty"`
+	Checks              map[string]config.CheckConfig `yaml:"checks,omitempty"`
 }
 
 type localDocument struct {
