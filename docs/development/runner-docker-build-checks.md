@@ -6,18 +6,18 @@
 | ---------------------- | ----- |
 | ID                     | FR-01 follow-up `runner-docker-build-checks` (RDBC) |
 | Kind                   | bug (release blocker for Docker-isolated Build jobs) plus one bounded feature (host-declared check image) |
-| Status                 | review_ready |
+| Status                 | review_ready (code verified; REQ-14 live pending) |
 | Risk                   | critical. The slice changes what the runner reads out of the agent's workspace into the trusted result repository, and which image runs required checks. A defect can publish harness state into a change set, hide a real concurrent change, or let a check run in an image that nobody on the host chose. It does not touch credentials, the control-plane protocol or tenant data. |
 | Complexity             | complex. Two independent defects meet in one live path (snapshot refusal, then missing toolchain). The work crosses the candidate copy, configuration validation, the check task path, the provenance artifact, the start gate, doctor, a new packaging directory and gated Docker tests. Each piece is small; the live proof depends on rootless Docker behaviour that unit tests cannot show. |
 | Parent scope           | `PRODUCT.md` "Implementation and review flow" (Build runs required checks and returns evidence), "Workspace composition" item 2 ("A pinned project toolchain layer"), the isolation baseline ("Separate trusted bootstrap and evidence collection from checked-out repository code"), and MCP enforcement (scoped checks use the same runner-owned sandbox and network policy as final required checks; `platform_run_check` cannot supply or override the executable, isolation or network). Parent records in the app repository: `docs/development/build-job-approved-plan-delivery.md`, section "FR-01 Docker Build check (9 November 2026)" (defects FD-1, FD-2, FD-3); `docs/development/runner-local-checks.md`; `docs/development/runner-hermetic-check-workspace.md` (D49, REQ-12 provenance, "Owner decisions on LC-1 to LC-4"); `docs/development/runner-job-image-claude-cli.md` (RJIC REQ-12, still open). |
 | Product sources        | `PRODUCT.md` sections named above. Owner decisions LC-1 and LC-2 (checks stay defined on the runner host; the control plane cannot define check commands), LC-3 (isolation changes are restart-required), LC-4 (`acknowledge_direct`). |
 | Planner                | Opus 5.5 (`claude-opus-5-5`); develop-planner subagent, RDBC planning session, 9 November 2026 |
 | Implementer            | Opus 5.5 (`claude-opus-5-5`); develop-implementer subagent, worktree `agent-a828b3f7e7edaa3e6`, branch `worktree-agent-a828b3f7e7edaa3e6`, fast-forwarded to main `65e7310`, 9 November 2026 |
-| Reviewer               | Opus 5.5 (`claude-opus-5-5`); fresh develop-reviewer, reviewed head `a6208e43` against main `65e7310`, 9 November 2026 |
+| Reviewer               | Opus 5.5 (`claude-opus-5-5`); fresh develop-reviewer, reviewed head `a6208e43` against main `65e7310`, 9 November 2026. Re-review after repair attempt 1 by a second fresh develop-reviewer, head `7035946`, 9 November 2026 |
 | Repair attempt         | 1 |
 | Updated                | 2026-11-09 |
 | Baseline               | app-runner `main` at `fc4ae6a` ("test(daemon): prove a job keeps its start-time checks across a hot reload"), worktree `agent-a6540183dac8397d8`, branch `worktree-agent-a6540183dac8397d8`. This record is the only change. |
-| Blocker / resume state | Repair attempt 1 for RV-1, RV-2 and FU-8 is done and waits for a fresh re-review (see "Repair attempt 1" below). After the repair passes re-review, the live verification (REQ-14) still needs the coordinator to swap the runner binary, edit `runner.local.yaml` and restart; see "Coordinator live steps". The record cannot reach `done` before REQ-14 passes, because the contract does not exempt it. |
+| Blocker / resume state | Code verified; REQ-14 live pending. The re-review after repair attempt 1 verified REQ-01 to REQ-13 as implemented (see "Re-review after repair attempt 1"). The live verification (REQ-14) still needs the coordinator to swap the runner binary, edit `runner.local.yaml` and restart; see "Coordinator live steps". The record cannot reach `done` before REQ-14 passes, because the contract does not exempt it. |
 
 ## Outcome and current gap
 
@@ -154,7 +154,7 @@ Owned files (app-runner): `internal/daemon/agent_result_copy.go` and test, `inte
 | REQ-13 | Command output | implemented; see command evidence (awaiting review) |
 | REQ-14 | Coordinator live evidence | pending |
 
-Reviewer verdicts (9 November 2026) supersede the "awaiting review" notes above: REQ-01 to REQ-11 implemented, REQ-12 partial (RV-2), REQ-13 partial (RV-1), REQ-14 unverified (live, coordinator). See "Reviewer requirement review".
+Reviewer verdicts (9 November 2026) supersede the "awaiting review" notes above: REQ-01 to REQ-11 implemented, REQ-12 partial (RV-2), REQ-13 partial (RV-1), REQ-14 unverified (live, coordinator). See "Reviewer requirement review". The re-review after repair attempt 1 supersedes REQ-12 and REQ-13: both implemented. REQ-01 to REQ-13 are implemented; REQ-14 stays unverified (live, coordinator).
 
 ## Coordinator live steps (REQ-14)
 
@@ -459,9 +459,74 @@ Non-blocking observations, no change required in this slice:
 - **FU-9.** On a classic (non-containerd) image store, `build.sh` should print a resolvable reference, for example a repo digest after a push, or the README should say how to obtain one.
 - Uppercase hex in a check image passes config validation but fails closed at the gate. A later config change could normalise it or refuse it with the pinning message.
 
+### Re-review after repair attempt 1
+
+Reviewer: second fresh develop-reviewer (Opus 5.5), 9 November 2026. Reviewed head `7035946` against main `65e7310` and the first review `c18e075`, from the contract, `PRODUCT.md` "Workspace composition" item 2, the source, the tests and the rootless Docker daemon. The verdicts come from the code and from runs the reviewer did, not from the repair summary. There is no UI, so the prototype and the app do not apply.
+
+Commands re-run by the reviewer:
+
+| Command | Result |
+| ------- | ------ |
+| `gofmt -l .` | prints nothing |
+| `go vet ./...`, `go build ./...` | ok |
+| `sh -n packaging/check-image-go/build.sh packaging/job-image/build.sh` | ok |
+| `go test ./... -count=1` | exit 0, every package ok |
+| `go test -race ./internal/daemon/ ./internal/config/ ./internal/doctor/ ./internal/isolation/ ./internal/remoteconfig/ ./cmd/our-runner/ -count=1` | exit 0, 6 packages ok |
+| `go test -coverpkg=<daemon,config,doctor,isolation,cmd> -coverprofile` over the same packages, aggregated per file by unique block | `copy_target.go` 74 of 92 (80.4 %), `daemon.go` 668 of 829 (80.6 %), `build.go` 92.3 %, `isolation.go` 96.5 %, `agent_result_copy.go` 89.2 %, `agent_result_resolution.go` 90.2 %, `agent_harness_state.go` 100 %, `check_image_gate.go` 100 %, `check_install.go` 95.3 %, `check_install_provenance.go` 90.9 %, `checkexec.go` 97.4 %, `config/config.go` 93.7 %, `check_validation.go` 100 %, `doctor.go` 85.8 %, `check_image_check.go` 97.1 %, `image_inspect.go` 100 %, `doctor_command.go` 100 % |
+| Gated, `DOCKER_HOST=unix:///run/user/1000/docker.sock RUN_DOCKER_SANDBOX_PROBE=1 JOB_IMAGE=our-runner-job:rjic@sha256:a2c8cabe… CHECK_IMAGE=our-runner-check-go:rdbc@sha256:59201f88…` | `TestIterativeSnapshotSkipsHarnessStateDuringARootlessHandOff` PASS 1.03 s; `TestGoCheckImageRunsGoTestUnderTheProductionPolicy` PASS 12.95 s (4 subtests); `TestAgentPackMountRefusesEveryWriteInsideTheContainer` PASS 0.65 s; `TestClaudeCreatesAPrivateStagingDirectoryInTheHandedOffWorkspace` PASS 4.17 s; `TestJobImageSandboxRuntimeStartsUnderTheNestedSandboxFlags` PASS 2.10 s |
+
+RV-1 (REQ-13) is resolved:
+
+- Both files are at or above 80 % in the reviewer's own profile.
+- The repair changed no production code for RV-1. The new tests assert real outcomes:
+  - `new_optional_registries_test.go` checks which roles are wired or left nil, the exact refusal text, and that a refused start never creates `journal.db`.
+  - `runner_state_files_test.go` checks refusal text, that no temporary file is left, and that a bad entry does not read back as valid state.
+  - `agent_result_cache_reuse_test.go` checks the snapshot SHA, `os.SameFile` on an unchanged cached symlink, the retargeted symlink content, the rebuilt cached copy, and that a tampered cache is refused and dropped before an identical rebuild.
+- No test is assertion-free.
+
+RV-2 (REQ-12) is resolved:
+
+- `isolation.Policy.PullNever` is set in exactly one production place, `build.go:345`, inside `if task.image != ""`. The policy is built fresh for each task by `commandPolicy`, so the flag cannot carry over to another task.
+- `isolation.go:213-215` appends `--pull=never` immediately before the image.
+- The only callers that pass an image are the check command (`checkexec.go:62`) and its install step (`check_install.go:351`).
+- `pull_never_test.go` shows that the flag is the only argv difference, that it sits before the image, and that no `--pull*` appears when the flag is off. This holds for check, provider and consultation policies.
+- `check_image_policy_test.go` shows:
+  - the with-image argv equals the job-image argv plus `--pull=never` before the image;
+  - a check without an image has no pull flag;
+  - install, iterative and terminal runs carry the flag exactly when the check has an image.
+- The gated Go test runs the real `docker run --pull=never` through `runWorkspaceTask` on the rootless daemon and passes, so the Docker CLI there accepts the flag.
+- `README.md:1024-1028` now matches the code: start and doctor only inspect, check-image containers use `--pull=never`, and every other container keeps its argv.
+- FU-8: `build.sh` is now in both `sh -n` lists.
+
+Regressions:
+
+- REQ-06's byte-identical argv for a check without an image still holds; it is asserted in the policy tests.
+- The repair added no code comments.
+
+Per-requirement verdicts after the re-review:
+
+| ID | Verdict | Evidence |
+| -- | ------- | -------- |
+| REQ-01 | implemented | Unchanged since the first review; gated `TestClaudeCreatesAPrivateStagingDirectoryInTheHandedOffWorkspace` re-run PASS |
+| REQ-02 | implemented | Unchanged; refusal tests pass in the full and race runs |
+| REQ-03 | implemented | Unchanged; harness-state tests pass |
+| REQ-04 | implemented | Gated rootless test re-run PASS |
+| REQ-05 | implemented | Unchanged; config, remoteconfig, reload and warning tests pass |
+| REQ-06 | implemented | The only argv change for a check with an image is `--pull=never` before the image (I-10, RV-2). That flag strengthens REQ-07's "no network pull", and every listed restriction is still asserted. Without an image the argv is unchanged |
+| REQ-07 | implemented | Unchanged; gate and doctor tests pass |
+| REQ-08 | implemented | Unchanged; exact JSON tests pass |
+| REQ-09 | implemented | Unchanged; image `sha256:59201f88…` used by the gated run |
+| REQ-10 | implemented | Gated test re-run PASS with `--pull=never` in the real argv |
+| REQ-11 | implemented | Unchanged; `--pull=never` means an image removed after start fails the check instead of being fetched |
+| REQ-12 | implemented | RV-2 resolved; README pull statement accurate; FU-8 done |
+| REQ-13 | implemented | RV-1 resolved; every new or changed Go file is at least 80 %; gofmt, vet, build, the full suite, race and gated tests pass. gosec and govulncheck were not re-run by this reviewer, and the repair changed no dependency; the implementer's results stand as recorded |
+| REQ-14 | unverified (live, coordinator) | Not run; it is the coordinator's live step |
+
+No new findings. Non-blocking points carried over: FU-9 (classic image store reference) and the uppercase-hex pin that passes config validation but fails closed at the gate.
+
 ## Completion
 
-Not complete. Status `review_ready` after repair attempt 1, which waits for a fresh re-review of RV-1 and RV-2. The first review had set `changes_requested`. REQ-01 to REQ-11 are implemented; REQ-12 and REQ-13 are partial (RV-2, RV-1); REQ-14 is unverified and waits for the coordinator's live run. That live run starts only after a re-review verifies REQ-01 to REQ-13. Only a verified review that also includes REQ-14 evidence may set `done`.
+Not complete. Status `review_ready`: code verified; REQ-14 live pending. REQ-01 to REQ-13 are implemented as of the re-review after repair attempt 1. REQ-14 is unverified and is the coordinator's live run under "Coordinator live steps". Only REQ-14 evidence that passes may set `done`.
 
 ## Follow-ups
 
