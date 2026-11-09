@@ -523,6 +523,7 @@ func validateServiceURL(raw, secureScheme, developmentScheme string, allowInsecu
 }
 
 var immutableImagePattern = regexp.MustCompile(`^[^\s@]+@sha256:[a-fA-F0-9]{64}$`)
+var checkImagePattern = regexp.MustCompile(`^[^\s@]+@sha256:[a-f0-9]{64}$`)
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 var gitHostPattern = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)

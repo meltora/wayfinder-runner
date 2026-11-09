@@ -15,7 +15,7 @@ const (
 	doctorNodeImage = "our-runner-check-node:rdbc@sha256:abcdef0123452222222222222222222222222222222222222222222222222222"
 )
 
-func withDoctorImageInspection(t *testing.T, missing map[string]bool, failure error) *[]string {
+func withDoctorImageInspection(t *testing.T, missing, idOnly map[string]bool, failure error) *[]string {
 	t.Helper()
 	var calls []string
 	original := inspectCheckImage
@@ -26,6 +26,9 @@ func withDoctorImageInspection(t *testing.T, missing map[string]bool, failure er
 		}
 		if missing[ref] {
 			return "", isolation.ErrImageNotPresent
+		}
+		if idOnly[ref] {
+			return "", isolation.ErrImageResolvesOnlyByID
 		}
 		return "sha256:" + strings.Repeat("9", 64), nil
 	}
@@ -44,6 +47,7 @@ func TestCheckImagesRowStatuses(t *testing.T) {
 	for name, test := range map[string]struct {
 		opts     Options
 		missing  map[string]bool
+		idOnly   map[string]bool
 		failure  error
 		status   Status
 		detail   string
@@ -80,6 +84,21 @@ func TestCheckImagesRowStatuses(t *testing.T) {
 				"check web-unit: image " + doctorNodeImage + " is not present on the runner's Docker host",
 			inspects: []string{doctorGoImage, doctorNodeImage},
 		},
+		"one image resolves only by ID": {
+			opts: dockerCheckImageOptions(several), idOnly: map[string]bool{doctorNodeImage: true}, status: Fail,
+			detail:   "check web-unit: image " + doctorNodeImage + " does not resolve by digest; a local image has that digest as its ID",
+			inspects: []string{doctorGoImage, doctorNodeImage},
+		},
+		"several checks share an image that resolves only by ID": {
+			opts: dockerCheckImageOptions(several), idOnly: map[string]bool{doctorGoImage: true}, missing: map[string]bool{doctorNodeImage: true}, status: Fail,
+			detail: "check go-test, go-vet: image " + doctorGoImage + " does not resolve by digest; a local image has that digest as its ID; " +
+				"check web-unit: image " + doctorNodeImage + " is not present on the runner's Docker host",
+			inspects: []string{doctorGoImage, doctorNodeImage},
+		},
+		"uppercase digest shown in lowercase": {
+			opts:   dockerCheckImageOptions(map[string]string{"go-test": "our-runner-check-go:rdbc@sha256:ABCDEF0123AB" + strings.Repeat("1", 52)}),
+			status: OK, detail: "go-test sha256:abcdef0123ab", inspects: []string{"our-runner-check-go:rdbc@sha256:ABCDEF0123AB" + strings.Repeat("1", 52)},
+		},
 		"inspection failure": {
 			opts: dockerCheckImageOptions(map[string]string{"go-test": doctorGoImage}), failure: errors.New("inspect image: Cannot connect to the Docker daemon"),
 			status: Fail, detail: "check go-test: image " + doctorGoImage + ": inspect image: Cannot connect to the Docker daemon",
@@ -87,7 +106,7 @@ func TestCheckImagesRowStatuses(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			calls := withDoctorImageInspection(t, test.missing, test.failure)
+			calls := withDoctorImageInspection(t, test.missing, test.idOnly, test.failure)
 			got := checkCheckImages(context.Background(), test.opts)
 			if got.Name != "check-images" || got.Status != test.status || got.Detail != test.detail {
 				t.Fatalf("check = %+v\nwant status %d detail %q", got, test.status, test.detail)

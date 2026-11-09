@@ -14,7 +14,7 @@ func TestCheckImageAcceptsAnEmptyOrDigestPinnedReference(t *testing.T) {
 		"empty":         "",
 		"name and tag":  testCheckImage,
 		"registry name": "registry.example.com:5000/tools/go@sha256:" + strings.Repeat("0", 64),
-		"uppercase hex": "golang@sha256:" + strings.Repeat("AbCdEf", 10) + "ABCD",
+		"lowercase hex": "golang@sha256:" + strings.Repeat("abcdef", 10) + "0123",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateCheck("go-test", CheckConfig{Command: "go", Image: image}); err != nil {
@@ -25,8 +25,11 @@ func TestCheckImageAcceptsAnEmptyOrDigestPinnedReference(t *testing.T) {
 }
 
 func TestCheckImageRefusesAReferenceThatIsNotPinnedByDigest(t *testing.T) {
-	const want = "check go-test: image must be pinned by digest (name@sha256:<64 hex>)"
+	const want = "check go-test: image must be pinned by digest (name@sha256:<64 lowercase hex>)"
 	for name, image := range map[string]string{
+		"uppercase hex":      "golang@sha256:" + strings.Repeat("ABCDEF", 10) + "ABCD",
+		"mixed case hex":     "golang@sha256:" + strings.Repeat("AbCdEf", 10) + "abcd",
+		"one uppercase hex":  "golang@sha256:" + strings.Repeat("a", 63) + "F",
 		"tag only":           "golang:1.26-bookworm",
 		"name only":          "golang",
 		"whitespace":         " ",
@@ -50,6 +53,18 @@ func TestCheckImageRefusesAReferenceThatIsNotPinnedByDigest(t *testing.T) {
 				t.Fatalf("Validate = %v, want %q", err, want)
 			}
 		})
+	}
+}
+
+func TestJobImageStillAcceptsUppercaseHex(t *testing.T) {
+	cfg := productionConfig()
+	cfg.JobImage = "registry.example.com/runner/job@sha256:" + strings.Repeat("AbCdEf", 10) + "ABCD"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate with an uppercase-hex job_image = %v", err)
+	}
+	cfg.Checks = map[string]CheckConfig{"go-test": {Command: "go", Image: "golang@sha256:" + strings.Repeat("A", 64)}}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "check go-test: image must be pinned by digest (name@sha256:<64 lowercase hex>)") {
+		t.Fatalf("Validate with an uppercase-hex check image = %v", err)
 	}
 }
 
@@ -78,5 +93,12 @@ func TestLoadReadsACheckImageFromTheConfigFile(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "check go-test: image must be pinned by digest") {
 		t.Fatalf("tag-only image from the config file = %v", err)
+	}
+	upper := "our-runner-check-go:rdbc@sha256:" + strings.Repeat("B", 64)
+	if err := os.WriteFile(path, []byte(strings.Replace(raw, testCheckImage, upper, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "check go-test: image must be pinned by digest (name@sha256:<64 lowercase hex>)") {
+		t.Fatalf("uppercase-hex image from the config file = %v", err)
 	}
 }

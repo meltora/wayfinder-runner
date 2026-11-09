@@ -39,6 +39,8 @@ func checkCheckImages(ctx context.Context, opts Options) Check {
 		_, err := inspectCheckImage(ctx, ref)
 		if errors.Is(err, isolation.ErrImageNotPresent) {
 			failures = append(failures, "check "+strings.Join(byImage[ref], ", ")+": image "+ref+" is not present on the runner's Docker host")
+		} else if errors.Is(err, isolation.ErrImageResolvesOnlyByID) {
+			failures = append(failures, "check "+strings.Join(byImage[ref], ", ")+": image "+ref+" does not resolve by digest; a local image has that digest as its ID")
 		} else if err != nil {
 			failures = append(failures, "check "+strings.Join(byImage[ref], ", ")+": image "+ref+": "+err.Error())
 		}
