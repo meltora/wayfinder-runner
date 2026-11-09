@@ -303,6 +303,13 @@ func NewWithExternalOperationDependencies(
 			_ = lock.Close()
 			return nil, err
 		}
+		if err := verifyDockerCheckImages(context.Background(), cfg.Checks); err != nil {
+			_ = j.Close()
+			_ = lock.Close()
+			return nil, err
+		}
+	} else {
+		warnUnusedCheckImages(cfg.Checks, logger)
 	}
 	if err := recoverStartupJobState(cfg.StateDir, cleanupJobs, ownershipReclaimer(ownership, runnerID)); err != nil {
 		_ = j.Close()

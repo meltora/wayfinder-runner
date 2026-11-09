@@ -243,6 +243,17 @@ agent's directory. A check therefore cannot change the agent's files, a planted
 dependency cannot decide its result, and its result names the commit it
 actually tested.
 
+The published commit is read from the agent's checkout by the runner. A fixed
+list of provider harness paths is not work product and is left out of every
+iterative and terminal snapshot when it is untracked at the base commit:
+today only `.claude/.cc-writes`, the private settings staging directory that
+Claude Code creates (mode 0700, owned by the job user) and keeps for the whole
+run. A listed path is dropped, never copied; a listed path that the base
+commit tracks is read and published like any other file. Any other entry the
+runner cannot read refuses the snapshot with "has an entry the runner cannot
+read at <path>", and a file that changes during the read still refuses with
+"changed while it was read".
+
 `dependency_directories` is no longer supported; a configuration that sets it
 to a non-empty list is refused (`[]` is accepted and means nothing). A check
 that needs npm dependencies sets `install`. Before the check command, the
@@ -293,9 +304,11 @@ Direct mode runs the same commands unisolated, with the host `HOME` (D52).
 
 For every terminal required check that reached its check workspace, the runner
 publishes `runner-check-install-<check id>.json` (schema
-`our-runner.check-install.v1`) before the check's `test_results` event. It
-records the job, attempt, repository, commit, isolation, `carried_directories:
-[]`, the install report (tool version, argv, lockfile blob IDs, result and tree
+`our-runner.check-install.v2`) before the check's `test_results` event. It
+records the job, attempt, repository, commit, isolation, `hermetic`,
+`check_image` (under Docker the `sha256:<64 hex>` digest of the image the check
+ran in, the check image or else the job image, and never a registry, name or
+tag; `null` under direct isolation), `carried_directories: []`, the install report (tool version, argv, lockfile blob IDs, result and tree
 digest per directory) and the check result, without host paths, environment
 values or output. Artifact names starting with `runner-` (any ASCII case) are
 reserved for the runner; the agent's `platform_publish_artifact` refuses them.
@@ -952,7 +965,7 @@ Check commands stay on the host. The dashboard cannot define, replace or remove
 them: a delivered document with a `checks` key is rejected as a whole. With a
 dashboard configuration, define checks in `<state-dir>/runner.local.yaml` with
 the same keys as in `config.yaml` (`command`, `args`, `timeout_seconds`,
-`repository_id`, `install`). A `config.yaml` in the state directory is not read
+`repository_id`, `install`, `image`). A `config.yaml` in the state directory is not read
 in this mode: `start` and `doctor --state-dir` warn that it is ignored, also when
 the configuration then fails to load, and name its checks when
 `runner.local.yaml` defines none. For example, append:
@@ -984,7 +997,52 @@ checks use the same published check workspace and `install` rules as any other
 check. With `isolation: direct` a check runs on the host with the runner's
 `PATH`, without the Docker sandbox. With `isolation: docker` it runs inside the
 job image, so its command must exist in that image (the default job image has
-no Go toolchain).
+no Go toolchain), unless the check sets `image`.
+
+`checks.<id>.image` names a toolchain image for that check only, pinned by
+digest (`name@sha256:<64 hex>`, a tag before the digest is allowed); a tag-only
+or otherwise unpinned value stops `start`. It is a host decision: the dashboard
+document cannot set it (a delivered check, `check_image` or `check_images` key
+is rejected), `platform_run_check` refuses an `image` field, and a hot reload
+keeps the image read at start. Under Docker both the check's `install` step and
+its command run in that image, for iterative `platform_run_check` runs and the
+terminal required run alike, with every other container restriction unchanged
+(user, read-only root, noexec `/tmp`, home bind, dropped capabilities,
+`no-new-privileges`, network, CPU, memory, PID limits and labels). The agent's
+provider container and every other runner container keep the job image. A check
+without `image` keeps the job image exactly as before.
+
+```yaml
+checks:
+  go-test:
+    command: go
+    args: [test, ./...]
+    timeout_seconds: 600
+    image: our-runner-check-go:v1@sha256:<image ID printed by build.sh>
+```
+
+The runner never pulls a check image. Under Docker, `start` inspects every
+distinct configured check image on the configured Docker host before it
+connects and stops with "check <id>: image <ref> is not present on the runner's
+Docker host; pull or build it before starting" when one is missing. `doctor`
+reports a `check-images` row: OK with each check ID and short digest, FAIL for
+each missing image, SKIP under direct isolation or when no check declares an
+image. Under `isolation: direct` the image is unused and `start` logs a warning
+naming only the check ID; the check runs on the host.
+
+`packaging/check-image-go` is the reference Go check image (`golang:1.27.3-bookworm`
+pinned by digest, user `runner` uid and gid 10001, no setuid or setgid files,
+`GOTOOLCHAIN=local`, `GOPATH=/home/runner/go`, `GOTMPDIR=/home/runner` because
+`/tmp` is noexec, `GOFLAGS=-modcacherw`). Build it on the runner's Docker host
+and copy the printed pinned reference into `runner.local.yaml`:
+
+```sh
+DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock sh packaging/check-image-go/build.sh our-runner-check-go:v1
+```
+
+Module dependencies are not downloaded at check time (the network stays as
+configured, `none` by default), so a Go check passes only for modules whose
+dependencies are vendored or that need none.
 
 `start` and `doctor --state-dir DIR` fetch the latest document every time. Only
 after a network failure or a 5xx answer does `start` fall back to the cached

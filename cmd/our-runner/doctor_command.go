@@ -51,13 +51,23 @@ func cmdDoctorWithDependencies(args []string, deps doctorCommandDependencies) er
 	return nil
 }
 
+func declaredCheckImages(checks map[string]config.CheckConfig) map[string]string {
+	images := map[string]string{}
+	for id, check := range checks {
+		if check.Image != "" {
+			images[id] = check.Image
+		}
+	}
+	return images
+}
+
 func loadedConfigurationDoctorOptions(cfg config.Config) doctor.Options {
 	return doctor.Options{
 		ConfigurationLoaded: true, Provider: cfg.Provider, ProviderBinary: cfg.ProviderBinaries[cfg.Provider],
 		PlatformTrustedKeySet: cfg.AgentPackTrustedKeySet, BuildChannel: daemon.Channel,
 		RepositoryCount: len(cfg.Repositories), TrustedAgentPackKeyCount: len(cfg.AgentPackPublicKeys),
 		ControlPlaneURL: cfg.ControlPlaneURL, StateDir: cfg.StateDir, Isolation: cfg.Isolation,
-		JobImage: cfg.JobImage, JobNetwork: cfg.JobNetwork, JobNetworkName: cfg.JobNetworkName,
+		JobImage: cfg.JobImage, CheckImages: declaredCheckImages(cfg.Checks), JobNetwork: cfg.JobNetwork, JobNetworkName: cfg.JobNetworkName,
 		EgressPolicyID: cfg.EgressPolicyID, WorkIntakeProposalEnabled: cfg.WorkIntakeProposal.Enabled, EgressPolicyVerifierSocket: cfg.EgressPolicyVerifierSocket,
 		WorkIntakeProposalAdapter: cfg.WorkIntakeProposal.Adapter, WorkIntakeProposalBinary: cfg.ProviderBinaries[cfg.WorkIntakeProposal.Adapter],
 		ProviderEnvironmentNames: map[string][]string{

@@ -297,6 +297,7 @@ type workspaceTask struct {
 	configuredNetwork bool
 	outputLimit       int
 	npmCache          string
+	image             string
 }
 
 func (jr *jobRunner) runWorkspaceCommand(ctx context.Context, purpose, root, dir, command string, args []string, configuredNetwork bool, outputLimit int) (string, bool, error) {
@@ -339,6 +340,9 @@ func (jr *jobRunner) runWorkspaceTask(ctx context.Context, task workspaceTask) (
 		}
 		policy := jr.commandPolicy(dir, root, home, containerAttempt, configuredNetwork)
 		policy.NPMCacheDir = task.npmCache
+		if task.image != "" {
+			policy.Image = task.image
+		}
 		wrappedCommand, wrappedArgs, err = iso.Wrap(command, wrappedArgs, policy)
 		if err != nil {
 			_ = isolation.CleanupHome(home)

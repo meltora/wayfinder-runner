@@ -133,6 +133,33 @@ user text block; the first request must carry the exact prompt. Containers get
 unique names and the `fr08-stdin-prompt` runner label, and the tests fail if any
 labelled container remains.
 
+The harness-state and check-image tests run under the same gate. `CHECK_IMAGE`
+names a digest-pinned Go check image, for example the reference image built by
+`sh packaging/check-image-go/build.sh our-runner-check-go:<tag>` (use the
+printed pinned reference):
+
+```sh
+DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock \
+RUN_DOCKER_SANDBOX_PROBE=1 \
+JOB_IMAGE=<registry>/<image>@sha256:<digest> \
+CHECK_IMAGE=our-runner-check-go:<tag>@sha256:<image ID> \
+go test ./internal/isolation/ ./internal/daemon/ \
+  -run 'TestClaudeCreatesAPrivateStagingDirectoryInTheHandedOffWorkspace|TestIterativeSnapshotSkipsHarnessStateDuringARootlessHandOff|TestGoCheckImageRunsGoTestUnderTheProductionPolicy' -v -count=1
+```
+
+`TestClaudeCreatesAPrivateStagingDirectoryInTheHandedOffWorkspace` runs the
+job image's real `claude` offline in a handed-off workspace and records that
+`.claude/.cc-writes` is a 0700 directory owned by the job user that the runner
+cannot read. `TestIterativeSnapshotSkipsHarnessStateDuringARootlessHandOff`
+creates that directory as the job user after a rootless hand-off and requires
+the iterative snapshot to publish the work product without it.
+`TestGoCheckImageRunsGoTestUnderTheProductionPolicy` runs `platform_run_check`
+for `go test ./...` on a fixture module through the production check path:
+it passes in `CHECK_IMAGE` (the fixture test itself asserts uid and gid 10001, a
+read-only root, a noexec `/tmp` and no network), prints its `ok` line, fails
+with `exit_nonzero` when a test fails, and still fails in `JOB_IMAGE` when the
+check sets no image. `CHECK_IMAGE` is required only by the last test.
+
 The Codex stdin smoke runs the host's `codex` against a local refusing endpoint,
 once for a new session and once resuming that session's real thread ID:
 

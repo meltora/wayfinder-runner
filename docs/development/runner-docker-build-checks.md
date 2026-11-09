@@ -6,13 +6,13 @@
 | ---------------------- | ----- |
 | ID                     | FR-01 follow-up `runner-docker-build-checks` (RDBC) |
 | Kind                   | bug (release blocker for Docker-isolated Build jobs) plus one bounded feature (host-declared check image) |
-| Status                 | ready |
+| Status                 | review_ready |
 | Risk                   | critical. The slice changes what the runner reads out of the agent's workspace into the trusted result repository, and which image runs required checks. A defect can publish harness state into a change set, hide a real concurrent change, or let a check run in an image that nobody on the host chose. It does not touch credentials, the control-plane protocol or tenant data. |
 | Complexity             | complex. Two independent defects meet in one live path (snapshot refusal, then missing toolchain). The work crosses the candidate copy, configuration validation, the check task path, the provenance artifact, the start gate, doctor, a new packaging directory and gated Docker tests. Each piece is small; the live proof depends on rootless Docker behaviour that unit tests cannot show. |
 | Parent scope           | `PRODUCT.md` "Implementation and review flow" (Build runs required checks and returns evidence), "Workspace composition" item 2 ("A pinned project toolchain layer"), the isolation baseline ("Separate trusted bootstrap and evidence collection from checked-out repository code"), and MCP enforcement (scoped checks use the same runner-owned sandbox and network policy as final required checks; `platform_run_check` cannot supply or override the executable, isolation or network). Parent records in the app repository: `docs/development/build-job-approved-plan-delivery.md`, section "FR-01 Docker Build check (9 November 2026)" (defects FD-1, FD-2, FD-3); `docs/development/runner-local-checks.md`; `docs/development/runner-hermetic-check-workspace.md` (D49, REQ-12 provenance, "Owner decisions on LC-1 to LC-4"); `docs/development/runner-job-image-claude-cli.md` (RJIC REQ-12, still open). |
 | Product sources        | `PRODUCT.md` sections named above. Owner decisions LC-1 and LC-2 (checks stay defined on the runner host; the control plane cannot define check commands), LC-3 (isolation changes are restart-required), LC-4 (`acknowledge_direct`). |
 | Planner                | Opus 5.5 (`claude-opus-5-5`); develop-planner subagent, RDBC planning session, 9 November 2026 |
-| Implementer            | not assigned |
+| Implementer            | Opus 5.5 (`claude-opus-5-5`); develop-implementer subagent, worktree `agent-a828b3f7e7edaa3e6`, branch `worktree-agent-a828b3f7e7edaa3e6`, fast-forwarded to main `65e7310`, 9 November 2026 |
 | Reviewer               | not assigned |
 | Repair attempt         | 0 |
 | Updated                | 2026-11-09 |
@@ -123,35 +123,35 @@
 
 Owned files (app-runner): `internal/daemon/agent_result_copy.go` and test, `internal/daemon/agent_result_resolution.go` and test, new `internal/daemon/agent_harness_state.go` and test, `internal/config/config.go`, `internal/config/check_validation.go` and tests, `internal/remoteconfig` tests (and code only if the refusal path needs the new field named), `internal/daemon/build.go`, `internal/daemon/check_install.go`, `internal/daemon/check_install_provenance.go` and test, new `internal/daemon/check_image_gate.go` and test, `internal/daemon/daemon.go` (gate call and direct-mode warning), `internal/doctor/doctor.go` and test, new gated test files under `internal/daemon/` or `internal/isolation/`, new `packaging/check-image-go/Dockerfile` and `build.sh`, `README.md`, `docs/TESTING.md`, this record. Do not touch `bin/`, `~/.shortstack-runner`, `runner.local.yaml`, the running runner, the job image, host Docker settings or any app file.
 
-0. [ ] REQ-01 first, no production code yet. On the rootless daemon, in the job image under the job flags, run Claude 2.1.299 offline so that it writes a project settings file (for example via a settings-writing command that needs no credentials; if none exists, record that and use `strace`-free evidence such as a wrapper that lists `.claude/` from a second container while Claude starts). Record owner, mode and lifetime of `.claude/.cc-writes`, then reproduce the host-side snapshot refusal and record which call fails. Write the step-0 note. Stop if neither H1 nor H2 holds.
-1. [ ] REQ-02 tests first (injected errors per site), then the message split.
-2. [ ] REQ-03 tests first, then `agent_harness_state.go` and the skip-set wiring for iterative and terminal snapshots.
-3. [ ] REQ-04 gated test.
-4. [ ] REQ-05 tests first, then the config field, validation, reload and warning.
-5. [ ] REQ-06 tests first, then carry the check image through `workspaceTask` into `commandPolicy` (one added parameter or field; no other caller changes).
-6. [ ] REQ-07 tests first with an inspection seam (`var inspectCheckImage = …`, like `probeProviderCLI`), then the gate and the doctor row.
-7. [ ] REQ-08 tests first, then provenance v2 and the app grep.
-8. [ ] REQ-09: packaging files; build on the rootless daemon; record version, base digest and image ID.
-9. [ ] REQ-10 gated test against the built image.
-10. [ ] REQ-12 docs, REQ-13 checks, implementation report, status `review_ready`.
+0. [x] REQ-01 first, no production code yet. On the rootless daemon, in the job image under the job flags, run Claude 2.1.299 offline so that it writes a project settings file (for example via a settings-writing command that needs no credentials; if none exists, record that and use `strace`-free evidence such as a wrapper that lists `.claude/` from a second container while Claude starts). Record owner, mode and lifetime of `.claude/.cc-writes`, then reproduce the host-side snapshot refusal and record which call fails. Write the step-0 note. Stop if neither H1 nor H2 holds.
+1. [x] REQ-02 tests first (injected errors per site), then the message split.
+2. [x] REQ-03 tests first, then `agent_harness_state.go` and the skip-set wiring for iterative and terminal snapshots.
+3. [x] REQ-04 gated test.
+4. [x] REQ-05 tests first, then the config field, validation, reload and warning.
+5. [x] REQ-06 tests first, then carry the check image through `workspaceTask` into `commandPolicy` (one added parameter or field; no other caller changes).
+6. [x] REQ-07 tests first with an inspection seam (`var inspectCheckImage = …`, like `probeProviderCLI`), then the gate and the doctor row.
+7. [x] REQ-08 tests first, then provenance v2 and the app grep.
+8. [x] REQ-09: packaging files; build on the rootless daemon; record version, base digest and image ID.
+9. [x] REQ-10 gated test against the built image.
+10. [x] REQ-12 docs, REQ-13 checks, implementation report, status `review_ready`.
 
 ## Verification plan and results
 
 | Requirement | Planned evidence | Result |
 | ----------- | ---------------- | ------ |
-| REQ-01 | Step-0 note with reproduction output | pending |
-| REQ-02 | Unit tests | pending |
-| REQ-03 | Unit tests | pending |
-| REQ-04 | Gated test output | pending |
-| REQ-05 | Unit tests | pending |
-| REQ-06 | Unit tests | pending |
-| REQ-07 | Unit tests | pending |
-| REQ-08 | Unit tests and app grep | pending |
-| REQ-09 | Build output | pending |
-| REQ-10 | Gated test output | pending |
-| REQ-11 | Tests and diff review | pending |
-| REQ-12 | Diff review | pending |
-| REQ-13 | Command output | pending |
+| REQ-01 | Step-0 note with reproduction output | implemented, H1 holds; see step-0 note (awaiting review) |
+| REQ-02 | Unit tests | implemented; `agent_result_copy_refusal_test.go` (9 tests, one or more per site) pass (awaiting review) |
+| REQ-03 | Unit tests | implemented; `agent_harness_state_test.go` (12 tests) pass (awaiting review) |
+| REQ-04 | Gated test output | implemented; `TestIterativeSnapshotSkipsHarnessStateDuringARootlessHandOff` PASS 0.94 s on the rootless daemon (awaiting review) |
+| REQ-05 | Unit tests | implemented; `check_image_config_test.go`, `local_check_image_test.go`, direct-mode warning test pass (awaiting review) |
+| REQ-06 | Unit tests | implemented; `check_image_policy_test.go` (4 tests) pass (awaiting review) |
+| REQ-07 | Unit tests | implemented; `check_image_gate_test.go`, `check_image_check_test.go`, `image_inspect_test.go`, `doctor_check_images_test.go` pass (awaiting review) |
+| REQ-08 | Unit tests and app grep | implemented; exact JSON tests pass; app grep: no production parser, one test-support driver expects v1 (awaiting review) |
+| REQ-09 | Build output | implemented; image ID `sha256:59201f8899824429f7a9eb8621f82f9df946580884df6e49380db89795451813` (awaiting review) |
+| REQ-10 | Gated test output | implemented; `TestGoCheckImageRunsGoTestUnderTheProductionPolicy` PASS 11.10 s, 4 subtests (awaiting review) |
+| REQ-11 | Tests and diff review | implemented; see security notes (awaiting review) |
+| REQ-12 | Diff review | implemented; README and `docs/TESTING.md` (awaiting review) |
+| REQ-13 | Command output | implemented; see command evidence (awaiting review) |
 | REQ-14 | Coordinator live evidence | pending |
 
 ## Coordinator live steps (REQ-14)
@@ -176,7 +176,150 @@ Not started.
 
 ## Implementation report
 
-Not started.
+Implementer: develop-implementer, 9 November 2026. Status set to `review_ready`; REQ-14 is the coordinator's.
+
+### Step-0 note (REQ-01): H1 holds
+
+- Claude 2.1.299 in `our-runner-job:rjic@sha256:a2c8cabe…` names its settings staging directory `.cc-writes` (`var FU=".cc-writes"` in the bundled CLI, scratchpad extract `rdbc/ccwrites.txt`).
+- `TestClaudeCreatesAPrivateStagingDirectoryInTheHandedOffWorkspace` (gated, `internal/isolation/claude_staging_dir_integration_test.go`, PASS 4.15 s) runs the image's real `claude` offline under the job flags in a workspace handed off by the production rootless hand-off. Claude creates `<cwd>/.claude/.cc-writes` as a directory with mode 0700, owned by uid 10001 in the container (host uid 110000). It exists for the whole run and stays after the provider exits, until reclaim. From the host, `os.Root.Lstat(".cc-writes")` succeeds and `OpenRoot(".cc-writes")` fails with `fs.ErrPermission`.
+- The failing call was the subdirectory `OpenRoot` site in `copyCandidateTree` (`agent_result_copy.go` line 284 at the baseline). It mapped every error to "changed while it was read".
+- Pre-fix reproduction: `scratchpad/rdbc/prefix-repro.sh` runs the REQ-04 test body against an export of `main` before this slice. It fails with "agent result refused in repository repo-1: the checkout repositories/repo-1 changed while it was read at .claude/.cc-writes", which is the FR-01 FD-1 symptom.
+- No second harness path was observed, so the list is only `.claude/.cc-writes`. H2 (a race between list and open) was not observed: the directory persists.
+
+### Changed paths
+
+- FD-1: `internal/daemon/copy_target.go` (`errCopySourceUnreadable`), `internal/daemon/agent_result_copy.go` (`readRefusal`, the message split at each site), `internal/daemon/agent_harness_state.go` (new: `agentHarnessState`, untracked-at-base detection through `ls-tree`, `snapshotSkips`), `internal/daemon/agent_result_resolution.go` (skip-set wiring for iterative and terminal snapshots).
+- FD-2 config: `internal/config/config.go` (`CheckConfig.Image`), `internal/config/check_validation.go` (digest-pin validation).
+- FD-2 execution: `internal/daemon/build.go` (`workspaceTask.image` sets `policy.Image` only when non-empty), `internal/daemon/checkexec.go` (the check command and `checkReport.checkImage`), `internal/daemon/check_install.go` (the install step).
+- FD-2 gate and doctor: `internal/isolation/image_inspect.go` (new: `InspectImage`, `ErrImageNotPresent`, `ImageDigest`), `internal/daemon/check_image_gate.go` (new), `internal/daemon/daemon.go` (gate call under Docker, warning under direct), `internal/doctor/check_image_check.go` (new), `internal/doctor/doctor.go` (`Skip` status, `Options.CheckImages`, the row), `cmd/our-runner/doctor_command.go` (passes the declared check images to doctor).
+- FD-2 provenance: `internal/daemon/check_install_provenance.go` (v2, `check_image`).
+- Packaging: `packaging/check-image-go/Dockerfile`, `packaging/check-image-go/build.sh` (new).
+- Tests: `internal/daemon/agent_result_copy_refusal_test.go`, `agent_harness_state_test.go`, `agent_harness_state_rootless_integration_test.go` (gated), `check_image_gate_test.go`, `check_image_policy_test.go`, `check_image_go_integration_test.go` (gated), `check_install_provenance_test.go` (changed); `internal/config/check_image_config_test.go`; `internal/remoteconfig/local_check_image_test.go`; `internal/doctor/check_image_check_test.go`, `doctor_test.go` (changed: 13 rows); `internal/isolation/image_inspect_test.go`, `claude_staging_dir_integration_test.go` (gated); `cmd/our-runner/doctor_check_images_test.go`.
+- Docs: `README.md`, `docs/TESTING.md`, this record.
+
+### Decisions
+
+- **I-1 Doctor `Skip` status.** The contract asks for a Skip row. Doctor had only OK, Warn and Fail, so `Skip` is new, prints `SKIP`, and does not fail the report (`TestSkipIsReportedWithoutFailingTheReport`).
+- **I-2 cmd wiring outside the owned files.** `cmd/our-runner/doctor_command.go` passes the checks that declare an image to `doctor.Options.CheckImages`. Without this the doctor row would always skip. It is a one-function addition with its own test.
+- **I-3 File permission failures.** `copyRegular` also maps a permission failure on opening a file to "cannot read", so a private file reports the same cause as a private directory. Vanished or replaced entries keep "changed while it was read".
+- **I-4 Provenance digest source.** `check_image` is taken from the configured pinned reference (`ImageDigest`), not from a fresh inspection. The start gate has already proven that this reference resolves on the host, and the container is started by that same reference. A job image that is not digest-pinned yields `null` (direct-mode equivalent), never a name or tag.
+- **I-5 Inspection reuses `runDockerProbe`.** No new gosec annotation was needed. `InspectImage` validates the reference before Docker runs, passes `--` before it, and accepts only `sha256:<64 hex>` output. It never pulls.
+- **I-6 Direct-mode warning.** It names only the check ID, never the reference, so host naming stays out of logs that may be shared.
+- **I-7 REQ-10 `ok` line.** A passed `platform_run_check` result carries no output, so a passing `go test ./...` cannot show its `ok` line through the production path. A separate subtest runs `/bin/sh -c "go test ./... && exit 3"` in the same image and policy and asserts the `ok  \texample.test/fixture` line in the failed output. The plain `go test ./...` subtest asserts `passed`. The fixture test itself asserts uid and gid 10001, a read-only root, a noexec `/tmp` and no network, so `passed` proves those properties.
+- **I-8 Job-image behaviour without a check image.** FD-2 says "`go` not found". The real output of `go test ./...` in the job image is `Cannot find module '…/go'` with `exit_nonzero`. The `node` image entrypoint prefixes `node` when the first argument is not a command on `PATH`. The REQ-10 third case asserts that real, unchanged behaviour. The reference Go image has no entrypoint, so its argv runs directly.
+- **I-9 Image reference format.** The image built on the rootless daemon (containerd image store) reports an ID equal to its manifest-list digest, and `docker image inspect` and `docker run` both resolve `our-runner-check-go:rdbc@sha256:<ID>` locally without a registry. This was verified with the built image (below). On the classic store without containerd, a locally built and never-pushed image may not resolve by `name@digest`. This is not tested here, so it is flagged as an uncertainty for other hosts.
+
+### Go version and base image (REQ-09)
+
+- go.dev/dl lists stable go1.27.3, go1.27.2, go1.27.1, go1.27.0 and go1.26.10 as the newest. The go.dev/doc/devel/release page dates go1.27.3 to 2026-10-19, which is 21 days before implementation (2026-11-09) and so at least two weeks. It is the newest release that qualifies.
+- `OMKE/shortstack-e2e` `go.mod` (read with `gh api`): `module github.com/omke/shortstack-e2e`, `go 1.25`, no requirements. 1.27.3 is not below it, and no module download is needed at check time.
+- Base image: `golang:1.27.3-bookworm@sha256:dc0963f32053e4bc451d24d87e3892d42d01021b61f093e98eb95c0352bb84b0`, pulled on the rootless daemon, linux/amd64.
+
+Build output (`DOCKER_HOST=unix:///run/user/1000/docker.sock sh packaging/check-image-go/build.sh our-runner-check-go:rdbc`, tail):
+
+```text
+#5 [2/3] RUN groupadd --gid 10001 runner && useradd --create-home --uid 10001 --gid 10001 runner && find / -xdev -type f -perm /6000 -exec chmod a-s {} + && test -z "$(find / -xdev -type f -perm /6000)" && test "$(id -u runner):$(id -g runner)" = "10001:10001" && go version | grep -Eq '^go version go1\.27\.3 linux/(amd64|arm64)$'
+#5 DONE 0.7s
+#7 exporting manifest list sha256:59201f8899824429f7a9eb8621f82f9df946580884df6e49380db89795451813 done
+#7 naming to docker.io/library/our-runner-check-go:rdbc done
+image: our-runner-check-go:rdbc
+platform: linux/amd64
+toolchain: go version go1.27.3 linux/amd64
+local image ID: sha256:59201f8899824429f7a9eb8621f82f9df946580884df6e49380db89795451813
+pinned reference: our-runner-check-go:rdbc@sha256:59201f8899824429f7a9eb8621f82f9df946580884df6e49380db89795451813
+```
+
+`build.sh` asserts after the build, outside the Dockerfile, that `go version` matches as uid 10001 under `--network none --read-only` and that `find / -xdev -type f -perm /6000` as root prints nothing. Checks against the pinned reference:
+
+```text
+$ docker image inspect --format '{{.Id}} {{.Config.User}}' -- our-runner-check-go:rdbc@sha256:59201f88…
+sha256:59201f8899824429f7a9eb8621f82f9df946580884df6e49380db89795451813 runner
+$ docker run --rm --network none --read-only --user 10001:10001 --tmpfs /tmp:rw,noexec,nosuid our-runner-check-go:rdbc@sha256:59201f88… go env GOTOOLCHAIN GOPATH GOTMPDIR GOFLAGS
+local
+/home/runner/go
+/home/runner
+-modcacherw
+```
+
+The coordinator rebuilds from the reviewed tree in REQ-14 step 1. A rebuild on the same base and Dockerfile may produce a different ID (timestamps), so the coordinator must use the ID it prints.
+
+### REQ-08 app grep
+
+`grep -rn "check-install" <app>/src` (app checkout, read only): no production code parses the provenance schema. One test-support driver does: `src/server/planning-manifests/test-support/go-build-upload-evidence.go:24` checks `document.Schema != "our-runner.check-install.v1"`, and its `go-planning-driver_test.go` uses v1. It runs under `run-go-planning-driver.test.ts`. This is test support, not production, so the slice did not stop. Follow-up FU-5: the app test support must accept v2 before a v2 artifact reaches that driver. The implementer may not change app files.
+
+### Security notes (REQ-11)
+
+- Who chooses the image: only the host's local check source. `ParseDelivery` still refuses a remote `checks` key, and the new tests add a remote check with `image`, a top-level `check_image` and a `check_images` map, all refused. `platform_run_check` refuses an `image` field through the strict schema (`TestIterativeAndTerminalRunsOfACheckUseItsImage`, `TestRunCheckRejectsArbitraryFieldsAndOverrides`). A hot reload keeps the start-time image (`TestReloadNeverChangesTheRunningCheckImages`).
+- Pinning: tag-only, name-only, short or long, sha512, non-hex, whitespace and double-digest references are refused at load. The start gate inspects by the pinned reference and never pulls, and a missing image stops start before the daemon connects.
+- Container restrictions: `check_image_policy_test.go` proves that with an image set, the normalized argv differs from the job-image argv only in the image, keeping user, read-only root, tmpfs, home bind, dropped capabilities, `no-new-privileges`, network, CPU, memory, PIDs and labels. A check without an image produces the exact pre-slice argv. The provider, ownership, probe and proposal containers do not read `workspaceTask.image`.
+- Disclosure: provenance carries only `sha256:<64 hex>`, with exact JSON tests that the registry, name and tag never appear. The direct-mode warning names only the check ID. The gate and doctor messages include the configured reference, and only in local output.
+- Harness exclusion: a listed path is skipped only when the base commit does not track it, and it is dropped, never copied. A symlink at the path is not followed. A tracked listed path is read and compared, and an unreadable tracked one is refused. Paths outside the list are never skipped.
+- Reference image: no secret, no `COPY` from the host, no setuid or setgid files (asserted twice), non-root user 10001, `GOTOOLCHAIN=local` so no toolchain download is attempted.
+- Existing behaviour noted, not changed: a failed check's output can include the check workspace's absolute host path (the job image's `Cannot find module '/tmp/…/job-results/<job>.checks/…/go'`). The check directory is bind-mounted at its host path. This predates the slice and is recorded as FU-6.
+
+### Command evidence (REQ-13)
+
+| Command | Result |
+| ------- | ------ |
+| `gofmt -l .` | prints nothing |
+| `go build ./...` | ok |
+| `go vet ./...` | ok |
+| `go test ./... -count=1` | 5190 passed in 46 packages, exit 0 |
+| `go test -race ./internal/daemon/ ./internal/config/ ./internal/doctor/ ./internal/isolation/ -count=1` | 2161 passed in 4 packages, exit 0 |
+| `sh scripts/check.sh vuln` (pinned govulncheck) | "Your code is affected by 0 vulnerabilities" |
+| `sh scripts/check.sh sec` (pinned gosec) | no findings, exit 0 |
+| `staticcheck` | not installed |
+| `sh -n packaging/check-image-go/build.sh` | ok |
+| Gated, `DOCKER_HOST=unix:///run/user/1000/docker.sock RUN_DOCKER_SANDBOX_PROBE=1 JOB_IMAGE=our-runner-job:rjic@sha256:a2c8cabe… CHECK_IMAGE=our-runner-check-go:rdbc@sha256:59201f88…` | see below |
+
+```text
+--- PASS: TestIterativeSnapshotSkipsHarnessStateDuringARootlessHandOff (0.94s)
+--- PASS: TestGoCheckImageRunsGoTestUnderTheProductionPolicy (11.10s)
+    --- PASS: .../a_passing_module_passes_in_the_check_image (3.51s)
+    --- PASS: .../go_test_prints_its_ok_line_in_the_check_image (3.39s)
+    --- PASS: .../a_failing_test_fails_in_the_check_image (3.42s)
+    --- PASS: .../the_job_image_still_has_no_Go_toolchain (0.77s)
+ok  	github.com/example/app-runner/internal/daemon	12.057s
+--- PASS: TestAgentPackMountRefusesEveryWriteInsideTheContainer (0.68s)
+--- PASS: TestClaudeCreatesAPrivateStagingDirectoryInTheHandedOffWorkspace (4.15s)
+--- PASS: TestJobImageSandboxRuntimeStartsUnderTheNestedSandboxFlags (2.35s)
+ok  	github.com/example/app-runner/internal/isolation	7.193s
+```
+
+Statement coverage per new or changed Go file. The profile comes from `go test -coverprofile` over `./internal/daemon/ ./internal/config/ ./internal/doctor/ ./internal/isolation/ ./cmd/our-runner/`, aggregated per file with a scratchpad helper (`rdbc/filecov/main.go`):
+
+| File | Coverage |
+| ---- | -------- |
+| `cmd/our-runner/doctor_command.go` | 100.0 % |
+| `internal/config/check_validation.go` | 100.0 % |
+| `internal/config/config.go` | 92.9 % |
+| `internal/daemon/agent_harness_state.go` | 100.0 % |
+| `internal/daemon/agent_result_copy.go` | 88.7 % |
+| `internal/daemon/agent_result_resolution.go` | 90.2 % |
+| `internal/daemon/build.go` | 92.2 % |
+| `internal/daemon/check_image_gate.go` | 100.0 % |
+| `internal/daemon/check_install.go` | 95.3 % |
+| `internal/daemon/check_install_provenance.go` | 90.9 % |
+| `internal/daemon/checkexec.go` | 97.4 % |
+| `internal/daemon/copy_target.go` | 78.3 % (baseline 77.8 %) |
+| `internal/daemon/daemon.go` | 77.4 % (baseline 77.3 %) |
+| `internal/doctor/check_image_check.go` | 97.1 % |
+| `internal/doctor/doctor.go` | 85.8 % |
+| `internal/isolation/image_inspect.go` | 100.0 % |
+
+`copy_target.go` and `daemon.go` were below 80 % before this slice. The baseline was measured on an export of `main` before the slice with the same command. Every block added by this slice in those two files has a non-zero count: `copy_target.go` 106–109, and `daemon.go` 306–313. The gap is in untouched code and is recorded as FU-7, not closed here.
+
+### Candidate coverage
+
+- Cardinality: zero, one and several check images (gate distinct-image test); install plus run and iterative plus terminal (policy tests); zero, one and two candidate roots and the path present, absent, tracked, unreadable and as a symlink (harness-state tests); every refusal site with permission, vanished and replaced errors (refusal tests).
+- Not covered by an automated test: the classic (non-containerd) image store resolving a local `name@digest` (I-9), and a live Build (REQ-14).
+
+### Notes for the coordinator (REQ-14)
+
+- Use the pinned reference printed by the step-1 rebuild. The ID recorded above is only valid for the image built in this worktree.
+- `doctor` should show `check-images  OK  go-test sha256:<12 hex>`.
+- The app's `go-build-upload-evidence.go` test support expects v1 (FU-5). It does not affect the live run, but `run-go-planning-driver.test.ts` breaks once a v2 artifact reaches it.
+- `OMKE/shortstack-e2e` has no module requirements, so `go test ./...` needs no network.
 
 ## Reviewer requirement review
 
@@ -196,6 +339,10 @@ Not complete. Only a verified review may set `done`.
 - **FU-2.** Toolchains inside the agent container, so the agent can run `go` directly; must keep the toolchain a host decision (D-2).
 - **FU-3.** Tool names in hook events (cross-repository protocol slice) for durable sandbox evidence.
 - **FU-4.** Reference check images for other ecosystems.
+- **FU-5.** App test support `src/server/planning-manifests/test-support/go-build-upload-evidence.go` and `go-planning-driver_test.go` expect `our-runner.check-install.v1`; accept v2 (app repository).
+- **FU-6.** A failed check's output can contain the check workspace's absolute host path, because the check directory is bind-mounted at its host path (predates this slice).
+- **FU-7.** Raise `internal/daemon/copy_target.go` and `internal/daemon/daemon.go` to at least 80 % statement coverage. They were at 77.8 % and 77.3 % before this slice.
+- **FU-8.** Add `packaging/check-image-go/build.sh` to the `sh -n` lists in README and `docs/TESTING.md`.
 
 ## Estimate
 

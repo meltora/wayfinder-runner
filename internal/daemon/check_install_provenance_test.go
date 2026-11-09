@@ -109,12 +109,12 @@ func TestProvenanceArtifactHasTheExactDocument(t *testing.T) {
 		want  func(commit string) string
 	}{
 		{"no install", nil, shellCheck("true"), func(commit string) string {
-			return `{"schema":"our-runner.check-install.v1","job_id":"j1","attempt_id":"a1","check_id":"lint","repository_id":"repo-1",` +
-				`"commit_sha":"` + commit + `","isolation":"direct","hermetic":false,"carried_directories":[],"install":null,"result":"passed"}`
+			return `{"schema":"our-runner.check-install.v2","job_id":"j1","attempt_id":"a1","check_id":"lint","repository_id":"repo-1",` +
+				`"commit_sha":"` + commit + `","isolation":"direct","hermetic":false,"check_image":null,"carried_directories":[],"install":null,"result":"passed"}`
 		}},
 		{"installed", func(t *testing.T, origin string) { seedNPMProject(t, origin) }, npmInstallCheck("exit 1"), func(commit string) string {
-			return `{"schema":"our-runner.check-install.v1","job_id":"j1","attempt_id":"a1","check_id":"lint","repository_id":"repo-1",` +
-				`"commit_sha":"` + commit + `","isolation":"direct","hermetic":false,"carried_directories":[],` +
+			return `{"schema":"our-runner.check-install.v2","job_id":"j1","attempt_id":"a1","check_id":"lint","repository_id":"repo-1",` +
+				`"commit_sha":"` + commit + `","isolation":"direct","hermetic":false,"check_image":null,"carried_directories":[],` +
 				`"install":{"ecosystem":"npm","network":"host","offline":false,"tool_version":"` + fakeNPMVersion + `","argv":` + directArgvJSON + `,` +
 				`"directories":[{"directory":".","lockfile":"package-lock.json","lockfile_blob_sha":"` + gitBlobSHA(fixtureLockfile) + `",` +
 				`"package_json_blob_sha":"` + gitBlobSHA(fixturePackageJSON) + `","result":"installed","duration_ms":0,` +
@@ -124,8 +124,8 @@ func TestProvenanceArtifactHasTheExactDocument(t *testing.T) {
 			seedNPMProject(t, origin)
 			writeAgentFile(t, origin, "web/package.json", fixturePackageJSON)
 		}, npmInstallCheck("true", ".", "web", "api"), func(commit string) string {
-			return `{"schema":"our-runner.check-install.v1","job_id":"j1","attempt_id":"a1","check_id":"lint","repository_id":"repo-1",` +
-				`"commit_sha":"` + commit + `","isolation":"direct","hermetic":false,"carried_directories":[],` +
+			return `{"schema":"our-runner.check-install.v2","job_id":"j1","attempt_id":"a1","check_id":"lint","repository_id":"repo-1",` +
+				`"commit_sha":"` + commit + `","isolation":"direct","hermetic":false,"check_image":null,"carried_directories":[],` +
 				`"install":{"ecosystem":"npm","network":"host","offline":false,"tool_version":null,"argv":` + directArgvJSON + `,"directories":[` +
 				`{"directory":".","lockfile":"package-lock.json","lockfile_blob_sha":"` + gitBlobSHA(fixtureLockfile) + `",` +
 				`"package_json_blob_sha":"` + gitBlobSHA(fixturePackageJSON) + `","result":"not_run","duration_ms":0,"entries":null,"bytes":null,"tree_digest":null},` +
@@ -160,15 +160,52 @@ func TestProvenanceArtifactHasTheExactDocument(t *testing.T) {
 	}
 }
 
-func TestDockerProvenanceIsHermetic(t *testing.T) {
+func TestDockerProvenanceIsHermeticAndNamesOnlyTheImageDigest(t *testing.T) {
+	const (
+		jobDigest   = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		checkDigest = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+	)
+	commit := strings.Repeat("a", 40)
+	for name, tc := range map[string]struct {
+		image, digest string
+	}{
+		"with a check image":    {"registry.example.test:5000/tools/check-go:rdbc@" + checkDigest, checkDigest},
+		"without a check image": {"", jobDigest},
+	} {
+		t.Run(name, func(t *testing.T) {
+			jr, _ := testJobRunner(t)
+			jr.d.cfg.Isolation, jr.d.cfg.JobNetwork = "docker", "none"
+			jr.d.cfg.JobImage = "registry.example.test/runner/job:rjic@" + jobDigest
+			document, err := jr.checkProvenanceDocument("lint", "repo-1", commit,
+				checkReport{outcome: checkOutcome{Result: "passed"}, checkImage: tc.image})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := `{"schema":"our-runner.check-install.v2","job_id":"j1","attempt_id":"a1","check_id":"lint","repository_id":"repo-1",` +
+				`"commit_sha":"` + commit + `","isolation":"docker","hermetic":true,"check_image":"` + tc.digest + `",` +
+				`"carried_directories":[],"install":null,"result":"passed"}`
+			if string(document) != want {
+				t.Fatalf("docker provenance =\n%s\nwant\n%s", document, want)
+			}
+			for _, leak := range []string{"registry.example.test", "check-go", "rjic", "runner/job"} {
+				if strings.Contains(string(document), leak) {
+					t.Fatalf("provenance names %q: %s", leak, document)
+				}
+			}
+		})
+	}
+}
+
+func TestDirectProvenanceHasNoCheckImageEvenWhenOneIsConfigured(t *testing.T) {
 	jr, _ := testJobRunner(t)
-	jr.d.cfg.Isolation, jr.d.cfg.JobNetwork = "docker", "none"
-	document, err := jr.checkProvenanceDocument("lint", "repo-1", strings.Repeat("a", 40), checkReport{outcome: checkOutcome{Result: "passed"}})
+	jr.d.cfg.Isolation = "direct"
+	document, err := jr.checkProvenanceDocument("lint", "repo-1", strings.Repeat("a", 40),
+		checkReport{outcome: checkOutcome{Result: "passed"}, checkImage: "our-runner-check-go:rdbc@sha256:" + strings.Repeat("4", 64)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(document), `"isolation":"docker","hermetic":true,"carried_directories":[],"install":null,`) {
-		t.Fatalf("docker provenance = %s", document)
+	if !strings.Contains(string(document), `"isolation":"direct","hermetic":false,"check_image":null,"carried_directories":[]`) {
+		t.Fatalf("direct provenance = %s", document)
 	}
 }
 

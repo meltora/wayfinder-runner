@@ -27,6 +27,7 @@ const (
 	OK Status = iota
 	Warn
 	Fail
+	Skip
 )
 
 type Check struct {
@@ -58,6 +59,7 @@ type Options struct {
 	StateDir                   string
 	Isolation                  string
 	JobImage                   string
+	CheckImages                map[string]string
 	JobNetwork                 string
 	JobNetworkName             string
 	EgressPolicyID             string
@@ -83,6 +85,7 @@ func runSystemChecks(ctx context.Context, opts Options) Report {
 	r.Checks = append(r.Checks, checkRestrictedNetwork(ctx, opts))
 	r.Checks = append(r.Checks, checkNestedSandbox(ctx, opts, mapping, mappingErr))
 	r.Checks = append(r.Checks, checkProviderCLI(ctx, opts, mapping, mappingErr))
+	r.Checks = append(r.Checks, checkCheckImages(ctx, opts))
 	r.Checks = append(r.Checks, checkDisk(opts.StateDir))
 	r.Checks = append(r.Checks, checkClock())
 	return r
@@ -315,6 +318,8 @@ func Format(r Report) string {
 			status = "WARN"
 		case Fail:
 			status = "FAIL"
+		case Skip:
+			status = "SKIP"
 		}
 		out += fmt.Sprintf("[%s] %s: %s\n", status, c.Name, c.Detail)
 	}

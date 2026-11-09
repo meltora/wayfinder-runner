@@ -27,14 +27,15 @@ type checkRequest struct {
 }
 
 type checkReport struct {
-	outcome checkOutcome
-	install *installReport
-	commit  string
-	reached bool
+	outcome    checkOutcome
+	install    *installReport
+	commit     string
+	reached    bool
+	checkImage string
 }
 
 func (jr *jobRunner) runCheckRequest(ctx context.Context, request checkRequest, results map[string]agentResult) (checkReport, error) {
-	report := checkReport{commit: results[request.repository.ID].commit}
+	report := checkReport{commit: results[request.repository.ID].commit, checkImage: request.check.Image}
 	outcome, err := jr.runInCheckWorkspace(ctx, results, func(workspace *checkWorkspace, location checkLocation) checkOutcome {
 		report.reached = true
 		install, refusal := jr.installCheckDependencies(ctx, request, workspace, location, report.commit)
@@ -56,8 +57,10 @@ func (jr *jobRunner) executeConfiguredCheck(ctx context.Context, checkID, root, 
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	start := time.Now()
-	out, capped, runErr := jr.runWorkspaceCommand(checkCtx, "check-"+checkID, root, dir,
-		check.Command, check.Args, true, 1<<20)
+	out, capped, runErr := jr.runWorkspaceTask(checkCtx, workspaceTask{
+		purpose: "check-" + checkID, ownershipPurpose: "check", root: root, dir: dir,
+		command: check.Command, args: check.Args, configuredNetwork: true, outputLimit: 1 << 20, image: check.Image,
+	})
 	outcome := checkOutcome{
 		Result:    "passed",
 		Output:    redactCheckOutput(truncate(out, maxCheckOutputBytes)),

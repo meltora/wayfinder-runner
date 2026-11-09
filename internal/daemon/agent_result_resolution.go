@@ -85,11 +85,15 @@ func (jr *jobRunner) resolveWithinBound(ctx context.Context, trusted *trustedRes
 	}
 	commonGitRel := path.Join(candidates[0].relPath, ".git")
 	excludeRel := path.Join(commonGitRel, "info", "exclude")
+	harness, err := trusted.untrackedHarnessState(ctx, start)
+	if err != nil {
+		return agentResult{}, trusted.stepRefusal(ctx, repository.ID, describeCandidate(candidates[0]), err)
+	}
 	for index := range candidates {
 		candidate := &candidates[index]
 		label := describeCandidate(*candidate)
 		outcome, err := trusted.snapshot(ctx, workspace, agentSnapshot{
-			candidate: *candidate, skip: nestedCandidates(candidates, candidate.relPath),
+			candidate: *candidate, skip: snapshotSkips(candidates, candidate.relPath, harness),
 			excludeRel: excludeRel, commonGitRel: commonGitRel, start: start, repositoryID: repository.ID,
 			workspaceRoot: jr.workDir,
 		})

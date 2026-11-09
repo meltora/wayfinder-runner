@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-var errCopySourceChanged = errors.New("copy source changed while it was read")
+var (
+	errCopySourceChanged    = errors.New("copy source changed while it was read")
+	errCopySourceUnreadable = errors.New("copy source cannot be read by the runner")
+)
 
 type copyTarget struct {
 	root       *os.Root
@@ -101,6 +104,9 @@ func (t *copyTarget) copyRegular(dir *os.Root, child, name string, info fs.FileI
 		return 0, err
 	}
 	source, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, fs.ErrPermission) {
+		return 0, errCopySourceUnreadable
+	}
 	if err != nil {
 		return 0, errCopySourceChanged
 	}

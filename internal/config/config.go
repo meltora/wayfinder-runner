@@ -78,6 +78,7 @@ type CheckConfig struct {
 	Args           []string `yaml:"args,omitempty"`
 	TimeoutSeconds int      `yaml:"timeout_seconds,omitempty"`
 	RepositoryID   string   `yaml:"repository_id,omitempty"`
+	Image          string   `yaml:"image,omitempty"`
 
 	DependencyDirectories []string            `yaml:"dependency_directories,omitempty"`
 	Install               *CheckInstallConfig `yaml:"install,omitempty"`

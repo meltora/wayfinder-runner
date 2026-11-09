@@ -348,7 +348,7 @@ func (jr *jobRunner) runInstallCommand(ctx context.Context, request checkRequest
 	return jr.runWorkspaceTask(ctx, workspaceTask{
 		purpose: installCommandPurposeLabel + request.checkID, ownershipPurpose: "install",
 		root: jr.checkWorkspace().root, dir: dir, command: "npm", args: args,
-		configuredNetwork: true, outputLimit: outputLimit, npmCache: npmCache,
+		configuredNetwork: true, outputLimit: outputLimit, npmCache: npmCache, image: request.check.Image,
 	})
 }
 

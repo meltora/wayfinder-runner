@@ -241,7 +241,7 @@ func (c *candidateCopy) entry(dir *os.Root, rel, name string) error {
 	}
 	info, err := dir.Lstat(name)
 	if err != nil {
-		return c.refuse("changed while it was read at %s", displayEntry(child))
+		return c.readRefusal(child, err)
 	}
 	if err := c.out().clearDifferentKind(child, info.Mode()); err != nil {
 		return err
@@ -281,7 +281,7 @@ func (c *candidateCopy) subdirectory(parent *os.Root, child, name string, info f
 	}
 	sub, err := parent.OpenRoot(name)
 	if err != nil {
-		return c.refuse("changed while it was read at %s", displayEntry(child))
+		return c.readRefusal(child, err)
 	}
 	defer func() { _ = sub.Close() }()
 	if !sameDirectory(sub, info) {
@@ -338,10 +338,20 @@ func (c *candidateCopy) file(dir *os.Root, child, name string, info fs.FileInfo)
 	if c.bytes > c.trusted.byteLimit {
 		return c.refuse("has more than %d bytes of file content", c.trusted.byteLimit)
 	}
+	if errors.Is(err, errCopySourceUnreadable) {
+		return c.readRefusal(child, fs.ErrPermission)
+	}
 	if errors.Is(err, errCopySourceChanged) {
 		return c.refuse("changed while it was read at %s", displayEntry(child))
 	}
 	return err
+}
+
+func (c *candidateCopy) readRefusal(child string, err error) error {
+	if errors.Is(err, fs.ErrPermission) {
+		return c.refuse("has an entry the runner cannot read at %s", displayEntry(child))
+	}
+	return c.refuse("changed while it was read at %s", displayEntry(child))
 }
 
 func joinRel(rel, name string) string {

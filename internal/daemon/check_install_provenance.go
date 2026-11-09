@@ -8,12 +8,13 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/safeio"
 )
 
 const (
 	runnerArtifactPrefix       = "runner-"
-	checkProvenanceSchema      = "our-runner.check-install.v1"
+	checkProvenanceSchema      = "our-runner.check-install.v2"
 	checkProvenanceNamePrefix  = "runner-check-install-"
 	checkProvenanceContentType = "application/json"
 	checkProvenanceDirectory   = ".check-provenance"
@@ -28,6 +29,7 @@ type checkProvenance struct {
 	CommitSHA          string         `json:"commit_sha"`
 	Isolation          string         `json:"isolation"`
 	Hermetic           bool           `json:"hermetic"`
+	CheckImage         *string        `json:"check_image"`
 	CarriedDirectories []string       `json:"carried_directories"`
 	Install            *installReport `json:"install"`
 	Result             string         `json:"result"`
@@ -70,7 +72,22 @@ func (jr *jobRunner) checkProvenanceDocument(checkID, repositoryID, commitSHA st
 		Isolation: isolationMode, Hermetic: isolationMode == "docker", CarriedDirectories: []string{},
 		Install: report.install, Result: report.outcome.Result,
 	}
+	if isolationMode == "docker" {
+		document.CheckImage = jr.checkImageDigest(report.checkImage)
+	}
 	return json.Marshal(document)
+}
+
+func (jr *jobRunner) checkImageDigest(checkImage string) *string {
+	ref := checkImage
+	if ref == "" {
+		ref = jr.d.cfg.JobImage
+	}
+	digest := isolation.ImageDigest(ref)
+	if digest == "" {
+		return nil
+	}
+	return &digest
 }
 
 func (jr *jobRunner) publishCheckProvenance(ctx context.Context, checkID, repositoryID, commitSHA string, report checkReport) {
