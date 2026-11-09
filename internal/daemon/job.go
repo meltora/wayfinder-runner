@@ -24,6 +24,7 @@ import (
 	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/repo"
 	"github.com/example/app-runner/internal/supervisor"
+	"github.com/example/app-runner/internal/toolsummary"
 	"github.com/example/app-runner/internal/validation"
 )
 
@@ -49,6 +50,7 @@ type jobRunner struct {
 	controlAction     v1.JobControlAction
 	controlResultDone chan struct{}
 	sanitizedLogs     int
+	toolTracker       *toolsummary.Tracker
 
 	reviewFeedbackContinuation *v1.ReviewFeedbackContinuationAuthority
 	providerCredential         *v1.ProviderCredential
@@ -1132,6 +1134,7 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 	tail := jr.newProviderOutputTail()
 	jr.procMu.Lock()
 	jr.outputTail = tail
+	jr.toolTracker = nil
 	jr.procMu.Unlock()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
@@ -1155,8 +1158,13 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 				jr.capacityFailure = &failureCopy
 				jr.procMu.Unlock()
 			}
-			jr.logger.Info("agent event", "type", safeLogValue(m["type"]), "status", safeLogValue(m["status"]))
-			jr.publishSanitizedAgentStatus(m)
+			tools := jr.summarizeProviderTools(m)
+			logAttributes := []any{"type", safeLogValue(m["type"]), "status", safeLogValue(m["status"])}
+			if tools != nil {
+				logAttributes = append(logAttributes, "tools", tools.Tools)
+			}
+			jr.logger.Info("agent event", logAttributes...)
+			jr.publishSanitizedAgentStatus(m, tools)
 		} else {
 			tail.add(line)
 			jr.logger.Debug("unstructured agent output suppressed", "bytes", len(line))

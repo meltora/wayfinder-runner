@@ -8,15 +8,32 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/hookspool"
+	"github.com/example/app-runner/internal/toolsummary"
 	"github.com/example/app-runner/internal/validation"
 )
 
 const (
-	runnerRedactionPolicyVersion = "runner-redaction-1"
+	runnerRedactionPolicyVersion = "runner-redaction-2"
 	maxSanitizedLogsPerJob       = 512
 )
 
-func (jr *jobRunner) publishSanitizedAgentStatus(providerEvent map[string]any) {
+func (jr *jobRunner) summarizeProviderTools(providerEvent map[string]any) *toolsummary.Summary {
+	if jr.d.cfg.Provider != "claude" {
+		return nil
+	}
+	jr.procMu.Lock()
+	defer jr.procMu.Unlock()
+	if jr.toolTracker == nil {
+		jr.toolTracker = toolsummary.NewTracker()
+	}
+	summary, ok := toolsummary.Summarize(providerEvent, jr.toolTracker)
+	if !ok {
+		return nil
+	}
+	return &summary
+}
+
+func (jr *jobRunner) publishSanitizedAgentStatus(providerEvent map[string]any, tools *toolsummary.Summary) {
 	if jr.job.AgentRunAuthority == nil || !jr.startEvidenceRecorded() ||
 		jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken) != nil {
 		return
@@ -30,6 +47,7 @@ func (jr *jobRunner) publishSanitizedAgentStatus(providerEvent map[string]any) {
 	}
 
 	summary := "Agent emitted a structured status event."
+	source := v1.SanitizedLogAgentStatus
 	detail := ""
 	truncated := false
 	redactionCount := 0
@@ -68,6 +86,18 @@ func (jr *jobRunner) publishSanitizedAgentStatus(providerEvent map[string]any) {
 				categories[v1.SanitizedLogCredential] = struct{}{}
 			}
 		}
+		if tools != nil {
+			source, summary, detail = v1.SanitizedLogToolSummary, tools.Text, ""
+			truncated = truncated || tools.Truncated
+			if tools.CommandArgumentRedactions > 0 {
+				redactionCount += tools.CommandArgumentRedactions
+				categories[v1.SanitizedLogCommandArgument] = struct{}{}
+			}
+			if tools.ToolOutputRedactions > 0 {
+				redactionCount += tools.ToolOutputRedactions
+				categories[v1.SanitizedLogToolOutput] = struct{}{}
+			}
+		}
 	}
 
 	categoryValues := make([]string, 0, len(categories))
@@ -80,7 +110,7 @@ func (jr *jobRunner) publishSanitizedAgentStatus(providerEvent map[string]any) {
 		Kind: "sanitized_log", ManifestKind: jr.job.Kind, LeaseID: jr.job.LeaseID,
 		JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, ManifestID: jr.job.ManifestID,
 		ManifestDigest: jr.job.ManifestDigest, FencingToken: jr.job.FencingToken, ObservedAt: time.Now().UTC(),
-		AgentRunAuthority: authority, Source: v1.SanitizedLogAgentStatus,
+		AgentRunAuthority: authority, Source: source,
 		Summary: summary, Detail: detail, Truncated: truncated,
 		Redaction: v1.SanitizedLogRedaction{
 			SchemaVersion: 1, PolicyVersion: runnerRedactionPolicyVersion, Collector: "runner",

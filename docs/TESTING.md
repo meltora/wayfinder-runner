@@ -106,6 +106,15 @@ write outside the allowed paths. The control case sets the scrub and expects
 the job user under its home directory (cause not verified), so the test mounts
 the wrapper read-only from a directory that the rootless daemon maps to root.
 
+`TestClaudeBashToolSummaryNamesASucceededCallInDocker` and
+`TestClaudeBashToolSummaryNamesAFailedCallUnderTheEnvironmentScrubInDocker`
+reuse the same offline run. They pass each line of Claude's real
+`stream-json` output through `internal/toolsummary`, the code the daemon uses
+for `tool_summary` sanitized logs. The first expects `Tool call: Bash` and then
+`Tool result: Bash succeeded`. The second sets the scrub and expects
+`Tool result: Bash failed`. To run only these two cases, use
+`-run 'ToolSummary'`.
+
 They probe `claude --version` and `claude --help` inside `JOB_IMAGE` as the
 job user and require every runner option to be declared, start `srt` as the
 job user with the nested-sandbox flags and expect `sandbox-ok`, check that
