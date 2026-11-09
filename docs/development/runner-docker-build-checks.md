@@ -6,18 +6,18 @@
 | ---------------------- | ----- |
 | ID                     | FR-01 follow-up `runner-docker-build-checks` (RDBC) |
 | Kind                   | bug (release blocker for Docker-isolated Build jobs) plus one bounded feature (host-declared check image) |
-| Status                 | review_ready (code verified; REQ-14 live pending) |
+| Status                 | done (REQ-01 to REQ-14 verified; REQ-14 verified live on KAN-25, 9 November 2026) |
 | Risk                   | critical. The slice changes what the runner reads out of the agent's workspace into the trusted result repository, and which image runs required checks. A defect can publish harness state into a change set, hide a real concurrent change, or let a check run in an image that nobody on the host chose. It does not touch credentials, the control-plane protocol or tenant data. |
 | Complexity             | complex. Two independent defects meet in one live path (snapshot refusal, then missing toolchain). The work crosses the candidate copy, configuration validation, the check task path, the provenance artifact, the start gate, doctor, a new packaging directory and gated Docker tests. Each piece is small; the live proof depends on rootless Docker behaviour that unit tests cannot show. |
 | Parent scope           | `PRODUCT.md` "Implementation and review flow" (Build runs required checks and returns evidence), "Workspace composition" item 2 ("A pinned project toolchain layer"), the isolation baseline ("Separate trusted bootstrap and evidence collection from checked-out repository code"), and MCP enforcement (scoped checks use the same runner-owned sandbox and network policy as final required checks; `platform_run_check` cannot supply or override the executable, isolation or network). Parent records in the app repository: `docs/development/build-job-approved-plan-delivery.md`, section "FR-01 Docker Build check (9 November 2026)" (defects FD-1, FD-2, FD-3); `docs/development/runner-local-checks.md`; `docs/development/runner-hermetic-check-workspace.md` (D49, REQ-12 provenance, "Owner decisions on LC-1 to LC-4"); `docs/development/runner-job-image-claude-cli.md` (RJIC REQ-12, still open). |
 | Product sources        | `PRODUCT.md` sections named above. Owner decisions LC-1 and LC-2 (checks stay defined on the runner host; the control plane cannot define check commands), LC-3 (isolation changes are restart-required), LC-4 (`acknowledge_direct`). |
 | Planner                | Opus 5.5 (`claude-opus-5-5`); develop-planner subagent, RDBC planning session, 9 November 2026 |
 | Implementer            | Opus 5.5 (`claude-opus-5-5`); develop-implementer subagent, worktree `agent-a828b3f7e7edaa3e6`, branch `worktree-agent-a828b3f7e7edaa3e6`, fast-forwarded to main `65e7310`, 9 November 2026 |
-| Reviewer               | Opus 5.5 (`claude-opus-5-5`); fresh develop-reviewer, reviewed head `a6208e43` against main `65e7310`, 9 November 2026. Re-review after repair attempt 1 by a second fresh develop-reviewer, head `7035946`, 9 November 2026 |
+| Reviewer               | Opus 5.5 (`claude-opus-5-5`); fresh develop-reviewer, reviewed head `a6208e43` against main `65e7310`, 9 November 2026. Re-review after repair attempt 1 by a second fresh develop-reviewer, head `7035946`, 9 November 2026. REQ-14 live verification by a third fresh develop-reviewer on main `9a080cf`, 9 November 2026 |
 | Repair attempt         | 1 |
 | Updated                | 2026-11-09 |
 | Baseline               | app-runner `main` at `fc4ae6a` ("test(daemon): prove a job keeps its start-time checks across a hot reload"), worktree `agent-a6540183dac8397d8`, branch `worktree-agent-a6540183dac8397d8`. This record is the only change. |
-| Blocker / resume state | Code verified; REQ-14 live pending. The re-review after repair attempt 1 verified REQ-01 to REQ-13 as implemented (see "Re-review after repair attempt 1"). The live verification (REQ-14) still needs the coordinator to swap the runner binary, edit `runner.local.yaml` and restart; see "Coordinator live steps". The record cannot reach `done` before REQ-14 passes, because the contract does not exempt it. |
+| Blocker / resume state | None. The re-review after repair attempt 1 verified REQ-01 to REQ-13. REQ-14 passed live on 9 November 2026: KAN-25, run `wfr_66da23e07f218bcce6fc3dc819c332a6`, reached Ready for review with PR OMKE/shortstack-e2e#14 (see "Live evidence (REQ-14)"). The runner is still on Docker revision 7; restoring direct isolation is the coordinator's optional step 10. |
 
 ## Outcome and current gap
 
@@ -152,7 +152,7 @@ Owned files (app-runner): `internal/daemon/agent_result_copy.go` and test, `inte
 | REQ-11 | Tests and diff review | implemented; see security notes (awaiting review) |
 | REQ-12 | Diff review | implemented; README and `docs/TESTING.md` (awaiting review) |
 | REQ-13 | Command output | implemented; see command evidence (awaiting review) |
-| REQ-14 | Coordinator live evidence | pending |
+| REQ-14 | Coordinator live evidence | implemented; verified live on KAN-25 (see "Live evidence (REQ-14)") |
 
 Reviewer verdicts (9 November 2026) supersede the "awaiting review" notes above: REQ-01 to REQ-11 implemented, REQ-12 partial (RV-2), REQ-13 partial (RV-1), REQ-14 unverified (live, coordinator). See "Reviewer requirement review". The re-review after repair attempt 1 supersedes REQ-12 and REQ-13: both implemented. REQ-01 to REQ-13 are implemented; REQ-14 stays unverified (live, coordinator).
 
@@ -174,7 +174,72 @@ The coordinator owns every step below; the implementer and reviewer do none of t
 
 ### Live evidence (REQ-14)
 
-Not started.
+Fresh develop-reviewer (Opus 5.5), 9 November 2026, on app-runner main `9a080cf`. Times are UTC; the runner log prints local time (UTC+1). The reviewer did not stop, restart or configure the runner, and changed no product code. Database reads used `default_transaction_read_only=on`. Raw output (local, not committed): `/tmp/claude-1000/-home-omar-Code-Automated-Development-app/30c6447b-7fdc-4b3f-8101-5e8a52ec03f5/scratchpad/rdbc-live/`. The sampler files hold the nested sandbox's per-job proxy credentials in raw form. They belong to a finished job, but do not copy them anywhere.
+
+**Steps 1 to 6 (coordinator, with reviewer checks).**
+
+- Step 1: check image `our-runner-check-go:rdbc@sha256:dce6fc6068a80e2c111cd89cacf8f10b9e4e6c7bf6e8d1812b21ed56aa07bc67`. `docker image inspect our-runner-check-go:rdbc --format '{{.Id}}'` prints that digest.
+- Steps 2 and 3: the coordinator swapped in the RDBC binary (old binary kept as `bin/our-runner.pre-rdbc`) and set `checks.go-test.image` to the reference above.
+- Step 4: runner configuration revision 6 was direct. The reviewer saved **revision 7** in the app at about 17:51 (Runners → local-test-runner → Edit configuration): Docker, Claude Code, no pool label, job image `our-runner-job:rjic@sha256:a2c8cabef3dbe9d4044bf2bcb2f7031aadbeee24ac0bd0dce8b41b5e900e8382`, restricted network `our-runner-jobs-dev`, policy `local-dev-egress-not-enforced`. These are revision 5's values. The coordinator then ran `configure --non-interactive`.
+- Step 5: reviewer doctor run at 17:52:26, exit 0 (`01-doctor.txt`). `check-images: go-test sha256:dce6fc6068a8` OK, `job-image-provider-cli` OK (`2.1.299 (Claude Code)`, 21 options), `docker-user-mapping` OK rootless (10001:10001, host 110000:110000), `job-image-sandbox` OK, `isolation` OK. `restricted-egress` and `local-check-limits` are WARN, as expected.
+- Step 6: the runner log shows "connected to control plane" at 17:51:54. It has no check-image refusal.
+
+**Steps 7 to 9 (reviewer).**
+
+- Samplers ran every 0.5 s: `docker ps -a`, `docker top -eo pid,user,args`, `docker inspect` on first sight, `docker events`, and host `ps` for `docker run`. Files: `10-loop-ps.log`, `11-bwrap-hits.log`, `12-host-docker-cli.log`, `13-docker-events.jsonl`, `containers/<id>/`.
+- Ticket **KAN-25** ("RDBC Docker check image proof: add a Min function to shortstack-e2e") was filed through the app's Create work flow (manual draft, Jira Task) at about 17:54:30. Work item `e74e249a-657d-40ca-a135-8cf2f8d8efba`, run `wfr_66da23e07f218bcce6fc3dc819c332a6`. Its acceptance criteria include running `sleep 20 && git status --short` once with the Bash tool and reporting the output, and running the go-test check through `platform_run_check`.
+- Plan attempt `20a388a7-e4e3-4428-8dad-11fad65e591e` ran 17:55:04 to 17:56:07 in container `c233a70c3fc5` and published plan revision 1 (digest `1c33c84f6af6…`). The reviewer approved the plan at about 17:57:16 and authorized Build at 17:57:36 in the app, under the organization's single-person waiver (`delivery_separation_waiver`, risk `medium`).
+- Build attempt `1d21b469-96b9-41c7-a843-08fdf56fd577`, manifest `b9410bbd-23a4-4e70-88e5-17b4785d0bad` (digest `1b85d465…`), ran 17:58:04 to 17:59:28. `job_finished` is `succeeded`.
+
+| Container      | Role                         | Observed |
+| -------------- | ---------------------------- | -------- |
+| `9a31b40cbf7c` | Build provider (Claude)      | `.Config.Image` `our-runner-job:rjic@sha256:a2c8cabe…8382`, `.Image` the same digest. User `10001:10001`, read-only root, network `our-runner-jobs-dev` only, CapDrop `ALL`, CapAdd `SETGID, SETUID, SYS_ADMIN, SYS_CHROOT`, `seccomp=unconfined`, 4 GiB, 512 pids. Host `docker run` has no `--pull`. |
+| `e6ea690cc33f` | iterative `go-test` check (`…-task-5ae2b803`) | 17:58:25 to 17:58:31, exit 0. `.Config.Image` `our-runner-check-go:rdbc@sha256:dce6fc60…7bc67`, `.Image` `sha256:dce6fc60…7bc67`. User `10001:10001`, read-only root, network `our-runner-jobs-dev` only, CapDrop `ALL`, no CapAdd, `no-new-privileges`, command `go test ./...`. |
+| `a9a49d48e292` | terminal `go-test` check     | 17:59:20 to 17:59:26, exit 0. Same image digest, user, network and restrictions as the iterative check. |
+
+`--pull=never` appears in 23 sampled host `docker run` lines, all for the check image, at 17:58:24 to 17:58:31 and 17:59:20 to 17:59:25. No check-image line lacks it, and no other container's `docker run` line has it (provider, plan provider and ownership helpers). Excerpt: `… --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m -v …/job-results/job-1061082399.checks:…:rw -w …/repositories/2e924b96-… -v …/check-homes/home-1084716577:/home/runner:rw -e HOME=/home/runner --pull=never our-runner-check-go:rdbc@sha256:dce6fc60…7bc67 go test ./...`.
+
+**Pass criteria.**
+
+| Criterion | Result | Evidence |
+| --------- | ------ | -------- |
+| (a) fresh KAN ticket with a small Go change reaches Ready for review | pass | `workflow_run.state` is `ready_for_review` at 18:02:02. The app shows "Ready for review", change set `bbc342c67799`, "Pull request #14 is ready for review" (`60-kan25-ready-for-review.png`). PR [OMKE/shortstack-e2e#14](https://github.com/OMKE/shortstack-e2e/pull/14), opened 18:01:05, head `15e6d23da75a3b7ec787b05fd9ccc42a39437a47` |
+| (b) an iterative `platform_run_check` for `go-test` passes; no `.cc-writes` refusal | pass | `runner_test_evidence` source `runner`, phase `iterative`, `go-test`, `passed`, 10012 ms, commit `15e6d23d…`, `worktree_dirty` false, at 17:58:31.983 (delivery `runcheck-58c7a445…`). The agent's `review_ready` summary says "platform_run_check go-test: passed (duration 10012 ms …)". No sanitized log mentions `cc-writes`, "changed while" or "refus", and the runner log has no refusal (`40-db-tests-artifacts-terminal.txt`) |
+| (c) terminal `test_results` for `go-test` is `passed` with `commit_sha` equal to the pushed head | pass | Phase `terminal`, `passed`, 6561 ms, `commit_sha` `15e6d23da75a3b7ec787b05fd9ccc42a39437a47` at 17:59:26.738. That equals the PR #14 `headRefOid` |
+| (d) `runner-check-install-go-test.json` has schema v2, docker, hermetic, `check_image` equal to the check image digest | pass | Upload receipt `a713215a-…`, 455 bytes, sha256 `3c1c1d2b…4387`. The stored object was downloaded read-only, and its sha256 matches. Contents: `schema` `our-runner.check-install.v2`, `isolation` `docker`, `hermetic` true, `check_image` `sha256:dce6fc6068a80e2c111cd89cacf8f10b9e4e6c7bf6e8d1812b21ed56aa07bc67`, `commit_sha` `15e6d23d…`, `carried_directories` `[]`, `install` null, `result` `passed` (`41-runner-check-install-go-test.json`) |
+| (e) check container shows the check image digest and user `10001:10001`; provider shows the job image | pass | Table above |
+| (f) the pushed tree has no `.claude/` entry | pass | `git/trees/15e6d23d?recursive=1` lists `README.md`, `go.mod`, `initials.go`, `initials_test.go`, `main.go`, `main_test.go`, `min.go`, `min_test.go`. The commit's parent is `316c653f…`, and it changes only `min.go` and `min_test.go` (`50-pr-and-tree.txt`) |
+| (g) the sampler catches the unprivileged `bwrap` running the ticket's shell command, and the agent reports its output | pass | 68 sampler lines from 17:58:34.033 to 17:58:53.343 (`11-bwrap-hits.log`) show two `bwrap --new-session --die-with-parent … --unshare-net … --ro-bind / / …` processes (host PIDs 396241 and 396242). Their effective user is `10001` and their argv ends in `eval 'sleep 20 && git status --short'`. This is about 20 s, the sleep's length. The argv names `bwrap`, which resolves through the container `PATH` (`/usr/local/lib/our-runner/unprivileged-bwrap:` first). Inside `9a31b40cbf7c` at 17:59:01, `command -v bwrap` prints `/usr/local/lib/our-runner/unprivileged-bwrap/bwrap` (mode `-rwxr-xr-x`). `/usr/bin/bwrap` is the setuid-root copy (`-rwsr-xr-x`) of the same binary, and its effective user would be root, not `10001` (`14-bwrap-resolution.txt`). The agent's `review_ready` summary quotes the command's output (below) |
+
+The agent's reported output of `sleep 20 && git status --short`:
+
+```
+?? .bash_profile
+?? .bashrc
+?? .claude/
+?? .gitconfig
+?? .gitmodules
+?? .idea
+?? .mcp.json
+?? .profile
+?? .ripgreprc
+?? .vscode
+?? .zprofile
+?? .zshrc
+?? min.go
+?? min_test.go
+```
+
+Everything except `min.go` and `min_test.go` is the nested sandbox's mount placeholders and harness state (FD-1). None of it reached the pushed tree, and the iterative check accepted the checkout while those entries were present.
+
+**Afterwards.** At 18:02, `docker ps -a` with the runner label listed nothing. `find ~/.shortstack-runner ! -user omar` printed nothing. `jobs/`, `job-homes/`, `sockets/`, `job-results/` and `check-homes/` are empty. The runner stays on Docker revision 7; step 10 (restore direct) was not done.
+
+**Observations (not RDBC defects).**
+
+- **O-1.** KAN-25 was filed with Risk Low in the Create work form, but the work item and the separation waiver show Risk Medium. The reviewer did not trace where the run's risk comes from. Only the RDBC record's subject is in scope here, so this is left for the app owner to confirm as intended or record as a bug.
+- **O-2.** The runner log has no line for `platform_run_check` calls. The iterative check's evidence comes from `test_results` (phase `iterative`) and the agent's report, which (b) allows.
+
+**Verdict.** REQ-14 implemented: (a) to (g) all pass.
 
 ## Implementation report
 
@@ -526,7 +591,10 @@ No new findings. Non-blocking points carried over: FU-9 (classic image store ref
 
 ## Completion
 
-Not complete. Status `review_ready`: code verified; REQ-14 live pending. REQ-01 to REQ-13 are implemented as of the re-review after repair attempt 1. REQ-14 is unverified and is the coordinator's live run under "Coordinator live steps". Only REQ-14 evidence that passes may set `done`.
+- Decision: complete. Status `done`.
+- REQ-01 to REQ-13 were verified in the re-review after repair attempt 1. REQ-14 was verified live on KAN-25 (run `wfr_66da23e07f218bcce6fc3dc819c332a6`, Build attempt `1d21b469-96b9-41c7-a843-08fdf56fd577`, PR OMKE/shortstack-e2e#14); see "Live evidence (REQ-14)". Every in-scope ID is `implemented`, and no blocking finding remains.
+- Verified by: fresh develop-reviewer (Opus 5.5), 9 November 2026.
+- Remaining work: FU-1 to FU-6 and FU-9; observations O-1 and O-2 under the live evidence.
 
 ## Follow-ups
 
