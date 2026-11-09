@@ -35,15 +35,22 @@ func TestLoadLocalReadsACheckImageAndMergeKeepsIt(t *testing.T) {
 }
 
 func TestMergeRefusesALocalCheckImageThatIsNotPinnedByDigest(t *testing.T) {
-	local := testLocal(t)
-	writeLocalFile(t, local, localImageChecksYAML("golang:1.26-bookworm"))
-	loaded, err := LoadLocal(local.StateDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = Merge(loaded, parsed(t, deliveryBody(dockerConfig())))
-	if err == nil || !strings.Contains(err.Error(), "check go-test: image must be pinned by digest (name@sha256:<64 hex>)") {
-		t.Fatalf("merge err = %v", err)
+	for name, image := range map[string]string{
+		"tag only":       "golang:1.26-bookworm",
+		"uppercase hex":  "our-runner-check-go:rdbc@sha256:" + strings.Repeat("C", 64),
+		"mixed case hex": "our-runner-check-go:rdbc@sha256:" + strings.Repeat("cC", 32),
+	} {
+		t.Run(name, func(t *testing.T) {
+			local := testLocal(t)
+			writeLocalFile(t, local, localImageChecksYAML(image))
+			loaded, err := LoadLocal(local.StateDir)
+			if err == nil {
+				_, err = Merge(loaded, parsed(t, deliveryBody(dockerConfig())))
+			}
+			if err == nil || !strings.Contains(err.Error(), "check go-test: image must be pinned by digest (name@sha256:<64 lowercase hex>)") {
+				t.Fatalf("load or merge err = %v", err)
+			}
+		})
 	}
 }
 

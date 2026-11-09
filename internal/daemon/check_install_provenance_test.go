@@ -166,16 +166,18 @@ func TestDockerProvenanceIsHermeticAndNamesOnlyTheImageDigest(t *testing.T) {
 		checkDigest = "sha256:4444444444444444444444444444444444444444444444444444444444444444"
 	)
 	commit := strings.Repeat("a", 40)
+	upperJobDigest := "sha256:" + strings.Repeat("AbCdEf", 10) + "0F9A"
 	for name, tc := range map[string]struct {
-		image, digest string
+		jobDigest, image, digest string
 	}{
-		"with a check image":    {"registry.example.test:5000/tools/check-go:rdbc@" + checkDigest, checkDigest},
-		"without a check image": {"", jobDigest},
+		"with a check image":                               {jobDigest, "registry.example.test:5000/tools/check-go:rdbc@" + checkDigest, checkDigest},
+		"without a check image":                            {jobDigest, "", jobDigest},
+		"without a check image and an uppercase job image": {upperJobDigest, "", "sha256:" + strings.Repeat("abcdef", 10) + "0f9a"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			jr, _ := testJobRunner(t)
 			jr.d.cfg.Isolation, jr.d.cfg.JobNetwork = "docker", "none"
-			jr.d.cfg.JobImage = "registry.example.test/runner/job:rjic@" + jobDigest
+			jr.d.cfg.JobImage = "registry.example.test/runner/job:rjic@" + tc.jobDigest
 			document, err := jr.checkProvenanceDocument("lint", "repo-1", commit,
 				checkReport{outcome: checkOutcome{Result: "passed"}, checkImage: tc.image})
 			if err != nil {

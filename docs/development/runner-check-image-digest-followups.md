@@ -6,18 +6,18 @@
 | ---------------------- | ----- |
 | ID                     | RDBC follow-ups FU-9 and the uppercase-hex pin (RCID) |
 | Kind                   | bug (operator-facing: the reference Go check image prints a reference that does not resolve on a classic image store; an uppercase check image digest passes validation and fails only at start) |
-| Status                 | ready |
+| Status                 | review_ready |
 | Risk                   | medium. The slice changes which check image references the runner accepts at load, what the reference build script prints, the start gate and doctor messages, and the case of the digest written into the provenance artifact. It does not change which image a check runs in, the container restrictions, the pull policy, the remote configuration document or the control-plane protocol. Every change is a tightening or a clearer message, and each failure mode stays closed. A defect could mislead an operator, or refuse a configuration that works today. |
 | Complexity             | standard. Small changes across config validation, `isolation.InspectImage`, the gate, doctor, provenance, one shell script, a shell test with a fake `docker`, and one gated test on a second Docker daemon. The classic-store behaviour was measured by the planner (below), so the main uncertainty is removed. |
 | Parent scope           | `runner-docker-build-checks.md` (RDBC, `done`): FU-9 (review decision I-9, "Follow-ups"), and the non-blocking point "Uppercase hex in a check image passes config validation but fails closed at the gate" (repair attempt 1 observations, I-4 note in the first review). RDBC REQ-05 (check image validation), REQ-07 (start gate and doctor), REQ-08 (provenance v2), REQ-09 (reference Go image), REQ-12 (docs). App: PRODUCT.md "Workspace composition" item 2 (a pinned project toolchain layer). |
 | Product sources        | App `PRODUCT.md` "Workspace composition" item 2; isolation baseline. Owner decisions LC-1 and LC-2 (checks are defined only on the runner host), recorded in app `docs/development/runner-hermetic-check-workspace.md`. |
 | Planner                | Opus 5.5 (`claude-opus-5-5`); develop-planner subagent, RCID planning session, 9 November 2026 |
-| Implementer            | Opus 5.5 (`claude-opus-5-5`); not yet assigned |
+| Implementer            | Opus 5.5 (`claude-opus-5-5`); develop-implementer subagent, RCID implementation session, 9 November 2026 |
 | Reviewer               | Opus 5.5 (`claude-opus-5-5`), fresh context; not yet assigned |
 | Repair attempt         | 0 |
 | Updated                | 2026-11-09 |
 | Baseline               | app-runner `main` at `67eeac7` ("chore(docs): record RDBC REQ-14 live Docker Build on KAN-25 and set the record done"), worktree `.claude/worktrees/rdbc-digest-followups`, branch `rdbc-digest-followups`. No pre-existing dirty changes. This record is the only change. App read at `main` `abf145dd`, read only; no app change is planned. |
-| Blocker / resume state | None. Owner questions Q-1 to Q-3 below have recorded defaults, and the implementer proceeds on them unless the owner answers otherwise. |
+| Blocker / resume state | None. Coordinator decisions on Q-1 to Q-3 are recorded under "Owner questions". |
 
 ## Outcome and current gap
 
@@ -121,31 +121,148 @@ So FU-9 is confirmed. On the classic store, `build.sh` prints a reference that d
 - **Q-2.** Should `job_image` also require lowercase hex? If yes, that is a cross-repository slice: the app schema and dashboard message, then the runner. The default is no change here (D-3, FU-A).
 - **Q-3.** REQ-01 builds and removes one throwaway `FROM scratch` image on the rootful classic-store daemon (`unix:///var/run/docker.sock`), which also runs other local projects' containers. The test is opt-in, labels its image, touches no other image or container, and removes its image afterwards. The default is to go ahead. If the owner declines, REQ-01 runs only on the rootless daemon, the classic-store case rests on the planner measurement and the shell test, and the record says so.
 
+**Coordinator decisions (9 November 2026, given to the implementer in the RCID handoff):**
+
+- Q-1: refuse uppercase at load (the default, D-2). Implemented in REQ-06; the runner never rewrites the value.
+- Q-2: no `job_image` change. FU-A stays a follow-up; `immutableImagePattern` and the `job_image` rule are byte-identical to `67eeac7`.
+- Q-3: yes. The implementer may build and remove one labelled throwaway `FROM scratch` image on the rootful daemon, removing only that image. Done in REQ-01; no other image or container on the rootful daemon was touched. On the rootless daemon the slice added only the `our-runner-check-go:rcid` image (plan step 6) and the REQ-01 probe image, which the test removed. The probe builds leave small BuildKit cache entries on both daemons; they were not pruned, because pruning is daemon-wide.
+
 ## Implementation plan
 
 Owned files (app-runner): `packaging/check-image-go/build.sh`; new `packaging/tests/check_image_go_build_test.sh`; `internal/config/check_validation.go` (and `config.go` only to add a separate lowercase check-image pattern, leaving `immutableImagePattern` unchanged), `internal/config/check_image_config_test.go`; `internal/remoteconfig/local_check_image_test.go`; `internal/isolation/image_inspect.go` and test; new gated `internal/isolation/classic_store_integration_test.go`; `internal/daemon/check_image_gate.go` and test; `internal/daemon/check_install_provenance_test.go`; `internal/doctor/check_image_check.go` and test; `README.md`; `docs/TESTING.md`; this record. Do not touch `bin/`, `~/.shortstack-runner`, `runner.local.yaml`, the running runner, the job image, any other image or container on either daemon, host Docker settings or any app file. Grep for a test helper name before adding it (helper names clash across files in the daemon package).
 
-0. [ ] REQ-01 gated test first, no production code. Run it on the classic daemon (subject to Q-3) and on the rootless daemon. Stop and report if the classic result differs from the planner measurement.
-1. [ ] REQ-06 tests first (uppercase and mixed case refused; uppercase `job_image` still valid), then the check-image pattern and message.
-2. [ ] REQ-07 tests first, then lowercase output in `ImageDigest`.
-3. [ ] REQ-05 tests first with the existing `runImageInspect` seam, then the second inspection, the sentinel, the gate message and the doctor message.
-4. [ ] REQ-04 shell test first, then REQ-02 and REQ-03 in `build.sh`.
-5. [ ] REQ-08 app grep (read only).
-6. [ ] Rebuild the reference image on the rootless daemon with the new `build.sh` (no `--push`), and record the printed reference. Run the REQ-10 gated tests with it.
-7. [ ] REQ-09 docs, REQ-10 checks, implementation report, status `review_ready`.
+0. [x] REQ-01 gated test first, no production code. Run it on the classic daemon (subject to Q-3) and on the rootless daemon. Stop and report if the classic result differs from the planner measurement.
+1. [x] REQ-06 tests first (uppercase and mixed case refused; uppercase `job_image` still valid), then the check-image pattern and message.
+2. [x] REQ-07 tests first, then lowercase output in `ImageDigest`.
+3. [x] REQ-05 tests first with the existing `runImageInspect` seam, then the second inspection, the sentinel, the gate message and the doctor message.
+4. [x] REQ-04 shell test first, then REQ-02 and REQ-03 in `build.sh`.
+5. [x] REQ-08 app grep (read only).
+6. [x] Rebuild the reference image on the rootless daemon with the new `build.sh` (no `--push`), and record the printed reference. Run the REQ-10 gated tests with it.
+7. [x] REQ-09 docs, REQ-10 checks, implementation report, status `review_ready`.
 
 ## Verification plan and results
 
 | Command / scenario | Required for | Actual result / date | Evidence |
 | ------------------ | ------------ | -------------------- | -------- |
-| `CLASSIC_DOCKER_HOST=unix:///var/run/docker.sock RUN_DOCKER_CLASSIC_STORE_PROBE=1 go test ./internal/isolation/ -run <classic test> -v -count=1` | REQ-01, REQ-05 | not run | |
-| `DOCKER_HOST=unix:///run/user/1000/docker.sock RUN_DOCKER_SANDBOX_PROBE=1 go test ./internal/isolation/ -run <classic test> -v -count=1` (containerd case) | REQ-01 | not run | |
-| `sh packaging/tests/check_image_go_build_test.sh` | REQ-02 to REQ-04 | not run | |
-| `go test ./internal/config/ ./internal/remoteconfig/ ./internal/isolation/ ./internal/daemon/ ./internal/doctor/ -count=1` | REQ-05 to REQ-07 | not run | |
-| App read-only grep at app `main` | REQ-08 | not run | |
-| `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test ./... -count=1`, race, per-file coverage, `sh scripts/check.sh sec`, `sh scripts/check.sh vuln`, `staticcheck`, both `sh -n` lists, every `packaging/tests/*_test.sh` | REQ-10 | not run | |
-| `DOCKER_HOST=unix:///run/user/1000/docker.sock sh packaging/check-image-go/build.sh our-runner-check-go:rcid`, then the RDBC gated tests with `CHECK_IMAGE` set to the printed reference | REQ-02, REQ-10 | not run | |
-| Reviewer diff review: argv for a valid reference unchanged, no pull, no bare-ID run, no remote field | REQ-11 | not run | |
+| `CLASSIC_DOCKER_HOST=unix:///var/run/docker.sock RUN_DOCKER_CLASSIC_STORE_PROBE=1 go test ./internal/isolation/ -run TestImageStoreResolvesALocallyBuiltImageByDigest -v -count=1` | REQ-01, REQ-05 | PASS, 2026-11-09 (two runs) | Matches the planner measurement. See "REQ-01 gated output". |
+| `DOCKER_HOST=unix:///run/user/1000/docker.sock RUN_DOCKER_SANDBOX_PROBE=1 go test ./internal/isolation/ -run TestImageStoreResolvesALocallyBuiltImageByDigest -v -count=1` (containerd case) | REQ-01 | PASS, 2026-11-09 | See "REQ-01 gated output". |
+| `sh packaging/tests/check_image_go_build_test.sh` | REQ-02 to REQ-04 | PASS, 2026-11-09 | "check image go build tests passed". It failed first against the old `build.sh` ("the containerd reference was not proven"). |
+| `go test ./internal/config/ ./internal/remoteconfig/ ./internal/isolation/ ./internal/daemon/ ./internal/doctor/ -count=1` | REQ-05 to REQ-07 | PASS, 2026-11-09 | 2301 tests passed in 5 packages |
+| App read-only grep at app `main` | REQ-08 | done, 2026-11-09 | See "REQ-08 app grep". |
+| `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test ./... -count=1`, race, per-file coverage, `sh scripts/check.sh sec`, `sh scripts/check.sh vuln`, `staticcheck`, both `sh -n` lists, every `packaging/tests/*_test.sh` | REQ-10 | PASS, 2026-11-09 (one pre-existing exception, noted) | See "REQ-10 checks". |
+| `DOCKER_HOST=unix:///run/user/1000/docker.sock sh packaging/check-image-go/build.sh our-runner-check-go:rcid`, then the RDBC gated tests with `CHECK_IMAGE` set to the printed reference | REQ-02, REQ-10 | PASS, 2026-11-09 | It printed `pinned reference: our-runner-check-go:rcid@sha256:dfdbaa6bfd423b33c6ccb6f1cc7cd66bbb9ee46c099c23682b7039723f0fd995`. Both RDBC gated tests passed with it. |
+| Reviewer diff review: argv for a valid reference unchanged, no pull, no bare-ID run, no remote field | REQ-11 | for the reviewer | The implementer's notes are under "REQ-11". |
+
+### Implementation report (implementer, 9 November 2026)
+
+Changed paths (app-runner only):
+
+- `internal/isolation/image_inspect.go`: adds `ErrImageResolvesOnlyByID` and `inspectImageID`. The second inspection of a bare `sha256:<hex>` runs only after a "No such image" result for a reference that matches `lowercasePinnedPattern`. `ImageDigest` lowercases its result.
+- `internal/isolation/image_inspect_test.go`: tests for the cases found, not found then the ID found, not found then not found, not found then a different ID, not found then unexpected output, a failure of the second call, and no second call for a tag, a name, an uppercase digest, a short digest or a bare ID. Lowercase `ImageDigest` cases.
+- New `internal/isolation/classic_store_integration_test.go`: the REQ-01 gated test.
+- `internal/config/config.go`: adds `checkImagePattern` (lowercase only). `immutableImagePattern` is unchanged. `internal/config/check_validation.go` uses it, with the new message.
+- `internal/config/check_image_config_test.go`: uppercase, mixed-case and one-uppercase-character values are refused. An uppercase `job_image` still validates. An uppercase check image in `config.yaml` is refused by `Load`.
+- `internal/remoteconfig/local_check_image_test.go`: tag-only, uppercase and mixed-case values from `runner.local.yaml` are refused.
+- `internal/daemon/check_image_gate.go` and its test: the ID-only message, for several checks that share one image, for one resolvable and one ID-only image, and through `New` (refused before the daemon is returned, and the lock is released).
+- `internal/daemon/check_install_provenance_test.go`: exact JSON with an uppercase job image and no check image gives a lowercase `check_image`.
+- `internal/doctor/check_image_check.go` and its test: the ID-only Fail detail, with shared checks listed and mixed with a missing image. The short digest is lowercase.
+- `packaging/check-image-go/build.sh`: `IMAGE_TAG [--push]`, the resolve proof, the classic-store refusal, and the `--push` repository digest path.
+- New `packaging/tests/check_image_go_build_test.sh`.
+- `README.md` and `docs/TESTING.md`: REQ-09.
+
+Test-first evidence:
+
+- REQ-01 first failed to compile (`undefined: ErrImageResolvesOnlyByID`).
+- REQ-06 config and remoteconfig tests failed before the pattern change: 8 config failures and 4 remoteconfig failures.
+- REQ-07 tests failed with `ToLower` temporarily removed: `TestImageDigestReturnsOnlyThePinnedDigest` and `TestDockerProvenanceIsHermeticAndNamesOnlyTheImageDigest`.
+- REQ-05 gate and doctor tests failed before the gate and doctor branches: 4 daemon failures and the doctor table.
+- The REQ-04 shell test failed against the old `build.sh`.
+
+Decisions:
+
+- **I-1 (REQ-02 message).** The refusal names the actual tag ("rerun with --push to push our-runner-check-go:v1 to its registry ..."), not the literal word `IMAGE_TAG`. Otherwise the text is exactly the contract's.
+- **I-2 (REQ-02).** Without `--push`, two more failures fail closed and print no pinned reference: an inspection error that is not "No such image" ("could not inspect <ref>: <docker error>"), and a reference that resolves to a different ID.
+- **I-3 (REQ-03).** An entry is selected when it starts with `<repository>@sha256:`, using a shell `case` prefix match. A substring match is not enough. The shell test puts `mirror.example/our-runner-check-go@...` first to prove this. Only the first matching entry is used. If it is malformed, the script fails and does not skip to a later entry.
+- **I-4 (REQ-05).** In the second inspection, unexpected output, or a different ID, counts as `ErrImageNotPresent`. Only a Docker error other than "No such image" is returned as `inspect image: ...`. When the first inspection prints unexpected output, it still returns the same error as at `67eeac7`.
+
+#### REQ-01 gated output
+
+On the classic store, rootful `unix:///var/run/docker.sock` (overlay2):
+
+```
+classic_store_integration_test.go:95: our-runner-classic-probe:63253d998410f6e2@sha256:507daa8330bb90bc7a4d3bf3f7f2e16955c87d1de68ef8c53cf2cde9c9e2a351 does not resolve: image does not resolve by digest, but a local image has that digest as its ID
+classic_store_integration_test.go:103: sha256:507daa8330bb90bc7a4d3bf3f7f2e16955c87d1de68ef8c53cf2cde9c9e2a351 resolves to sha256:507daa8330bb90bc7a4d3bf3f7f2e16955c87d1de68ef8c53cf2cde9c9e2a351
+--- PASS: TestImageStoreResolvesALocallyBuiltImageByDigest/classic_store (0.94s)
+```
+
+The first run gave the same result with probe `87bc1bf98889d137`, ID `sha256:a00cd053…2b08`. After each run, `docker image ls --filter label=our-runner-classic-probe` was empty on the rootful daemon.
+
+On the containerd store, rootless `unix:///run/user/1000/docker.sock` (`driver-type io.containerd.snapshotter.v1`):
+
+```
+classic_store_integration_test.go:123: our-runner-classic-probe:4750e2af81c279b6@sha256:b5840dde8ce92e56659b7b94b64e4a322b562459f45ddce5081633063cfe2b9b resolves to sha256:b5840dde8ce92e56659b7b94b64e4a322b562459f45ddce5081633063cfe2b9b
+--- PASS: TestImageStoreResolvesALocallyBuiltImageByDigest/containerd_store (0.43s)
+```
+
+The label filter was empty afterwards.
+
+#### REQ-08 app grep (app `main` at `abf145dd`, read only)
+
+```
+$ git grep -n -E "check_image|check-install\.v|CheckImage" main -- src
+src/server/planning-manifests/test-support/go-build-upload-evidence.go:24:	buildCheckProvenanceSchema = "our-runner.check-install.v2"
+src/server/planning-manifests/test-support/go-planning-driver_test.go:258:	document := `{"schema":"our-runner.check-install.v2",...,"check_image":null,...}`
+src/server/planning-manifests/test-support/go-planning-driver_test.go:404:	seedQueuedArtifact(... `{"schema":"our-runner.check-install.v2",...}`)
+src/server/planning-manifests/test-support/go-planning-driver_test.go:419:	if os.WriteFile(provenance, []byte(`{"schema":"our-runner.check-install.v2"}`), 0o600) != nil {
+$ git grep -n -E "sha256:\[" main -- src
+src/lib/env/runner-release-settings.ts:13:const JOB_IMAGE = /^[^\s@]+@sha256:[a-f0-9]{64}$/u;
+src/shared/schemas/runner-configuration-profile.schema.ts:20:  /^[^\s@]+@sha256:[a-fA-F0-9]{64}$/u;
+src/shared/schemas/runner-configuration-profile.schema.ts:188:    .regex(/^[^\s@]+@sha256:[a-f0-9]{64}$/u)
+src/shared/schemas/runner-enrollment.schema.ts:165:      .regex(/^[^\s@]+@sha256:[a-f0-9]{64}$/)
+```
+
+- All hits in the first grep are test support under `src/server/planning-manifests/test-support/`. Line 258 is a fixture document that contains `"check_image":null`. `go-build-upload-evidence.go` matches only the schema string and never reads `check_image`.
+- The second grep hits only production `job_image` and `defaultJobImage` patterns, which are unchanged (FU-A).
+- No production code parses or compares `check_image`, so the slice proceeds. No app file was changed.
+
+#### REQ-10 checks (worktree, 9 November 2026)
+
+- `gofmt -l .`: empty. `go build ./...`, `go vet ./...`: exit 0.
+- `go test ./... -count=1`: exit 0, with 42 packages `ok` and no failures.
+- `go test -race ./internal/daemon/ ./internal/config/ ./internal/doctor/ ./internal/isolation/ ./internal/remoteconfig/ ./cmd/our-runner/ -count=1`: exit 0. The daemon package took 395.1 s.
+- Coverage uses `-coverpkg` over daemon, config, doctor, isolation and cmd, aggregated per file with a scratchpad helper:
+
+  | File | Coverage |
+  | ---- | -------- |
+  | `internal/config/check_validation.go` | 11/11, 100.0 % |
+  | `internal/config/config.go` | 251/268, 93.7 % |
+  | `internal/isolation/image_inspect.go` | 29/29, 100.0 % |
+  | `internal/daemon/check_image_gate.go` | 25/25, 100.0 % |
+  | `internal/doctor/check_image_check.go` | 35/36, 97.2 % |
+
+- `sh scripts/check.sh sec` (gosec v2.29.0): exit 0, with no findings.
+- `sh scripts/check.sh vuln` (govulncheck v1.8.0): exit 0, with "Your code is affected by 0 vulnerabilities". It also reports one vulnerability in a required module that the code does not call.
+- `staticcheck`: not installed.
+- Both `sh -n` lists, README and `docs/TESTING.md`, now include the new test. Run together: exit 0.
+- Shell tests: these all pass when run directly: bootstrap, check_image_go_build, fresh_host_doctor, install, prepare_release, published_tag, release_artifacts_fixture and systemd.
+  - `release_artifacts_test.sh` fails without arguments ("no archive matched"). It is documented only as `sh packaging/tests/release_artifacts_test.sh dist snapshot` after a snapshot release build, and it is not in either standalone list. That predates `67eeac7`, and this slice does not touch it.
+- `shellcheck -s sh` on the new test is clean. On `build.sh` it reports only SC1007 for the `CDPATH= cd` line, which is the same at `67eeac7`.
+- REQ-01 gated test: passes on both daemons (above).
+- RDBC gated tests on the rootless daemon used `JOB_IMAGE=our-runner-job:rjic@sha256:a2c8cabef3dbe9d4044bf2bcb2f7031aadbeee24ac0bd0dce8b41b5e900e8382` and `CHECK_IMAGE=our-runner-check-go:rcid@sha256:dfdbaa6bfd423b33c6ccb6f1cc7cd66bbb9ee46c099c23682b7039723f0fd995`, the reference printed by the new `build.sh`. `TestIterativeSnapshotSkipsHarnessStateDuringARootlessHandOff` passed (22.70 s). `TestGoCheckImageRunsGoTestUnderTheProductionPolicy` passed (21.58 s), with all 4 subtests.
+
+#### REQ-11 (implementer notes for the reviewer)
+
+- No container argv code changed. `internal/isolation/container.go` and `isolation.go` are not in the diff, and the policy tests (`pull_never_test.go` and others) are unchanged and pass.
+- The only new Docker commands are these:
+  - `docker image inspect --format {{.Id}} -- sha256:<hex>`. It runs only after "No such image" for a lowercase pinned reference, and its result only chooses the error.
+  - In `build.sh`, `docker image inspect`, plus `docker push` only with `--push`.
+- No path pulls an image, and no remote field was added. Gate and doctor messages print only the configured reference.
+
+#### Candidate coverage
+
+- Several checks share one ID-only image: gate and doctor tests.
+- One resolvable image and one ID-only image: gate test, and the doctor "one image resolves only by ID" case.
+- `RepoDigests` with zero entries (empty), one entry, and several entries (with another repository first): shell test.
 
 ## Follow-ups
 

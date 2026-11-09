@@ -39,6 +39,9 @@ func verifyDockerCheckImages(ctx context.Context, checks map[string]config.Check
 		if errors.Is(err, isolation.ErrImageNotPresent) {
 			return fmt.Errorf("check %s: image %s is not present on the runner's Docker host; pull or build it before starting", id, ref)
 		}
+		if errors.Is(err, isolation.ErrImageResolvesOnlyByID) {
+			return fmt.Errorf("check %s: image %s does not resolve on the runner's Docker host, but a local image has that digest as its ID; on the classic image store use the repository digest printed by build.sh --push, or correct the image name", id, ref)
+		}
 		if err != nil {
 			return fmt.Errorf("check %s: verify image %s: %w", id, ref, err)
 		}

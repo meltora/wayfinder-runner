@@ -306,7 +306,7 @@ For every terminal required check that reached its check workspace, the runner
 publishes `runner-check-install-<check id>.json` (schema
 `our-runner.check-install.v2`) before the check's `test_results` event. It
 records the job, attempt, repository, commit, isolation, `hermetic`,
-`check_image` (under Docker the `sha256:<64 hex>` digest of the image the check
+`check_image` (under Docker the `sha256:<64 lowercase hex>` digest of the image the check
 ran in, the check image or else the job image, and never a registry, name or
 tag; `null` under direct isolation), `carried_directories: []`, the install report (tool version, argv, lockfile blob IDs, result and tree
 digest per directory) and the check result, without host paths, environment
@@ -1000,8 +1000,10 @@ job image, so its command must exist in that image (the default job image has
 no Go toolchain), unless the check sets `image`.
 
 `checks.<id>.image` names a toolchain image for that check only, pinned by
-digest (`name@sha256:<64 hex>`, a tag before the digest is allowed); a tag-only
-or otherwise unpinned value stops `start`. It is a host decision: the dashboard
+digest (`name@sha256:<64 lowercase hex>`, a tag before the digest is allowed); a
+tag-only, otherwise unpinned or uppercase-hex value stops `start` with "check
+<id>: image must be pinned by digest (name@sha256:<64 lowercase hex>)". The
+runner never rewrites the value; Docker itself refuses uppercase hex. It is a host decision: the dashboard
 document cannot set it (a delivered check, `check_image` or `check_images` key
 is rejected), `platform_run_check` refuses an `image` field, and a hot reload
 keeps the image read at start. Under Docker both the check's `install` step and
@@ -1018,7 +1020,7 @@ checks:
     command: go
     args: [test, ./...]
     timeout_seconds: 600
-    image: our-runner-check-go:v1@sha256:<image ID printed by build.sh>
+    image: <pinned reference printed by build.sh>
 ```
 
 The runner never pulls a check image: `start` and `doctor` only inspect, and
@@ -1028,10 +1030,17 @@ Containers for checks without an image, providers and every other runner
 container keep their existing argv. Under Docker, `start` inspects every
 distinct configured check image on the configured Docker host before it
 connects and stops with "check <id>: image <ref> is not present on the runner's
-Docker host; pull or build it before starting" when one is missing. `doctor`
-reports a `check-images` row: OK with each check ID and short digest, FAIL for
-each missing image, SKIP under direct isolation or when no check declares an
-image. Under `isolation: direct` the image is unused and `start` logs a warning
+Docker host; pull or build it before starting" when one is missing. When the
+reference does not resolve but a local image has that digest as its ID (a
+locally built image on the classic image store, or a wrong image name), it
+stops with "check <id>: image <ref> does not resolve on the runner's Docker
+host, but a local image has that digest as its ID; on the classic image store
+use the repository digest printed by build.sh --push, or correct the image
+name". The runner never runs a check by the bare image ID. `doctor` reports a
+`check-images` row: OK with each check ID and short (lowercase) digest, FAIL
+for each missing image and for each image that "does not resolve by digest; a
+local image has that digest as its ID", SKIP under direct isolation or when no
+check declares an image. Under `isolation: direct` the image is unused and `start` logs a warning
 naming only the check ID; the check runs on the host.
 
 `packaging/check-image-go` is the reference Go check image (`golang:1.27.3-bookworm`
@@ -1043,6 +1052,27 @@ and copy the printed pinned reference into `runner.local.yaml`:
 ```sh
 DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock sh packaging/check-image-go/build.sh our-runner-check-go:v1
 ```
+
+`build.sh IMAGE_TAG [--push]` prints a `pinned reference` line only after
+`docker image inspect` proves that the reference resolves to the image it just
+built on that Docker host. How a locally built image can be named by digest
+depends on the host's image store:
+
+- Containerd image store (the rootless Docker default, `docker info` shows
+  `driver-type io.containerd.snapshotter.v1`): the image ID is the manifest
+  digest, so `IMAGE_TAG@<image ID>` resolves and is printed.
+- Classic image store (`overlay2` graph driver): the image ID is the config
+  digest, and a locally built image has no repository digest, so
+  `IMAGE_TAG@<image ID>` does not resolve. Without `--push` the script keeps the
+  built, tagged image, prints its `local image ID`, prints no pinned reference
+  and exits 1 with "this Docker host's image store does not resolve a locally
+  built image by digest (classic image store); rerun with --push ...".
+
+With `--push` the script pushes `IMAGE_TAG` to its registry, takes the first
+`RepoDigests` entry for that repository, requires lowercase hex and requires it
+to resolve to the built image ID, and prints it as the pinned reference. It
+works the same on both stores. The script never pulls, and pushes only with
+`--push`; registry credentials are the operator's existing `docker login`.
 
 Module dependencies are not downloaded at check time (the network stays as
 configured, `none` by default), so a Go check passes only for modules whose
@@ -1397,7 +1427,7 @@ pinned once in the script. `docs/TESTING.md` describes each subcommand.
 sh scripts/check.sh
 go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/check-image-go/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh packaging/scripts/refuse-published-tag.sh packaging/tests/published_tag_test.sh
+sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/check-image-go/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh packaging/scripts/refuse-published-tag.sh packaging/tests/published_tag_test.sh packaging/tests/check_image_go_build_test.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh
 sh packaging/tests/systemd_test.sh
@@ -1405,6 +1435,7 @@ sh packaging/tests/prepare_release_test.sh
 sh packaging/tests/published_tag_test.sh
 sh packaging/tests/release_artifacts_fixture_test.sh
 sh packaging/tests/fresh_host_doctor_test.sh
+sh packaging/tests/check_image_go_build_test.sh
 ```
 
 `doctor --config` validates the identity, Docker/rootless boundary, restricted

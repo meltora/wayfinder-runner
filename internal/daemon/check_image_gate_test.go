@@ -111,6 +111,75 @@ func TestNewRefusesToStartWhenACheckImageIsMissing(t *testing.T) {
 	assertStartRefusalReleasedTheLock(t, cfg)
 }
 
+func withCheckImageResults(t *testing.T, results map[string]error) *[]string {
+	t.Helper()
+	var calls []string
+	original := inspectCheckImage
+	inspectCheckImage = func(_ context.Context, ref string) (string, error) {
+		calls = append(calls, ref)
+		if err := results[ref]; err != nil {
+			return "", err
+		}
+		return "sha256:" + strings.Repeat("9", 64), nil
+	}
+	t.Cleanup(func() { inspectCheckImage = original })
+	return &calls
+}
+
+func gateIDOnlyMessage(id, ref string) string {
+	return "check " + id + ": image " + ref + " does not resolve on the runner's Docker host, but a local image has that digest as its ID; " +
+		"on the classic image store use the repository digest printed by build.sh --push, or correct the image name"
+}
+
+func TestCheckImageGateReportsAnImageThatResolvesOnlyByID(t *testing.T) {
+	for name, test := range map[string]struct {
+		results map[string]error
+		want    string
+		calls   []string
+	}{
+		"several checks share the image": {
+			results: map[string]error{gateGoImage: isolation.ErrImageResolvesOnlyByID},
+			want:    gateIDOnlyMessage("go-test", gateGoImage),
+			calls:   []string{gateGoImage},
+		},
+		"one resolvable image and one that resolves only by ID": {
+			results: map[string]error{gateNodeImage: isolation.ErrImageResolvesOnlyByID},
+			want:    gateIDOnlyMessage("web-unit", gateNodeImage),
+			calls:   []string{gateGoImage, gateNodeImage},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := withCheckImageResults(t, test.results)
+			err := verifyDockerCheckImages(context.Background(), gateChecks())
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("err = %v\nwant %q", err, test.want)
+			}
+			if !slices.Equal(*calls, test.calls) {
+				t.Fatalf("inspected = %v, want %v", *calls, test.calls)
+			}
+		})
+	}
+}
+
+func TestNewRefusesToStartWhenACheckImageResolvesOnlyByID(t *testing.T) {
+	cfg := claudeDockerConfig(t)
+	cfg.Checks = map[string]config.CheckConfig{"go-test": gateChecks()["go-test"]}
+	withProviderCLIProbe(t, compatibleClaudeProbe(t), nil)
+	calls := withCheckImageResults(t, map[string]error{gateGoImage: isolation.ErrImageResolvesOnlyByID})
+	d, err := New(cfg, nil)
+	if err == nil {
+		closeConstructedDaemon(d)
+		t.Fatal("daemon started with a check image that resolves only by ID")
+	}
+	if want := gateIDOnlyMessage("go-test", gateGoImage); err.Error() != want {
+		t.Fatalf("err = %q\nwant %q", err, want)
+	}
+	if !slices.Equal(*calls, []string{gateGoImage}) {
+		t.Fatalf("inspected = %v", *calls)
+	}
+	assertStartRefusalReleasedTheLock(t, cfg)
+}
+
 func TestNewStartsWhenEveryCheckImageIsPresent(t *testing.T) {
 	cfg := claudeDockerConfig(t)
 	cfg.Checks = gateChecks()

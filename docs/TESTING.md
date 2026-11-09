@@ -31,7 +31,7 @@ Coverage and the packaging checks are run separately:
 ```sh
 go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/check-image-go/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh packaging/scripts/refuse-published-tag.sh packaging/tests/published_tag_test.sh
+sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/check-image-go/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh packaging/scripts/refuse-published-tag.sh packaging/tests/published_tag_test.sh packaging/tests/check_image_go_build_test.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh
 sh packaging/tests/systemd_test.sh
@@ -39,6 +39,7 @@ sh packaging/tests/prepare_release_test.sh
 sh packaging/tests/published_tag_test.sh
 sh packaging/tests/release_artifacts_fixture_test.sh
 sh packaging/tests/fresh_host_doctor_test.sh
+sh packaging/tests/check_image_go_build_test.sh
 docker run --rm -v "$PWD:/work" -w /work \
   -e OUR_RUNNER_RELEASE_REPOSITORY=example/app-runner -e OUR_RUNNER_CHANNEL=develop -e OUR_RUNNER_CONTROL_PLANE_URL=https://control.example.test \
   goreleaser/goreleaser:v2.17.1 check
@@ -135,14 +136,15 @@ labelled container remains.
 
 The harness-state and check-image tests run under the same gate. `CHECK_IMAGE`
 names a digest-pinned Go check image, for example the reference image built by
-`sh packaging/check-image-go/build.sh our-runner-check-go:<tag>` (use the
-printed pinned reference):
+`sh packaging/check-image-go/build.sh our-runner-check-go:<tag>` on the rootless
+daemon (use the printed pinned reference; on a classic image store the script
+prints one only with `--push`):
 
 ```sh
 DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock \
 RUN_DOCKER_SANDBOX_PROBE=1 \
 JOB_IMAGE=<registry>/<image>@sha256:<digest> \
-CHECK_IMAGE=our-runner-check-go:<tag>@sha256:<image ID> \
+CHECK_IMAGE=<pinned reference printed by build.sh> \
 go test ./internal/isolation/ ./internal/daemon/ \
   -run 'TestClaudeCreatesAPrivateStagingDirectoryInTheHandedOffWorkspace|TestIterativeSnapshotSkipsHarnessStateDuringARootlessHandOff|TestGoCheckImageRunsGoTestUnderTheProductionPolicy' -v -count=1
 ```
@@ -159,6 +161,32 @@ it passes in `CHECK_IMAGE` (the fixture test itself asserts uid and gid 10001, a
 read-only root, a noexec `/tmp` and no network), prints its `ok` line, fails
 with `exit_nonzero` when a test fails, and still fails in `JOB_IMAGE` when the
 check sets no image. `CHECK_IMAGE` is required only by the last test.
+
+`TestImageStoreResolvesALocallyBuiltImageByDigest` records how each image store
+names a locally built image. It builds a throwaway `FROM scratch` image with one
+small file and no network, tagged `our-runner-classic-probe:<random>` with a
+unique `our-runner-classic-probe` label, removes it in cleanup and fails if any
+image with that label remains. Under `RUN_DOCKER_CLASSIC_STORE_PROBE=1` it runs
+on the classic-store daemon named by `CLASSIC_DOCKER_HOST` and requires that
+`<tag>@<image ID>` does not resolve (`InspectImage` returns
+`ErrImageResolvesOnlyByID`) while the bare `sha256:<image ID>` does. Under
+`RUN_DOCKER_SANDBOX_PROBE=1` it runs on `DOCKER_HOST`, which must use the
+containerd image store, and requires that `<tag>@<image ID>` resolves to the ID:
+
+```sh
+CLASSIC_DOCKER_HOST=unix:///var/run/docker.sock RUN_DOCKER_CLASSIC_STORE_PROBE=1 \
+go test ./internal/isolation/ -run TestImageStoreResolvesALocallyBuiltImageByDigest -v -count=1
+DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock RUN_DOCKER_SANDBOX_PROBE=1 \
+go test ./internal/isolation/ -run TestImageStoreResolvesALocallyBuiltImageByDigest -v -count=1
+```
+
+`packaging/tests/check_image_go_build_test.sh` runs the real
+`packaging/check-image-go/build.sh` against a fake `docker` for the containerd
+and classic stores, with and without `--push`: a pinned reference only when it
+resolves to the built ID, the classic-store refusal, repository digest
+selection (another repository first, a registry with a port), push failure, a
+missing, uppercase or mismatched repository digest, usage errors, and never a
+pull.
 
 The Codex stdin smoke runs the host's `codex` against a local refusing endpoint,
 once for a new session and once resuming that session's real thread ID:
