@@ -342,6 +342,7 @@ func (jr *jobRunner) runWorkspaceTask(ctx context.Context, task workspaceTask) (
 		policy.NPMCacheDir = task.npmCache
 		if task.image != "" {
 			policy.Image = task.image
+			policy.PullNever = true
 		}
 		wrappedCommand, wrappedArgs, err = iso.Wrap(command, wrappedArgs, policy)
 		if err != nil {

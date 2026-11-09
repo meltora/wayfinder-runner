@@ -6,7 +6,7 @@
 | ---------------------- | ----- |
 | ID                     | FR-01 follow-up `runner-docker-build-checks` (RDBC) |
 | Kind                   | bug (release blocker for Docker-isolated Build jobs) plus one bounded feature (host-declared check image) |
-| Status                 | changes_requested |
+| Status                 | review_ready |
 | Risk                   | critical. The slice changes what the runner reads out of the agent's workspace into the trusted result repository, and which image runs required checks. A defect can publish harness state into a change set, hide a real concurrent change, or let a check run in an image that nobody on the host chose. It does not touch credentials, the control-plane protocol or tenant data. |
 | Complexity             | complex. Two independent defects meet in one live path (snapshot refusal, then missing toolchain). The work crosses the candidate copy, configuration validation, the check task path, the provenance artifact, the start gate, doctor, a new packaging directory and gated Docker tests. Each piece is small; the live proof depends on rootless Docker behaviour that unit tests cannot show. |
 | Parent scope           | `PRODUCT.md` "Implementation and review flow" (Build runs required checks and returns evidence), "Workspace composition" item 2 ("A pinned project toolchain layer"), the isolation baseline ("Separate trusted bootstrap and evidence collection from checked-out repository code"), and MCP enforcement (scoped checks use the same runner-owned sandbox and network policy as final required checks; `platform_run_check` cannot supply or override the executable, isolation or network). Parent records in the app repository: `docs/development/build-job-approved-plan-delivery.md`, section "FR-01 Docker Build check (9 November 2026)" (defects FD-1, FD-2, FD-3); `docs/development/runner-local-checks.md`; `docs/development/runner-hermetic-check-workspace.md` (D49, REQ-12 provenance, "Owner decisions on LC-1 to LC-4"); `docs/development/runner-job-image-claude-cli.md` (RJIC REQ-12, still open). |
@@ -14,10 +14,10 @@
 | Planner                | Opus 5.5 (`claude-opus-5-5`); develop-planner subagent, RDBC planning session, 9 November 2026 |
 | Implementer            | Opus 5.5 (`claude-opus-5-5`); develop-implementer subagent, worktree `agent-a828b3f7e7edaa3e6`, branch `worktree-agent-a828b3f7e7edaa3e6`, fast-forwarded to main `65e7310`, 9 November 2026 |
 | Reviewer               | Opus 5.5 (`claude-opus-5-5`); fresh develop-reviewer, reviewed head `a6208e43` against main `65e7310`, 9 November 2026 |
-| Repair attempt         | 0 |
+| Repair attempt         | 1 |
 | Updated                | 2026-11-09 |
 | Baseline               | app-runner `main` at `fc4ae6a` ("test(daemon): prove a job keeps its start-time checks across a hot reload"), worktree `agent-a6540183dac8397d8`, branch `worktree-agent-a6540183dac8397d8`. This record is the only change. |
-| Blocker / resume state | Review requested one directed repair (findings RV-1 and RV-2 below). After the repair passes re-review, the live verification (REQ-14) still needs the coordinator to swap the runner binary, edit `runner.local.yaml` and restart; see "Coordinator live steps". The record cannot reach `done` before REQ-14 passes, because the contract does not exempt it. |
+| Blocker / resume state | Repair attempt 1 for RV-1, RV-2 and FU-8 is done and waits for a fresh re-review (see "Repair attempt 1" below). After the repair passes re-review, the live verification (REQ-14) still needs the coordinator to swap the runner binary, edit `runner.local.yaml` and restart; see "Coordinator live steps". The record cannot reach `done` before REQ-14 passes, because the contract does not exempt it. |
 
 ## Outcome and current gap
 
@@ -210,6 +210,7 @@ Implementer: develop-implementer, 9 November 2026. Status set to `review_ready`;
 - **I-7 REQ-10 `ok` line.** A passed `platform_run_check` result carries no output, so a passing `go test ./...` cannot show its `ok` line through the production path. A separate subtest runs `/bin/sh -c "go test ./... && exit 3"` in the same image and policy and asserts the `ok  \texample.test/fixture` line in the failed output. The plain `go test ./...` subtest asserts `passed`. The fixture test itself asserts uid and gid 10001, a read-only root, a noexec `/tmp` and no network, so `passed` proves those properties.
 - **I-8 Job-image behaviour without a check image.** FD-2 says "`go` not found". The real output of `go test ./...` in the job image is `Cannot find module '…/go'` with `exit_nonzero`. The `node` image entrypoint prefixes `node` when the first argument is not a command on `PATH`. The REQ-10 third case asserts that real, unchanged behaviour. The reference Go image has no entrypoint, so its argv runs directly.
 - **I-9 Image reference format.** The image built on the rootless daemon (containerd image store) reports an ID equal to its manifest-list digest, and `docker image inspect` and `docker run` both resolve `our-runner-check-go:rdbc@sha256:<ID>` locally without a registry. This was verified with the built image (below). On the classic store without containerd, a locally built and never-pushed image may not resolve by `name@digest`. This is not tested here, so it is flagged as an uncertainty for other hosts.
+- **I-10 `--pull=never` for check images (repair 1, RV-2 coordinator decision).** `isolation.Policy.PullNever` adds `--pull=never` immediately before the image in the Docker argv. Only `runWorkspaceTask` sets it, and only when the task carries a configured check image, so the check command and its install step both use it. Providers, consultation and generation containers, the sandbox probe, and the probe, user-mapping and ownership containers (which build their own argv) never set it. A check without an image keeps its exact pre-slice argv. An image removed after start now fails that check instead of letting Docker pull it.
 
 ### Go version and base image (REQ-09)
 
@@ -303,8 +304,9 @@ Statement coverage per new or changed Go file. The profile comes from `go test -
 | `internal/daemon/check_install.go` | 95.3 % |
 | `internal/daemon/check_install_provenance.go` | 90.9 % |
 | `internal/daemon/checkexec.go` | 97.4 % |
-| `internal/daemon/copy_target.go` | 78.3 % (baseline 77.8 %) |
-| `internal/daemon/daemon.go` | 77.4 % (baseline 77.3 %) |
+| `internal/daemon/copy_target.go` | 80.4 % after repair 1 (78.3 % before; baseline 77.8 %) |
+| `internal/daemon/daemon.go` | 80.6 % after repair 1 (77.6 % before; baseline 77.3 %) |
+| `internal/isolation/isolation.go` | 96.5 % after repair 1 |
 | `internal/doctor/check_image_check.go` | 97.1 % |
 | `internal/doctor/doctor.go` | 85.8 % |
 | `internal/isolation/image_inspect.go` | 100.0 % |
@@ -394,7 +396,7 @@ gosec and govulncheck were not re-run by the reviewer; the implementer's results
 
 ## Review findings and repair
 
-Repair attempt 0 of 1. The record is `changes_requested`; dispatch one directed `develop-implementer` repair pass for RV-1 and RV-2.
+The first review set `changes_requested` and asked for one directed `develop-implementer` repair pass for RV-1 and RV-2. That pass is repair attempt 1, recorded below.
 
 - **RV-1 (REQ-13, blocking).**
   - Evidence: reviewer coverage run, `internal/daemon/copy_target.go` 72 of 92 statements (78.3 %) and `internal/daemon/daemon.go` 643 of 829 (77.6 %). Both files are changed by this slice, and REQ-13 requires at least 80 % for each new or changed Go file.
@@ -406,6 +408,51 @@ Repair attempt 0 of 1. The record is `changes_requested`; dispatch one directed 
   - Required correction: state precisely that start and doctor never pull, and that the check run relies on the image staying present. Alternatively add `--pull=never` to check containers only, keeping REQ-06's byte-identical argv for checks without an image, with a test.
   - Verification: diff review, plus a policy argv test if the flag is added.
 
+### Repair attempt 1 (develop-implementer, 9 November 2026)
+
+Fast-forwarded to `c18e075`, then fixed RV-1, RV-2 and FU-8. No production code changed for RV-1; only tests were added.
+
+- **RV-1.** Real behavior tests, no assertion-free tests:
+  - `internal/daemon/new_optional_registries_test.go`:
+    - `New` wires all source-publication roles from one valid installation, and leaves the preview capabilities unset.
+    - `New` refuses an invalid credential before the journal is opened.
+    - `New` wires a configured preview observer and lifecycle controller.
+    - `New` refuses two preview entries with one capability identity (observation and lifecycle).
+    - `New` refuses an invalid configuration before touching state.
+  - `internal/daemon/runner_state_files_test.go`:
+    - `SetPausedState` refuses a shared or uncreatable state directory.
+    - It reports a pause entry it cannot remove or replace, and leaves no temporary file.
+    - `ReadPausedState` refuses a shared or oversized file.
+    - `ReadRunnerID` refuses oversized, invalid and empty content.
+    - `WriteRunnerID` refuses an invalid ID, a state path below a file, and a symlinked state directory, and leaves no temporary file when it cannot commit.
+  - `internal/daemon/agent_result_cache_reuse_test.go`:
+    - An unchanged symlink is kept across snapshots, and a retargeted symlink is published and cached with the new target (`placeSymlink`).
+    - A cached copy that is missing is copied again, with the same commit (`reusable`).
+    - A candidate cache rewritten or replaced outside the runner makes the snapshot refuse and drop the cache. The next snapshot rebuilds the same commit. This fails closed at `git read-tree -m` before the copy, so it adds no `copy_target.go` coverage; it is kept as a behavior test.
+  - Result, same `-coverpkg` profile as the reviewer: `copy_target.go` 80.4 % (74 of 92), `daemon.go` 80.6 %.
+- **RV-2.** Implemented the coordinator decision (I-10):
+  - `isolation.Policy.PullNever` puts `--pull=never` immediately before the image, and `runWorkspaceTask` sets it only when the task carries a check image.
+  - `internal/isolation/pull_never_test.go` proves, for a check, a provider (nested sandbox, MCP) and a consultation policy, that the flag is the only difference and sits just before the image. It also proves that no `--pull*` argument appears when the flag is off.
+  - `check_image_policy_test.go`:
+    - The with-image argv now equals the without-image argv plus `--pull=never` before the image.
+    - A check without an image has no pull flag and keeps its exact pre-slice argv.
+    - Install, iterative and terminal runs carry `--pull=never` exactly when the check has an image.
+  - The gated `TestGoCheckImageRunsGoTestUnderTheProductionPolicy` passes with the flag on the rootless daemon.
+  - README line 1024 now says that start and doctor only inspect, that a check with an image runs with `--pull=never`, and that every other container keeps its argv.
+- **FU-8.** `packaging/check-image-go/build.sh` was added to the `sh -n` lists in README and `docs/TESTING.md`.
+
+Repair evidence:
+
+| Command | Result |
+| ------- | ------ |
+| `gofmt -l ./internal ./cmd` | prints nothing |
+| `go vet ./...` | ok |
+| `sh -n packaging/check-image-go/build.sh packaging/job-image/build.sh` | ok |
+| `go test ./... -count=1` | every package ok, no failures, exit 0 |
+| `go test -race ./internal/daemon/ ./internal/config/ ./internal/doctor/ ./internal/isolation/ ./internal/remoteconfig/ ./cmd/our-runner/ -count=1` | all 6 packages ok, exit 0 |
+| `-coverpkg` profile over daemon, config, doctor, isolation and cmd | exit 0; `copy_target.go` 80.4 %, `daemon.go` 80.6 %, `build.go` 92.3 %, `isolation.go` 96.5 % |
+| Gated, same environment as the review | `TestIterativeSnapshotSkipsHarnessStateDuringARootlessHandOff` PASS 0.97 s; `TestGoCheckImageRunsGoTestUnderTheProductionPolicy` PASS 11.18 s (4 subtests); `TestAgentPackMountRefusesEveryWriteInsideTheContainer` PASS 0.73 s; `TestClaudeCreatesAPrivateStagingDirectoryInTheHandedOffWorkspace` PASS 4.39 s; `TestJobImageSandboxRuntimeStartsUnderTheNestedSandboxFlags` PASS 2.64 s |
+
 Non-blocking observations, no change required in this slice:
 
 - **FU-8 confirmed.** `build.sh` is not in the README and `docs/TESTING.md` `sh -n` lists.
@@ -414,7 +461,7 @@ Non-blocking observations, no change required in this slice:
 
 ## Completion
 
-Not complete. Status `changes_requested` after the first review. REQ-01 to REQ-11 are implemented; REQ-12 and REQ-13 are partial (RV-2, RV-1); REQ-14 is unverified and waits for the coordinator's live run. That live run starts only after a re-review verifies REQ-01 to REQ-13. Only a verified review that also includes REQ-14 evidence may set `done`.
+Not complete. Status `review_ready` after repair attempt 1, which waits for a fresh re-review of RV-1 and RV-2. The first review had set `changes_requested`. REQ-01 to REQ-11 are implemented; REQ-12 and REQ-13 are partial (RV-2, RV-1); REQ-14 is unverified and waits for the coordinator's live run. That live run starts only after a re-review verifies REQ-01 to REQ-13. Only a verified review that also includes REQ-14 evidence may set `done`.
 
 ## Follow-ups
 
@@ -424,8 +471,8 @@ Not complete. Status `changes_requested` after the first review. REQ-01 to REQ-1
 - **FU-4.** Reference check images for other ecosystems.
 - **FU-5.** App test support `src/server/planning-manifests/test-support/go-build-upload-evidence.go` and `go-planning-driver_test.go` expect `our-runner.check-install.v1`; accept v2 (app repository).
 - **FU-6.** A failed check's output can contain the check workspace's absolute host path, because the check directory is bind-mounted at its host path (predates this slice).
-- **FU-7.** Raise `internal/daemon/copy_target.go` and `internal/daemon/daemon.go` to at least 80 % statement coverage. They were at 77.8 % and 77.3 % before this slice.
-- **FU-8.** Add `packaging/check-image-go/build.sh` to the `sh -n` lists in README and `docs/TESTING.md`.
+- **FU-7.** Done in repair 1 (RV-1): `copy_target.go` 80.4 %, `daemon.go` 80.6 %.
+- **FU-8.** Done in repair 1: `packaging/check-image-go/build.sh` is in the `sh -n` lists in README and `docs/TESTING.md`.
 - **FU-9.** On a classic (non-containerd) image store, `build.sh` prints `name@<image ID>`, which may not resolve locally; print or document a resolvable repo-digest reference (review I-9).
 
 ## Estimate

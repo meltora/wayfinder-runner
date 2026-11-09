@@ -1021,7 +1021,11 @@ checks:
     image: our-runner-check-go:v1@sha256:<image ID printed by build.sh>
 ```
 
-The runner never pulls a check image. Under Docker, `start` inspects every
+The runner never pulls a check image: `start` and `doctor` only inspect, and
+every container for a check with an image runs with `docker run --pull=never`,
+so an image removed after start fails that check instead of being pulled.
+Containers for checks without an image, providers and every other runner
+container keep their existing argv. Under Docker, `start` inspects every
 distinct configured check image on the configured Docker host before it
 connects and stops with "check <id>: image <ref> is not present on the runner's
 Docker host; pull or build it before starting" when one is missing. `doctor`
@@ -1393,7 +1397,7 @@ pinned once in the script. `docs/TESTING.md` describes each subcommand.
 sh scripts/check.sh
 go test -coverpkg=./... -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
-sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh packaging/scripts/refuse-published-tag.sh packaging/tests/published_tag_test.sh
+sh -n packaging/bootstrap.sh packaging/install.sh packaging/scripts/preinstall.sh packaging/scripts/postinstall.sh packaging/tests/bootstrap_test.sh packaging/tests/install_test.sh packaging/tests/systemd_test.sh packaging/tests/release_artifacts_test.sh packaging/scripts/prepare-release.sh packaging/tests/prepare_release_test.sh packaging/job-image/build.sh packaging/check-image-go/build.sh packaging/scripts/fresh-host-doctor.sh packaging/tests/fresh_host_doctor_test.sh packaging/scripts/refuse-published-tag.sh packaging/tests/published_tag_test.sh
 sh packaging/tests/bootstrap_test.sh
 sh packaging/tests/install_test.sh
 sh packaging/tests/systemd_test.sh

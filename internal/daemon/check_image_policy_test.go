@@ -82,6 +82,23 @@ func containerImage(t *testing.T, argv []string, images ...string) string {
 	return found[0]
 }
 
+func assertPullPolicy(t *testing.T, argv []string, never bool) {
+	t.Helper()
+	var pulls []string
+	for _, arg := range argv {
+		if strings.HasPrefix(arg, "--pull") {
+			pulls = append(pulls, arg)
+		}
+	}
+	want := []string(nil)
+	if never {
+		want = []string{"--pull=never"}
+	}
+	if !slices.Equal(pulls, want) {
+		t.Fatalf("pull flags = %q, want %q: %q", pulls, want, argv)
+	}
+}
+
 func normalizedArgv(argv []string, image string) []string {
 	out := make([]string, len(argv))
 	for index, arg := range argv {
@@ -118,9 +135,12 @@ func TestCheckImageChangesOnlyTheContainerImageOfAWorkspaceTask(t *testing.T) {
 	if got := containerImage(t, runs[1], policyJobImage, policyCheckImage); got != policyCheckImage {
 		t.Fatalf("a check with an image ran in %s", got)
 	}
-	if without, with := normalizedArgv(runs[0], policyJobImage), normalizedArgv(runs[1], policyCheckImage); !slices.Equal(without, with) {
-		t.Fatalf("the check image changed more than the image:\nwithout %q\nwith    %q", without, with)
+	without, with := normalizedArgv(runs[0], policyJobImage), normalizedArgv(runs[1], policyCheckImage)
+	image := slices.Index(without, "<image>")
+	if want := slices.Concat(without[:image], []string{"--pull=never"}, without[image:]); !slices.Equal(with, want) {
+		t.Fatalf("the check image changed more than the image and the pull policy:\nwith %q\nwant %q", with, want)
 	}
+	assertPullPolicy(t, runs[0], false)
 	for _, want := range []string{"--read-only", "--network", "--user", "--cap-drop", "--security-opt", "--memory", "--cpus", "--pids-limit", "--tmpfs", "--label"} {
 		if !slices.Contains(runs[1], want) {
 			t.Fatalf("check image argv lost %s: %q", want, runs[1])
@@ -191,6 +211,7 @@ func TestInstallAndCommandOfACheckRunInItsImage(t *testing.T) {
 			if got := containerImage(t, argv, policyJobImage, policyCheckImage); got != test.want {
 				t.Fatalf("ran in %s, want %s: %q", got, test.want, argv)
 			}
+			assertPullPolicy(t, argv, test.want == policyCheckImage)
 		}
 	}
 }
@@ -218,7 +239,9 @@ func TestIterativeAndTerminalRunsOfACheckUseItsImage(t *testing.T) {
 	}
 	var images []string
 	for _, argv := range log.runs(t) {
-		images = append(images, containerImage(t, argv, policyJobImage, policyCheckImage))
+		image := containerImage(t, argv, policyJobImage, policyCheckImage)
+		assertPullPolicy(t, argv, image == policyCheckImage)
+		images = append(images, image)
 	}
 	want := []string{policyCheckImage, policyJobImage, policyCheckImage, policyJobImage}
 	if !slices.Equal(images, want) {

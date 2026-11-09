@@ -30,6 +30,7 @@ type Policy struct {
 	MCPSock             string
 	MCPTokenFile        string
 	Image               string
+	PullNever           bool
 	RunnerID            string
 	AttemptID           string
 	NestedSandbox       bool
@@ -208,6 +209,9 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 	image := p.Image
 	if image == "" {
 		image = DefaultJobImage
+	}
+	if p.PullNever {
+		dockerArgs = append(dockerArgs, "--pull=never")
 	}
 	dockerArgs = append(dockerArgs, image, command)
 	dockerArgs = append(dockerArgs, args...)
