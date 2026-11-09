@@ -6,13 +6,13 @@
 | ---------------------- | ----- |
 | ID                     | FR-01 follow-up FD-3 `runner-hook-tool-names` (RHTN) |
 | Kind                   | bug (missing evidence: platform logs cannot say which tool ran or failed) |
-| Status                 | ready |
+| Status                 | review_ready (REQ-01 to REQ-13 implemented with evidence; REQ-14 unverified, coordinator after merge) |
 | Risk                   | critical. The slice widens what agent-derived data leaves the runner for the control plane. Today a sanitized log carries only the provider event type and a fixed status word. After the slice it also carries tool names. A defect could forward tool arguments, tool output, file paths or credentials that the sanitizer removes today. No authentication, tenant, persistence or execution-authority change. |
 | Complexity             | standard. One new pure package, one changed emitter, one log line, a gated test that reuses the existing offline Claude probe, and docs. No protocol, app or migration change. |
 | Parent scope           | App `docs/development/build-job-approved-plan-delivery.md`, section "FR-01 Docker Build check (9 November 2026)", finding FD-3 ("Hook events and sanitized logs carry no tool names, so a reviewer cannot tell from platform evidence which tool ran or failed"), and "Follow-up: RDBC live Docker Build on KAN-25" ("FD-3: still a note"). App `docs/implementation-progress.md`, entries "FR-01 Docker-isolated Build check" and "RDBC runner Docker Build checks" (follow-up list). This repository: `docs/development/runner-docker-build-checks.md` D-4 (FD-3 deferred as FU-3). |
 | Product sources        | `PRODUCT.md` agent run evidence (sanitized logs are runner-redacted, bounded and non-authoritative) and the isolation baseline (provider output and repository code are untrusted). README "Hook telemetry is occurrence-only" (line 1125). |
 | Planner                | Opus 5.5 (`claude-opus-5-5`); develop-planner subagent, FD-3 planning session, 9 November 2026 |
-| Implementer            | not assigned |
+| Implementer            | develop-implementer, Opus 5.5 (`claude-opus-5-5`), 9 November 2026 |
 | Reviewer               | not assigned |
 | Repair attempt         | 0 |
 | Updated                | 2026-11-09 |
@@ -113,16 +113,122 @@ Owned files (app-runner): new `internal/toolsummary/toolsummary.go` and `toolsum
 
 | Command / scenario | Required for | Actual result / date | Evidence | Baseline attribution |
 | ------------------ | ------------ | -------------------- | -------- | -------------------- |
-| Gated probe with raw stdout (step 0) | REQ-01, D-2 | not run | this record | |
-| `go test ./internal/toolsummary/ ./internal/daemon/ -count=1` | REQ-02 to REQ-10 | not run | | |
-| `git diff 67eeac7 -- internal/hookspool internal/daemon/hook_event.go internal/provider/hooks.go cmd/our-runner/main.go internal/mcpbridge` | REQ-09 | not run | | |
-| `RUN_DOCKER_SANDBOX_PROBE=1 JOB_IMAGE=<digest> go test ./internal/isolation -run 'ToolSummary' -count=1 -v` | REQ-11 | not run | | |
-| `gofmt -l .`, `go build ./...`, `go vet ./...`, `go test ./... -count=1`, race, coverage, `gosec`, `govulncheck`, `staticcheck` | REQ-13 | not run | | |
-| Live Claude Build, Activity panel and inbox query | REQ-14 | not run | | |
+| Gated probe with raw stdout (step 0) | REQ-01, D-2 | Pass, 2026-11-09 21:15 UTC. Shape matches "Current code". | "Step 0 evidence" below | |
+| `go test ./internal/toolsummary/ ./internal/daemon/ -count=1` | REQ-02 to REQ-10 | Pass, 2026-11-09. `toolsummary`: 13 tests (incl. subtests). Daemon: the 7 new tests and the 5 existing sanitized log and `consumeOutput` tests pass. | `internal/toolsummary/toolsummary_test.go`, `internal/daemon/sanitized_log_test.go` | |
+| `git diff 67eeac7 -- internal/hookspool internal/daemon/hook_event.go internal/provider/hooks.go cmd/our-runner/main.go internal/mcpbridge` | REQ-09 | Empty (0 lines), 2026-11-09 | | |
+| `DOCKER_HOST=unix:///run/user/1000/docker.sock RUN_DOCKER_SANDBOX_PROBE=1 JOB_IMAGE=our-runner-job:rjic@sha256:a2c8cabef3dbe9d4044bf2bcb2f7031aadbeee24ac0bd0dce8b41b5e900e8382 go test ./internal/isolation -run 'ToolSummary\|TestClaudeBashRunsInTheWeakerNestedSandbox\|TestClaudeBashCannotStartUnderTheEnvironmentScrubInDocker' -count=1 -v` | REQ-11 | Pass, 2026-11-09. All 4 tests pass in 22.8 s: the 2 new ones and the 2 existing ones, whose assertions are unchanged. | "REQ-11 output" below | |
+| `gofmt -l .`, `go build ./...`, `go vet ./...` (linux and darwin/arm64), `go test ./... -count=1`, race, coverage, `gosec`, `govulncheck`, `staticcheck` | REQ-13 | Pass, 2026-11-09 | "REQ-13 output" below | |
+| Live Claude Build, Activity panel and inbox query | REQ-14 | not run (coordinator, after merge) | | |
+
+### Step 0 evidence (REQ-01, D-2)
+
+The probe ran on 2026-11-09 with a temporary `t.Logf` of each `==claude-out` line in `parseOfflineClaudeBashRun`. The print was removed before commit. Below are the lines with `usage`, `uuid`, `session_id`, timestamps and `tool_result_meta` trimmed (`…`). Claude Code 2.1.299.
+
+Success run (`TestClaudeBashRunsInTheWeakerNestedSandboxWithoutTheEnvironmentScrub`):
+
+```json
+{"type":"assistant","message":{"id":"msg_offline","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"tool_use","id":"toolu_offline_1","name":"Bash","input":{"command":"echo sandbox-bash-ok; grep NSpid /proc/self/status; cat /home/runner/.claude/canary.txt 2>/dev/null; touch /home/runner/outside 2>/dev/null; echo \"scrub=${CLAUDE_CODE_SUBPROCESS_ENV_SCRUB:-unset}\"","description":"sandbox probe"}}],"stop_reason":null,…},"parent_tool_use_id":null,"session_id":"…","uuid":"…","timestamp":"…","request_id":"req_offline"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_offline_1","type":"tool_result","content":"sandbox-bash-ok\nNSpid:\t131\t8\t3\nscrub=unset","is_error":false}]},"parent_tool_use_id":null,"session_id":"…","uuid":"…","timestamp":"…","tool_use_result":{"stdout":"sandbox-bash-ok\nNSpid:\t131\t8\t3\nscrub=unset","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false},"tool_result_meta":[…]}
+```
+
+Scrub run (`TestClaudeBashCannotStartUnderTheEnvironmentScrubInDocker`), user line:
+
+```json
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"Exit code 1\nbwrap: Can't mount proc on /newroot/proc: Operation not permitted","is_error":true,"tool_use_id":"toolu_offline_1"}]},"parent_tool_use_id":null,"session_id":"…","uuid":"…","timestamp":"…","tool_use_result":"Error: Exit code 1\nbwrap: Can't mount proc on /newroot/proc: Operation not permitted","tool_result_meta":[…]}
+```
+
+Findings:
+
+- `is_error` is present as boolean `false` when the call succeeds, and `true` when it fails.
+- `tool_use_id` equals the `tool_use` block's `id` (`toolu_offline_1`).
+- The shape matches "Current code". There is one addition: the user event carries a top-level `tool_use_result` (stdout and stderr) and `tool_result_meta`. Both are top-level fields, so the existing loop drops them and counts them as `tool_output` redactions. They are never forwarded.
+- Only `Bash` appeared next to a `tool_use` block.
+- Binary name check. In the job image, `grep -a -o -F -c -w <name>` on `/opt/agent-tools/node_modules/@anthropic-ai/claude-code/bin/claude.exe` finds every D-2 built-in name except `SlashCommand` (0 matches). `SlashCommand` stays on the list: it is harmless and no runner allow or deny list refers to it. Every name that `provider.go` (`Bash`, `mcp__platform__*`) and `plan_permissions.go` (`Read`, `Grep`, `Glob`, `Skill`, `Edit`, `Write`, `NotebookEdit`, `MultiEdit`, `WebFetch`, `WebSearch`) allow or deny is on the list.
+- Extra built-in names. The `system/init` event's `tools` array lists names that are not in D-2: `CronCreate`, `CronDelete`, `CronList`, `EnterWorktree`, `ExitWorktree`, `ListAgents`, `ReportFindings`, `ScheduleWakeup`, `SendMessage`, `TaskStop`, `Workflow`. All of them also appear in the binary. They were **not** added, because D-2 fixes the list and missing names err toward hiding. They show as `unlisted tool`. Adding them is a planner decision (see Follow-up).
+
+### REQ-11 output
+
+```text
+=== RUN   TestClaudeBashToolSummaryNamesASucceededCallInDocker
+    claude_weaker_sandbox_integration_test.go:367: tool summaries: ["Tool call: Bash" "Tool result: Bash succeeded"]
+--- PASS: TestClaudeBashToolSummaryNamesASucceededCallInDocker (7.72s)
+=== RUN   TestClaudeBashToolSummaryNamesAFailedCallUnderTheEnvironmentScrubInDocker
+    claude_weaker_sandbox_integration_test.go:376: tool summaries: ["Tool call: Bash" "Tool result: Bash failed"]
+--- PASS: TestClaudeBashToolSummaryNamesAFailedCallUnderTheEnvironmentScrubInDocker (10.80s)
+--- PASS: TestClaudeBashRunsInTheWeakerNestedSandboxWithoutTheEnvironmentScrub (2.43s)
+--- PASS: TestClaudeBashCannotStartUnderTheEnvironmentScrubInDocker (1.88s)
+ok  	github.com/example/app-runner/internal/isolation	22.840s
+```
+
+### REQ-13 output (2026-11-09)
+
+| Check | Result |
+| ----- | ------ |
+| `gofmt -l .` | no output |
+| `go build ./...` | ok |
+| `go vet ./...` and `GOOS=darwin GOARCH=arm64 go vet ./...` | ok |
+| `go test ./... -count=1` | exit 0. Every package ok or has no test files (47 packages listed). |
+| `go test -race ./internal/daemon/ ./internal/toolsummary/ -count=1` | ok: daemon 303.9 s, toolsummary 1.0 s |
+| Coverage `internal/toolsummary` | 100.0 % of statements (every function 100 %) |
+| Coverage of changed daemon functions, from the sanitized log, tool summary and `consumeOutput` tests | `summarizeProviderTools` 100 %, `publishSanitizedAgentStatus` 88.9 %, `consumeOutput` 80.6 %, `sanitizeSelectedLogValue` 85.7 % (unchanged) |
+| `sh scripts/check.sh vuln` (govulncheck v1.8.0) | "Your code is affected by 0 vulnerabilities", exit 0. It also reports 1 vulnerability in a required module that the code does not call; that is unchanged by this slice. |
+| `sh scripts/check.sh sec` (gosec v2.29.0) | no findings, exit 0 |
+| `staticcheck` | not installed |
 
 ## Implementation report
 
-Not started.
+Implementer: develop-implementer (Opus 5.5), 2026-11-09. Branch `fd3-hook-tool-names`, based on contract commit `013cfdd`.
+
+**Changed paths**
+
+- `internal/toolsummary/toolsummary.go` (new). A pure package with `Summarize(event, *Tracker) (Summary, bool)`, `NewTracker`, `AllowedName`, `MaxTrackedIDs = 512` and `MaxNamedBlocks = 8`. `Summary` holds `Text`, `Tools` (the log value), `Truncated`, `CommandArgumentRedactions` and `ToolOutputRedactions`. The allowlist is the D-2 built-ins plus `mcp__platform__` + each `mcpbridge.ToolDefinitions()` name. The internal hook and list tools are not in `ToolDefinitions()`, and a test asserts they are refused.
+- `internal/toolsummary/toolsummary_test.go` (new).
+- `internal/daemon/sanitized_log.go`:
+  - `runnerRedactionPolicyVersion` is now `runner-redaction-2`.
+  - New `summarizeProviderTools`. It runs only when `cfg.Provider == "claude"` and works under `procMu`; the tracker is created lazily.
+  - `publishSanitizedAgentStatus(providerEvent, tools *toolsummary.Summary)` runs the lease, start-evidence and cap logic and the top-level field counting unchanged. It then replaces the source, summary and detail with the tool summary, and adds `command_argument` and `tool_output` counts.
+- `internal/daemon/job.go`:
+  - New `toolTracker` field.
+  - `consumeOutput` resets the tracker under `procMu` when a provider stream starts, so a resumed session starts empty. It summarizes each decoded line once, adds `tools` to the `agent event` log line when there is a tool block, and passes the summary to the emitter.
+- `internal/daemon/sanitized_log_test.go`:
+  - The 2 existing emitter calls now pass `nil` or a summary. The lease-refusal case also covers a tool summary.
+  - 7 new tests: `TestClaudeToolCallAndResultBecomeToolSummaries`, `TestToolSummaryLogLineAndEventForSeveralAndHostileBlocks`, `TestEventsWithoutToolBlocksKeepTheAgentStatusEntry`, `TestOtherProvidersKeepAgentStatusForToolShapedEvents`, `TestResumedSessionStartsWithAnEmptyToolTracker`, `TestToolSummaryCountsAgainstTheSanitizedLogCap`, `TestToolSummaryWaitsForStartEvidence`.
+- `internal/isolation/claude_weaker_sandbox_integration_test.go`: `offlineClaudeBashRun.outputLines` keeps the raw `==claude-out` lines. The 2 new gated tests use them; the existing assertions are unchanged.
+- `README.md`: the hook paragraph now says hook events carry no tool names. A new paragraph gives the `tool_summary` vocabulary, the allowlist, what is never forwarded, the redaction policy and the `tools` log attribute.
+- `docs/TESTING.md`: the 2 REQ-11 gated tests.
+- This record.
+
+**Per-REQ evidence**
+
+| ID | Evidence |
+| -- | -------- |
+| REQ-01 | "Step 0 evidence" above. The temporary print is not in the commit (`git diff 013cfdd -- internal/isolation` shows only the `outputLines` field, its append and the 2 new tests). |
+| REQ-02 | `TestToolCallSummaryCardinality` covers 1, 2, 8 and 9 blocks, including ` (+1 more)` with `truncated`. `TestToolCallSummaryKeepsBlockOrderAndSkipsText` covers order, text and thinking blocks mixed in, and duplicates (`Bash, Bash`). `TestEventsWithoutToolBlocksAreNotSummarized` covers events with no tool block. `TestEventsWithoutToolBlocksKeepTheAgentStatusEntry` shows that, for assistant and user text events, `system` and `result`, the event emitted with the Claude provider equals the legacy one in every field except `observed_at`. `TestClaudeToolCallAndResultBecomeToolSummaries` checks the source `tool_summary` and that there is no `detail`. |
+| REQ-03 | `TestToolResultSummary` covers one result, two mixed results, an unseen ID, an ID from another tracker (another job), a nil tracker, and `is_error` missing, `true`, `false` and `"true"`. `TestToolResultCap` covers 10 results, ` (+2 more)`. |
+| REQ-04 | `TestTrackerIsBounded`: the 513th ID is not stored and its result shows `unknown tool`; a stored ID can be reused. `TestTrackerRejectsInvalidIDs` covers an empty ID, 129 bytes, `/`, a space, a newline, non-ASCII, a non-string and a missing ID; a 128-byte ID is stored. The tracker is `jobRunner.toolTracker`, guarded by `procMu`. `TestResumedSessionStartsWithAnEmptyToolTracker` shows it is reset per provider stream. No emitted event JSON or log line contains `toolu_` (daemon tests). |
+| REQ-05 | `TestHostileValuesNeverLeave` (package) and `TestToolSummaryLogLineAndEventForSeveralAndHostileBlocks` (daemon, whole emitted event and log buffer) cover: a command, a host path, a `ghp_` token and a private-key header in `input`, the same in `content` as a string and as text parts, and the names `Bash; cat /etc/passwd`, `ghp_<40>`, 200 bytes, a newline, `mcp__other__tool`, `bash`, and the internal platform tools. None appears; the bad names show as `unlisted tool`. A summary character-class regex passes. Every emitted event passes `validation.SanitizedLogEvent` and a digest recomputation (`toolSummaryValidatedEvents`). |
+| REQ-06 | The daemon tests assert exact counts and sorted categories. Real call line: 4 dropped top-level fields + 1 input = 5, `[command_argument tool_output]`. Real result line: 5 dropped + 1 content = 6, `[tool_output]`. Hostile call: 2 + 9 inputs + 5 unlisted = 16, which includes the block beyond the cap. Every emitted event, including the cap marker, has `runner-redaction-2`. |
+| REQ-07 | `TestToolSummaryCountsAgainstTheSanitizedLogCap`. At 511 entries, a `tool_use` line takes slot 512, the next line produces the unchanged suppression marker, and the third produces nothing (sequence 514). `TestSanitizedLogEnforcesLeaseAndEmissionCap`: a tool summary with an invalid lease emits nothing. `TestToolSummaryWaitsForStartEvidence`: nothing is emitted and the counter does not move before start evidence. |
+| REQ-08 | `TestClaudeToolCallAndResultBecomeToolSummaries` checks the exact log line endings `type=assistant status=[suppressed] tools=Bash` and `type=user status=[suppressed] tools=Bash:succeeded`, and no `tools` for a text event. The hostile test checks the capped `tools="Bash,unlisted tool,…,Read,Edit"` and `tools="Bash:failed,Read:returned,unlisted tool:succeeded"`. `status=[suppressed]` is today's `safeLogValue` output for a missing status; it is unchanged. |
+| REQ-09 | The `git diff 67eeac7` over the hook paths is empty. The full `go test ./...` passes, which includes `TestHookEventPayloadContainsOnlyDaemonDerivedAuthority` and the hook field refusal tests. |
+| REQ-10 | `TestOtherProvidersKeepAgentStatusForToolShapedEvents`: for `codex` and `opencode`, the real Claude tool-use and tool-result lines, a text line and a flat `tool_use` event all give `agent_status` `Agent status: …`, no `tools` attribute and no tracker. |
+| REQ-11 | "REQ-11 output" above. |
+| REQ-12 | `README.md` (after "Hook telemetry is occurrence-only") and `docs/TESTING.md`. No code comments were added. |
+| REQ-13 | "REQ-13 output" above. |
+| REQ-14 | unverified. This is the coordinator's live check after merge. |
+
+**Decisions**
+
+- I-1: `publishSanitizedAgentStatus` takes the precomputed summary instead of summarizing itself. Summarizing changes the tracker, and the local log line needs the same result, so each line is summarized exactly once in `consumeOutput`. The summary is pure text. The `v1.SanitizedLogEvent` is still built only after the lease, start-evidence and cap checks (REQ-07). The tracker learns IDs even when an entry is suppressed or not yet allowed to be emitted, so later results keep their names.
+- I-2: For a `tool_summary` entry, the selected `type` and `status` values are still sanitized for their redaction categories. `detail` is cleared (REQ-02 "No detail").
+- I-3: The local `tools` value is joined with `,` and no space. It lists only the shown names; there is no `(+k more)`.
+- I-4: An `unlisted tool` name is counted once, at the `tool_use` block. A later result for that ID shows the tracker's stored `unlisted tool` and is not counted again.
+- I-5: `toolsummary` imports `mcpbridge` for `ToolDefinitions()` only. There is no import cycle.
+
+**Follow-up (out of scope)**
+
+- The planner could add the 11 extra Claude 2.1.299 built-in names from the `system/init` `tools` array to D-2. Today they show as `unlisted tool`.
+- REQ-14 live Build after merge (coordinator).
 
 ## Reviewer requirement review
 
@@ -131,3 +237,4 @@ Not started.
 ## Owner questions (non-blocking)
 
 - Q-1: D-1 keeps hook events free of tool names and puts them only in sanitized logs. Do you also want tool names on hook events? If yes, that becomes a separate app plus runner protocol slice; this slice does not depend on the answer.
+  - **Answered (coordinator decision, 9 November 2026):** no tool names on hook events in this slice. D-1 stands. Tool names on hook events would be the separate cross-repository slice FU-3 described in `runner-docker-build-checks.md` D-4.
