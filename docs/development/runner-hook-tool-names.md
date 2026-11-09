@@ -6,14 +6,14 @@
 | ---------------------- | ----- |
 | ID                     | FR-01 follow-up FD-3 `runner-hook-tool-names` (RHTN) |
 | Kind                   | bug (missing evidence: platform logs cannot say which tool ran or failed) |
-| Status                 | review_ready (REQ-01 to REQ-13 implemented with evidence; REQ-14 unverified, coordinator after merge) |
+| Status                 | done pending REQ-14 live (reviewer verified REQ-01 to REQ-13 implemented on 2026-11-09; REQ-14 unverified, coordinator after merge) |
 | Risk                   | critical. The slice widens what agent-derived data leaves the runner for the control plane. Today a sanitized log carries only the provider event type and a fixed status word. After the slice it also carries tool names. A defect could forward tool arguments, tool output, file paths or credentials that the sanitizer removes today. No authentication, tenant, persistence or execution-authority change. |
 | Complexity             | standard. One new pure package, one changed emitter, one log line, a gated test that reuses the existing offline Claude probe, and docs. No protocol, app or migration change. |
 | Parent scope           | App `docs/development/build-job-approved-plan-delivery.md`, section "FR-01 Docker Build check (9 November 2026)", finding FD-3 ("Hook events and sanitized logs carry no tool names, so a reviewer cannot tell from platform evidence which tool ran or failed"), and "Follow-up: RDBC live Docker Build on KAN-25" ("FD-3: still a note"). App `docs/implementation-progress.md`, entries "FR-01 Docker-isolated Build check" and "RDBC runner Docker Build checks" (follow-up list). This repository: `docs/development/runner-docker-build-checks.md` D-4 (FD-3 deferred as FU-3). |
 | Product sources        | `PRODUCT.md` agent run evidence (sanitized logs are runner-redacted, bounded and non-authoritative) and the isolation baseline (provider output and repository code are untrusted). README "Hook telemetry is occurrence-only" (line 1125). |
 | Planner                | Opus 5.5 (`claude-opus-5-5`); develop-planner subagent, FD-3 planning session, 9 November 2026 |
 | Implementer            | develop-implementer, Opus 5.5 (`claude-opus-5-5`), 9 November 2026 |
-| Reviewer               | not assigned |
+| Reviewer               | develop-reviewer, Opus 5.5 (`claude-opus-5-5`), fresh context, 9 November 2026 |
 | Repair attempt         | 0 |
 | Updated                | 2026-11-09 |
 | Baseline               | app-runner `main` at `67eeac7`, worktree `.claude/worktrees/fd3-hook-tool-names`, branch `fd3-hook-tool-names`. This record is the only change. App `main` at `abf145dd`, unchanged. |
@@ -232,7 +232,54 @@ Implementer: develop-implementer (Opus 5.5), 2026-11-09. Branch `fd3-hook-tool-n
 
 ## Reviewer requirement review
 
-Not started.
+Reviewer: develop-reviewer, Opus 5.5 (`claude-opus-5-5`), fresh context, 2026-11-09. Reviewed `013cfdd..5005c82` against base `67eeac7`. Every verdict below comes from reading the source and tests and from rerunning the commands myself, not from the implementation report.
+
+**Verdict: done pending REQ-14 live.** REQ-01 to REQ-13 are `implemented`. REQ-14 stays `unverified` (it is the coordinator's live step after merge). There are no blocking findings.
+
+### Reruns (2026-11-09, worktree `fd3-hook-tool-names` at `5005c82`)
+
+| Command | Result |
+| ------- | ------ |
+| `gofmt -l .` and `sh scripts/check.sh format` | no output, exit 0 |
+| `go build ./...` | ok |
+| `go vet ./...` and `GOOS=darwin GOARCH=arm64 go vet ./...` | ok |
+| `RUNNER_REQUIRE_NPM_TESTS=1 go test -race -count=1 ./...` (the repository's `check.sh test`, which covers both the plain and the race run in the contract) | exit 0: 43 packages ok, the rest have no test files. `internal/daemon` 391.7 s, `internal/toolsummary` 1.0 s, `internal/isolation` 5.9 s. |
+| `go test ./internal/toolsummary/ -count=1 -cover` | 100.0 % of statements |
+| `go test ./internal/daemon/ -run 'Sanitized\|ToolSummary\|ToolCall\|ToolTracker\|AgentStatus\|OtherProviders\|ConsumeOutput\|Hook' -coverpkg=./internal/daemon/` | 20 pass. Coverage: `summarizeProviderTools` 100 %, `publishSanitizedAgentStatus` 88.9 %, `consumeOutput` 80.6 %. |
+| `sh scripts/check.sh sec vuln` (gosec v2.29.0, govulncheck v1.8.0) | gosec: no findings. govulncheck: "Your code is affected by 0 vulnerabilities" (1 in a required module that the code does not call; not new). Exit 0. |
+| `staticcheck` | not installed |
+| `DOCKER_HOST=unix:///run/user/1000/docker.sock RUN_DOCKER_SANDBOX_PROBE=1 JOB_IMAGE=our-runner-job:rjic@sha256:a2c8cabef3dbe9d4044bf2bcb2f7031aadbeee24ac0bd0dce8b41b5e900e8382 go test ./internal/isolation -run TestClaudeBash -count=1 -v` | 4/4 pass in 8.6 s. Logged sequences: `["Tool call: Bash" "Tool result: Bash succeeded"]` and `["Tool call: Bash" "Tool result: Bash failed"]`. The 2 existing tests also pass. |
+| `git diff --stat 67eeac7 -- internal/hookspool internal/daemon/hook_event.go internal/provider/hooks.go cmd/our-runner/main.go internal/mcpbridge internal/daemon/tools.go internal/provider api` | empty |
+| Reviewer hostile probe: a temporary package test (`zz_review_probe_test.go`, deleted before this commit, worktree clean afterwards). A fuzz target sends 12 `tool_use` and 12 `tool_result` blocks carrying an arbitrary name, ID, payload and `is_error`. It asserts the summary matches `^Tool (call\|calls\|result\|results): [A-Za-z0-9_,+() ]+$`, stays within 1024 bytes, and contains no non-allowlisted name, ID or payload. A second test builds 600 blocks with the longest allowed name and then 5,000 extra IDs. | Fuzz: 5.3 M executions in 45 s, no failure. Longest allowed name `mcp__platform__platform_publish_manual_test_plan`: call summary 422 bytes, result summary 480 bytes (limit 1024). The tracker stayed at 512 IDs or fewer. |
+
+### Per-requirement verdicts
+
+| ID | Verdict | Reviewer evidence |
+| -- | ------- | ----------------- |
+| REQ-01 | implemented | The pasted lines show the shape the code relies on. My own gated rerun confirms it independently. A tracker lookup turns the result into `Bash`, which only happens when `tool_use_id` equals the call's `id`. The outcome word is `succeeded`, not `returned`, which only happens when `is_error` is the boolean `false`. The scrub run gives `failed`, so `is_error` is `true` there. The commit has no leftover print: the `internal/isolation` diff is only the `outputLines` field, its append and the 2 new tests. |
+| REQ-02 | implemented | `toolsummary.go` `Summarize`/`summarizeBlocks`: single vs plural prefix, block order, duplicates kept, cap of 8 with ` (+k more)` and `Truncated`. `sanitized_log.go:89-90` sets source `tool_summary` and clears `detail`. Tests: `TestToolCallSummaryCardinality` (1, 2, 8, 9), `TestToolCallSummaryKeepsBlockOrderAndSkipsText`, and `TestEventsWithoutToolBlocksKeepTheAgentStatusEntry`. That last test compares the Claude output with the provider-less output under the new code. From the diff, the `agent_status` path differs from `67eeac7` only in the policy constant and the `source` variable, which defaults to `agent_status`. |
+| REQ-03 | implemented | `resultOutcome` maps boolean `true`→`failed`, `false`→`succeeded`, anything else→`returned`. `Tracker.lookup` falls back to `unknown tool`. The tracker lives on `jobRunner`, so it is per job. Tests: `TestToolResultSummary` (one, mixed, unseen, another tracker, nil, `"true"`) and `TestToolResultCap`. |
+| REQ-04 | implemented | `toolIDPattern` is `^[A-Za-z0-9_-]{1,128}$` and is checked on both record and lookup. New keys stop at `MaxTrackedIDs` = 512, and an existing key may be overwritten. Stored names are always allowlisted or `unlisted tool`, so the memory is bounded at about 512 × (128 + 47) bytes. The tracker is created and used under `procMu` (`sanitized_log.go:24-28`) and reset under `procMu` at the start of each `consumeOutput` (`job.go:1137`). IDs reach only map keys and never `Text` or `Tools`. My fuzz probe found no ID in any summary. Tests: `TestTrackerIsBounded`, `TestTrackerRejectsInvalidIDs`, `TestResumedSessionStartsWithAnEmptyToolTracker`, and the daemon `toolu_` absence checks. |
+| REQ-05 | implemented | Only three kinds of text reach `Text`/`Tools`: fixed words, `AllowedName` hits (an exact map lookup), and `unknown tool`/`unlisted tool`. `input` and `content` are only checked for presence, never read. `TestHostileValuesNeverLeave` and `TestToolSummaryLogLineAndEventForSeveralAndHostileBlocks` cover every hostile case in the contract over the whole emitted JSON and the log buffer, and every event passes `validation.SanitizedLogEvent` with a recomputed digest. My fuzz probe found nothing outside the vocabulary. The app accepts any non-empty `policy_version` up to 128 bytes and the source `tool_summary` (app `sanitized-log-event.schema.ts`), so the new entries are not rejected. |
+| REQ-06 | implemented | `sanitized_log.go:89-99` adds the tool counts after the unchanged counting of top-level fields. Unlisted names are counted as `tool_output`. Blocks beyond the cap are still counted, because `describe` runs for every block. Categories still go through the sort, and the count is never zero when a category is set. `runnerRedactionPolicyVersion = "runner-redaction-2"` applies to every entry, including the cap marker. The daemon tests assert exact counts (5, 6, 16, 3). |
+| REQ-07 | implemented | `consumeOutput` calls `publishSanitizedAgentStatus` once per decoded line. The lease, start-evidence and cap checks come first and are unchanged. The `SanitizedLogEvent` is built after them. Only the pure summary text is computed earlier, which is recorded as decision I-1 and is acceptable. Tests: `TestToolSummaryCountsAgainstTheSanitizedLogCap`, `TestToolSummaryWaitsForStartEvidence`, and the lease case in `TestSanitizedLogEnforcesLeaseAndEmissionCap`. |
+| REQ-08 | implemented | `job.go:1161-1166` adds `tools` only when a summary exists, using `Summary.Tools` (allowlisted names, `name:outcome`). `TestClaudeToolCallAndResultBecomeToolSummaries` checks the exact log line endings. The hostile test checks the capped values, and the log buffer contains no forbidden value. |
+| REQ-09 | implemented | My `git diff --stat 67eeac7` over the hook paths, `internal/daemon/tools.go`, `internal/provider` and `api` is empty. The hook tests pass in the full race run. |
+| REQ-10 | implemented | `summarizeProviderTools` returns nil unless `cfg.Provider == "claude"`. `job.go:477` shows that the job's adapter is `d.cfg.Provider`, and `consumeOutput` is the only caller of `publishSanitizedAgentStatus`. `TestOtherProvidersKeepAgentStatusForToolShapedEvents` covers `codex` and `opencode` with Claude-shaped lines and a flat `tool_use` line: no `tools` attribute and no tracker. |
+| REQ-11 | implemented | Rerun above: the 2 new gated tests pass against the reviewed RJIC digest and log the expected sequences. `assertToolSummarySequence` also refuses `toolu_`, `sandbox` and `/` in any summary. The existing assertions are unchanged (the diff adds lines only). |
+| REQ-12 | implemented | README (after "Hook telemetry is occurrence-only") states that hook events carry no tool names, and gives the `tool_summary` vocabulary, the exact allowlist, `unlisted tool`/`unknown tool`, the 512-ID bound, what is never forwarded, the policy version and the `tools` log attribute. `docs/TESTING.md` lists both gated tests. No added `//` comments in Go: the only `//` in added lines is a URL inside a test string. See finding R-2 for a wording nit. |
+| REQ-13 | implemented | Reruns above. All gates pass. Coverage is at least 80 % for `internal/toolsummary` (100 %) and for each changed daemon function. `staticcheck` is not installed. |
+| REQ-14 | unverified | Coordinator's live step after merge. Not run by the reviewer. |
+
+**PRODUCT.md reconciliation.** Product intent says sanitized logs are runner-redacted, bounded and non-authoritative, and that provider output is untrusted. The slice keeps all three: an allowlist-only vocabulary, the unchanged 512-entry cap, and no authority change. The FD-3 gap "which tool ran or failed" is covered for Claude through `tool_summary`. Hook events are deliberately left without tool names (D-1, owner answer Q-1). Codex and OpenCode are deliberately left out (D-3). Neither is a planner omission.
+
+### Findings
+
+| ID | Severity | Finding | Action |
+| -- | -------- | ------- | ------ |
+| R-1 | low (non-blocking) | The README paragraph has one unwrapped line ("other name, including MCP tools from other servers, shows as `unlisted tool`. A result whose call…"), about 120 columns where the surrounding text wraps at 80. | Optional rewrap in a later docs touch. |
+| R-2 | low (non-blocking) | In `docs/TESTING.md` the new paragraph sits between the `TestClaudeBash` paragraph and the paragraph that begins "They probe `claude --version`…". That "They" meant the provider CLI probe tests, but it now reads as if it refers to the two tool summary tests. | Optional: move the new paragraph after the CLI probe paragraph, or start that paragraph with "The provider CLI probe tests probe…". |
+| R-3 | info | The `tools` local log value and the platform summary both name results of over-cap or invalid IDs `unknown tool`. That is the intended fail-closed behavior; nothing to change. The 11 extra Claude 2.1.299 built-ins (implementer follow-up) show as `unlisted tool` until a planner adds them to D-2. | Follow-up only. |
 
 ## Owner questions (non-blocking)
 
