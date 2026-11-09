@@ -16,6 +16,7 @@ import (
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/provider"
+	"github.com/example/app-runner/internal/toolsummary"
 )
 
 const offlineMessagesAPI = `const http = require('http');
@@ -97,6 +98,7 @@ type offlineClaudeBashRun struct {
 	toolResult   string
 	toolIsError  bool
 	sandboxArgv  []string
+	outputLines  []string
 }
 
 func writeProbeFile(t *testing.T, path, content string, mode os.FileMode) {
@@ -212,6 +214,7 @@ func parseOfflineClaudeBashRun(t *testing.T, output string) offlineClaudeBashRun
 		case line == "==claude-out" || line == "==bwrap-argv" || line == "==end":
 			section = line
 		case section == "==claude-out":
+			run.outputLines = append(run.outputLines, line)
 			if result, isError, ok := claudeToolResult(line); ok {
 				run.toolResult, run.toolIsError = result, isError
 			}
@@ -320,4 +323,55 @@ func TestClaudeBashCannotStartUnderTheEnvironmentScrubInDocker(t *testing.T) {
 	if got := procArgument(run.sandboxArgv); got != "fresh" {
 		t.Fatalf("bubblewrap /proc handling under the scrub = %s: %q", got, run.sandboxArgv)
 	}
+}
+
+func claudeToolSummaries(t *testing.T, lines []string) []string {
+	t.Helper()
+	tracker := toolsummary.NewTracker()
+	var summaries []string
+	for _, line := range lines {
+		var event map[string]any
+		if json.Unmarshal([]byte(line), &event) != nil {
+			continue
+		}
+		if summary, ok := toolsummary.Summarize(event, tracker); ok {
+			summaries = append(summaries, summary.Text)
+		}
+	}
+	return summaries
+}
+
+func assertToolSummarySequence(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	next := 0
+	for _, summary := range got {
+		if next < len(want) && summary == want[next] {
+			next++
+		}
+		if strings.Contains(summary, "toolu_") || strings.Contains(summary, "sandbox") || strings.Contains(summary, "/") {
+			t.Fatalf("tool summary carries provider content: %q", summary)
+		}
+	}
+	if next != len(want) {
+		t.Fatalf("tool summaries = %q, want the sequence %q", got, want)
+	}
+	t.Logf("tool summaries: %q", got)
+}
+
+func TestClaudeBashToolSummaryNamesASucceededCallInDocker(t *testing.T) {
+	image := requireDockerSandboxGate(t, "JOB_IMAGE")
+	run := runOfflineClaudeBash(t, image)
+	if run.exit != "0" || run.toolIsError {
+		t.Fatalf("claude exit %s, tool error %v: %q", run.exit, run.toolIsError, run.toolResult)
+	}
+	assertToolSummarySequence(t, claudeToolSummaries(t, run.outputLines), "Tool call: Bash", "Tool result: Bash succeeded")
+}
+
+func TestClaudeBashToolSummaryNamesAFailedCallUnderTheEnvironmentScrubInDocker(t *testing.T) {
+	image := requireDockerSandboxGate(t, "JOB_IMAGE")
+	run := runOfflineClaudeBash(t, image, "-e", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1")
+	if !run.toolIsError {
+		t.Fatalf("scrubbed sandbox result = %q (error %v)", run.toolResult, run.toolIsError)
+	}
+	assertToolSummarySequence(t, claudeToolSummaries(t, run.outputLines), "Tool call: Bash", "Tool result: Bash failed")
 }

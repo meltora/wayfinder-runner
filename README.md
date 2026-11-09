@@ -1154,9 +1154,34 @@ source build, or a release built without a channel URL, stops with
 read from a private file and must never be placed directly on a command line.
 Hook telemetry is occurrence-only: event names come from a fixed allowlist and
 provider-controlled hook payloads are consumed locally but never forwarded.
+Hook events therefore carry no tool names.
 Repository registration acquires the runner lock and therefore requires the
 daemon to be stopped; normal repository definitions should be managed through
 the root-owned configuration file.
+
+Claude tool names reach the control plane only in sanitized logs with source
+`tool_summary`. The runner reads them from Claude's `stream-json` output; Codex
+and OpenCode output keeps the `agent_status` entries. An assistant event with
+`tool_use` blocks becomes `Tool call: <name>` or `Tool calls: <name>, <name>`.
+A user event with `tool_result` blocks becomes `Tool result: <name> <outcome>`
+or `Tool results: …`. The outcome is `failed` when `is_error` is `true`,
+`succeeded` when it is `false`, and `returned` otherwise. At most 8 blocks are
+named; more add ` (+<k> more)` and mark the entry truncated. A name is shown
+only when it exactly matches, case-sensitively, one of the Claude built-in
+tools `Agent`, `Bash`, `BashOutput`, `Edit`, `ExitPlanMode`, `Glob`, `Grep`,
+`KillBash`, `KillShell`, `LS`, `MultiEdit`, `NotebookEdit`, `NotebookRead`,
+`Read`, `Skill`, `SlashCommand`, `Task`, `TaskOutput`, `TodoWrite`,
+`ToolSearch`, `WebFetch`, `WebSearch` and `Write`, or `mcp__platform__<tool>`
+for a public platform tool (not the internal hook and tool-list tools). Any
+other name, including MCP tools from other servers, shows as `unlisted tool`. A result whose call the runner did not see in the same
+provider process shows as `unknown tool`. The runner matches results to calls
+by `tool_use_id`, holds at most 512 IDs per job, and never forwards an ID. Tool
+input, tool output, commands, file paths, exit codes and IDs are never
+forwarded. They are counted as `command_argument` and `tool_output`
+redactions (policy `runner-redaction-2`). Each provider output line still
+produces at most one sanitized log, within the same 512-entry limit per job.
+The local `agent event` log line shows the same names in a `tools` attribute,
+with `name:outcome` for results.
 
 ### Status and rejected events
 
