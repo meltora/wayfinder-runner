@@ -46,14 +46,15 @@ const capabilityRefreshInterval = 5 * time.Minute
 
 type Daemon struct {
 	agentConfigScanState
-	cfg      config.Config
-	store    *identity.Store
-	runnerID string
-	journal  *journal.Journal
-	runLock  *runlock.Lock
-	client   *transport.Client
-	paused   atomic.Bool
-	logger   *slog.Logger
+	cfg                  config.Config
+	store                *identity.Store
+	runnerID             string
+	journal              *journal.Journal
+	runLock              *runlock.Lock
+	client               *transport.Client
+	paused               atomic.Bool
+	logger               *slog.Logger
+	providerVersionCache *capability.ProviderVersionCache
 
 	leases         *lease.Manager
 	recoveredLease atomic.Bool
@@ -327,6 +328,7 @@ func NewWithExternalOperationDependencies(
 	d := &Daemon{
 		cfg: cfg, store: store, runnerID: runnerID, journal: j, runLock: lock, logger: logger,
 		commandOwner:                         "process-" + newEventID(),
+		providerVersionCache:                 capability.NewProviderVersionCache(),
 		now:                                  time.Now,
 		leases:                               leaseManager,
 		collectors:                           collector.NewStore(cfg.StateDir),
@@ -582,7 +584,8 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	d.hotMu.RUnlock()
 	det := capability.New(d.runnerID, Version, hot.labels, hot.agentPackPublicKeys).
 		WithProviderBinaries(d.cfg.ProviderBinaries).
-		WithProviderEnvironment(d.cfg.ProviderEnvironment)
+		WithProviderEnvironment(d.cfg.ProviderEnvironment).
+		WithProviderVersionCache(d.providerVersionCache)
 	if d.agentPackTrust != nil {
 		det = det.WithAgentPackTrust(d.agentPackTrustCapability(hot.agentPackPublicKeys))
 	}

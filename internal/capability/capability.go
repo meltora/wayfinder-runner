@@ -55,6 +55,7 @@ type Detector struct {
 	agentPackTrustRootKeyIDs                              []string
 	providerBinaries                                      map[string]string
 	providerEnvironment                                   map[string][]string
+	providerVersionCache                                  *ProviderVersionCache
 }
 
 func New(runnerID, version string, labels, agentPackPublicKeys map[string]string) *Detector {
@@ -249,7 +250,7 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		}
 		if resolved, err := d.LookPath(binary); err == nil {
 			ac.Available = true
-			if out, err := d.runProviderVersion(ctx, name, binary); err == nil {
+			if out, err := d.cachedProviderVersion(ctx, name, binary, resolved); err == nil {
 				ac.Version = providerVersion(name, out, append([]string{binary, resolved}, d.providerEnvironmentValues(name)...)...)
 			}
 			if d.AuthReady != nil {
