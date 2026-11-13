@@ -15,7 +15,7 @@ type UsageAccumulator struct {
 	provider   string
 	model      string
 	reported   bool
-	overflow   bool
+	invalid    bool
 	input      uint64
 	output     uint64
 	cacheRead  *uint64
@@ -53,7 +53,7 @@ func (a *UsageAccumulator) Snapshot() *v1.ProviderUsage {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.reported || a.overflow {
+	if !a.reported || a.invalid {
 		return nil
 	}
 	usage := &v1.ProviderUsage{
@@ -85,8 +85,12 @@ func (a *UsageAccumulator) observeClaude(event map[string]any) {
 			a.observeModel(message["model"])
 		}
 	case "result":
-		usage, ok := event["usage"].(map[string]any)
+		usage, present, ok := optionalObject(event["usage"])
 		if !ok {
+			a.invalid = true
+			return
+		}
+		if !present {
 			return
 		}
 		a.addCounters(
@@ -94,6 +98,7 @@ func (a *UsageAccumulator) observeClaude(event map[string]any) {
 			usage["output_tokens"],
 			usage["cache_read_input_tokens"],
 			usage["cache_creation_input_tokens"],
+			nil,
 		)
 	}
 }
@@ -105,11 +110,15 @@ func (a *UsageAccumulator) observeCodex(event map[string]any) {
 		a.observeModel(event["model"])
 	case "turn.completed":
 		a.observeModel(event["model"])
-		usage, ok := event["usage"].(map[string]any)
+		usage, present, ok := optionalObject(event["usage"])
 		if !ok {
+			a.invalid = true
 			return
 		}
-		a.addCounters(usage["input_tokens"], usage["output_tokens"], usage["cached_input_tokens"], nil)
+		if !present {
+			return
+		}
+		a.addCounters(usage["input_tokens"], usage["output_tokens"], usage["cached_input_tokens"], nil, nil)
 	}
 }
 
@@ -123,19 +132,28 @@ func (a *UsageAccumulator) observeOpenCode(event map[string]any) {
 		return
 	}
 	a.observeModel(part["modelID"])
-	tokens, ok := part["tokens"].(map[string]any)
+	tokens, present, ok := optionalObject(part["tokens"])
 	if !ok {
+		a.invalid = true
 		return
 	}
-	var cacheRead, cacheWrite any
-	if cache, ok := tokens["cache"].(map[string]any); ok {
-		cacheRead = cache["read"]
-		cacheWrite = cache["write"]
+	if !present {
+		return
 	}
-	a.addCounters(tokens["input"], tokens["output"], cacheRead, cacheWrite)
-	if reasoning, ok := count(tokens["reasoning"]); ok && a.reported {
-		a.output = a.add(a.output, reasoning)
+	cache, _, ok := optionalObject(tokens["cache"])
+	if !ok {
+		a.invalid = true
+		return
 	}
+	a.addCounters(tokens["input"], tokens["output"], cache["read"], cache["write"], tokens["reasoning"])
+}
+
+func optionalObject(value any) (map[string]any, bool, bool) {
+	if value == nil {
+		return nil, false, true
+	}
+	object, ok := value.(map[string]any)
+	return object, ok, ok
 }
 
 func (a *UsageAccumulator) observeModel(value any) {
@@ -145,26 +163,38 @@ func (a *UsageAccumulator) observeModel(value any) {
 	}
 }
 
-func (a *UsageAccumulator) addCounters(input, output, cacheRead, cacheWrite any) {
+func (a *UsageAccumulator) addCounters(input, output, cacheRead, cacheWrite, extraOutput any) {
 	inputCount, inputOK := count(input)
 	outputCount, outputOK := count(output)
-	if !inputOK || !outputOK {
+	readCount, readPresent, readOK := optionalCount(cacheRead)
+	writeCount, writePresent, writeOK := optionalCount(cacheWrite)
+	extraCount, _, extraOK := optionalCount(extraOutput)
+	if !inputOK || !outputOK || !readOK || !writeOK || !extraOK {
+		a.invalid = true
 		return
 	}
 	a.reported = true
 	a.input = a.add(a.input, inputCount)
-	a.output = a.add(a.output, outputCount)
-	if value, ok := count(cacheRead); ok {
-		a.cacheRead = a.addOptional(a.cacheRead, value)
+	a.output = a.add(a.add(a.output, outputCount), extraCount)
+	if readPresent {
+		a.cacheRead = a.addOptional(a.cacheRead, readCount)
 	}
-	if value, ok := count(cacheWrite); ok {
-		a.cacheWrite = a.addOptional(a.cacheWrite, value)
+	if writePresent {
+		a.cacheWrite = a.addOptional(a.cacheWrite, writeCount)
 	}
+}
+
+func optionalCount(value any) (uint64, bool, bool) {
+	if value == nil {
+		return 0, false, true
+	}
+	number, ok := count(value)
+	return number, ok, ok
 }
 
 func (a *UsageAccumulator) add(total, value uint64) uint64 {
 	if value > v1.ProviderUsageMaxCount-total {
-		a.overflow = true
+		a.invalid = true
 		return total
 	}
 	return total + value

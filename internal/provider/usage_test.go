@@ -112,6 +112,71 @@ func TestUsageAccumulatorIgnoresMalformedCountersAndModels(t *testing.T) {
 	}
 }
 
+func TestUsageAccumulatorInvalidatesWhenMalformedUsageFollowsValidUsage(t *testing.T) {
+	cases := []struct {
+		name    string
+		adapter string
+		lines   []string
+	}{
+		{"claude malformed required counter", "claude", []string{
+			`{"type":"result","usage":{"input_tokens":10,"output_tokens":2}}`,
+			`{"type":"result","usage":{"input_tokens":-1,"output_tokens":2}}`,
+		}},
+		{"claude malformed cache counter", "claude", []string{
+			`{"type":"result","usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":4}}`,
+			`{"type":"result","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":"4"}}`,
+		}},
+		{"claude usage that is not an object", "claude", []string{
+			`{"type":"result","usage":{"input_tokens":10,"output_tokens":2}}`,
+			`{"type":"result","usage":"lots"}`,
+		}},
+		{"codex malformed required counter", "codex", []string{
+			`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}`,
+			`{"type":"turn.completed","usage":{"input_tokens":1.5,"output_tokens":2}}`,
+		}},
+		{"codex malformed cache counter", "codex", []string{
+			`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":1,"output_tokens":2}}`,
+			`{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":-3,"output_tokens":2}}`,
+		}},
+		{"opencode malformed required counter", "opencode", []string{
+			`{"type":"step_finish","part":{"tokens":{"input":8,"output":2}}}`,
+			`{"type":"step_finish","part":{"tokens":{"input":8,"output":"2"}}}`,
+		}},
+		{"opencode malformed cache counter", "opencode", []string{
+			`{"type":"step_finish","part":{"tokens":{"input":8,"output":2,"cache":{"read":1,"write":1}}}}`,
+			`{"type":"step_finish","part":{"tokens":{"input":8,"output":2,"cache":{"read":1,"write":0.5}}}}`,
+		}},
+		{"opencode malformed reasoning counter", "opencode", []string{
+			`{"type":"step_finish","part":{"tokens":{"input":8,"output":2,"reasoning":1}}}`,
+			`{"type":"step_finish","part":{"tokens":{"input":8,"output":2,"reasoning":-1}}}`,
+		}},
+		{"opencode cache that is not an object", "opencode", []string{
+			`{"type":"step_finish","part":{"tokens":{"input":8,"output":2}}}`,
+			`{"type":"step_finish","part":{"tokens":{"input":8,"output":2,"cache":7}}}`,
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			accumulator := NewUsageAccumulator(tc.adapter)
+			observeLines(t, accumulator, tc.lines...)
+			if got := accumulator.Snapshot(); got != nil {
+				t.Fatalf("malformed usage after valid usage must withhold all usage, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestUsageAccumulatorDoesNotAddOpenCodeReasoningWhenStepCountersFail(t *testing.T) {
+	accumulator := NewUsageAccumulator("opencode")
+	observeLines(t, accumulator,
+		`{"type":"step_finish","part":{"tokens":{"input":8,"output":2}}}`,
+		`{"type":"step_finish","part":{"tokens":{"input":"x","output":2,"reasoning":5}}}`,
+	)
+	if got := accumulator.Snapshot(); got != nil {
+		t.Fatalf("step with malformed counters must withhold usage, got %+v", got)
+	}
+}
+
 func TestUsageAccumulatorWithholdsOverflowingTotals(t *testing.T) {
 	accumulator := NewUsageAccumulator("claude")
 	observeLines(t, accumulator,
