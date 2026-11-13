@@ -26,11 +26,7 @@ func (jr *jobRunner) publishAgentActivity(providerEvent map[string]any) {
 }
 
 func (jr *jobRunner) knownActivitySecrets() []string {
-	secrets := []string{jr.jobToken}
-	if jr.providerCredential != nil {
-		secrets = append(secrets, jr.providerCredential.Token)
-	}
-	return secrets
+	return append([]string{jr.jobToken}, jr.knownSecrets()...)
 }
 
 func (jr *jobRunner) publishAgentActivityItem(policy v1.AgentActivityPolicy, item agentactivity.Item) {

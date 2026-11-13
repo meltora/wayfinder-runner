@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -104,6 +105,27 @@ func TestAgentActivityRedactsRunnerKnownSecrets(t *testing.T) {
 	activity := decodeActivity(t, events)
 	if len(activity) != 1 || activity[0].Message != "using [redacted] and [redacted]" || activity[0].Redaction.RedactionCount != 2 {
 		t.Fatalf("activity=%#v", activity)
+	}
+}
+
+func TestAgentActivityRedactsAgentEnvironmentSecrets(t *testing.T) {
+	jr, events := activityJobRunner(t, &v1.AgentActivityPolicy{SchemaVersion: 1, MaxEvents: 10, MaxEventsPerMinute: 10, MaxMessageBytes: 280})
+	jr.d.cfg.ProviderEnvironment = map[string]map[string]string{"claude": {"CUSTOM_GATEWAY_KEY": "environmentsecretvalue", "OTHER_TOKEN": "secondenvironmentvalue", "SHORT": "tiny"}}
+	jr.publishAgentActivity(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
+		map[string]any{"type": "text", "text": "gateway environmentsecretvalue push secondenvironmentvalue size tiny"},
+	}}})
+	activity := decodeActivity(t, events)
+	if len(activity) != 1 || activity[0].Message != "gateway [redacted] push [redacted] size tiny" || activity[0].Redaction.RedactionCount != 2 {
+		t.Fatalf("activity=%#v", activity)
+	}
+}
+
+func TestKnownSecretsMatchProviderOutputTail(t *testing.T) {
+	jr, _ := activityJobRunner(t, nil)
+	jr.d.cfg.ProviderEnvironment = map[string]map[string]string{"claude": {"A_KEY": "environmentsecretvalue", "B": "tiny"}}
+	jr.providerCredential = &v1.ProviderCredential{Token: "repositoryinstallationvalue"}
+	if got, want := jr.knownSecrets(), jr.newProviderOutputTail().secrets; !reflect.DeepEqual(got, want) || len(got) != 2 {
+		t.Fatalf("known secrets=%v tail=%v", got, want)
 	}
 }
 
