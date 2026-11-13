@@ -65,6 +65,7 @@ type CapabilityManifest struct {
 	WorkIntakeProposalPolicyDigest                           string                                                           `json:"work_intake_proposal_policy_digest,omitempty"`
 	WorkIntakeProposalModelExecutionConfigDigest             string                                                           `json:"work_intake_proposal_model_execution_config_digest,omitempty"`
 	ApprovedPlanTransportVersion                             int                                                              `json:"approved_plan_transport_version,omitempty"`
+	AgentActivityTransportVersion                            int                                                              `json:"agent_activity_transport_version,omitempty"`
 	RunnerConfigurationDigest                                string                                                           `json:"runner_configuration_digest,omitempty"`
 	Signature                                                string                                                           `json:"signature"`
 }

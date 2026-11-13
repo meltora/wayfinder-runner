@@ -25,6 +25,22 @@ func TestKnownSecretsRedactsRememberedValuesAndEncodings(t *testing.T) {
 	}
 }
 
+func TestRememberedSecretsReturnsSortedSnapshot(t *testing.T) {
+	t.Cleanup(ForgetSecretsForTest)
+	ForgetSecretsForTest()
+	RememberSecret("second-secret-value-0123")
+	RememberSecret("first-secret-value-0123")
+	RememberSecret("short")
+	got := RememberedSecrets()
+	if len(got) != 2 || got[0] != "first-secret-value-0123" || got[1] != "second-secret-value-0123" {
+		t.Fatalf("got %q", got)
+	}
+	got[0] = "changed"
+	if RememberedSecrets()[0] != "first-secret-value-0123" {
+		t.Fatal("snapshot aliases the registry")
+	}
+}
+
 func TestKnownSecretsLeavesTextUnchangedWithoutSecrets(t *testing.T) {
 	t.Cleanup(ForgetSecretsForTest)
 	ForgetSecretsForTest()

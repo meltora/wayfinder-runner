@@ -30,16 +30,7 @@ type providerOutputTail struct {
 }
 
 func newProviderOutputTail(environment []string, credential string) *providerOutputTail {
-	var secrets []string
-	for _, entry := range environment {
-		if _, value, ok := strings.Cut(entry, "="); ok && len(value) >= minimumRedactedValueBytes {
-			secrets = append(secrets, value)
-		}
-	}
-	if len(credential) >= minimumRedactedValueBytes {
-		secrets = append(secrets, credential)
-	}
-	return &providerOutputTail{secrets: secrets}
+	return &providerOutputTail{secrets: knownSecretValues(environment, credential)}
 }
 
 func (t *providerOutputTail) add(raw []byte) {
@@ -109,11 +100,7 @@ func agentExitFailure(rejectedOption string) string {
 }
 
 func (jr *jobRunner) newProviderOutputTail() *providerOutputTail {
-	credential := ""
-	if jr.providerCredential != nil {
-		credential = jr.providerCredential.Token
-	}
-	return newProviderOutputTail(jr.d.agentEnvironment(jr.d.cfg.Provider), credential)
+	return &providerOutputTail{secrets: jr.knownSecrets()}
 }
 
 func (jr *jobRunner) currentOutputTail() *providerOutputTail {

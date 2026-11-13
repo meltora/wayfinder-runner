@@ -16,6 +16,7 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/agentactivity"
 	"github.com/example/app-runner/internal/hookspool"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/lease"
@@ -53,6 +54,7 @@ type jobRunner struct {
 	controlResultDone  chan struct{}
 	sanitizedLogs      int
 	toolTracker        *toolsummary.Tracker
+	activityLimiter    *agentactivity.Limiter
 
 	reviewFeedbackContinuation *v1.ReviewFeedbackContinuationAuthority
 	providerCredential         *v1.ProviderCredential
@@ -1193,6 +1195,7 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 			}
 			jr.logger.Info("agent event", logAttributes...)
 			jr.publishSanitizedAgentStatus(m, tools)
+			jr.publishAgentActivity(m)
 		} else {
 			tail.add(line)
 			jr.logger.Debug("unstructured agent output suppressed", "bytes", len(line))
