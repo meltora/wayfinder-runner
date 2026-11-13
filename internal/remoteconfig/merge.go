@@ -54,6 +54,7 @@ func Merge(local Local, delivery Delivery) (Merged, error) {
 	cfg.ControlPlaneURL = local.ControlPlaneURL
 	cfg.StateDir = local.StateDir
 	cfg.ProviderEnvironment = local.ProviderEnvironment
+	cfg.ProviderAPIKeys = local.ProviderAPIKeys
 	cfg.ProviderBinaries = local.ProviderBinaries
 	checks, omitted, err := registrableChecks(local.Checks, remote.Repositories)
 	if err != nil {

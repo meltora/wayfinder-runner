@@ -15,6 +15,8 @@ var failedJobCodes = map[v1.JobFinishedFailureCode]struct{}{
 	v1.JobFailureRequiredChecks:           {},
 	v1.JobFailureRunnerInternal:           {},
 	v1.JobFailurePlanNotPublished:         {},
+	v1.JobFailureRunTokenBudget:           {},
+	v1.JobFailureProjectTokenBudget:       {},
 }
 
 var agentPackFailureRetryability = map[v1.AgentPackMaterializationFailureCategory]bool{

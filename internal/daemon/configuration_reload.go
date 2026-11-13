@@ -104,7 +104,8 @@ func restartRequiredSettingsEqual(running, next config.Config) bool {
 		running.ControlPlaneURL == next.ControlPlaneURL &&
 		running.StateDir == next.StateDir &&
 		reflect.DeepEqual(running.ProviderBinaries, next.ProviderBinaries) &&
-		reflect.DeepEqual(running.ProviderEnvironment, next.ProviderEnvironment)
+		reflect.DeepEqual(running.ProviderEnvironment, next.ProviderEnvironment) &&
+		reflect.DeepEqual(running.ProviderAPIKeys, next.ProviderAPIKeys)
 }
 
 func (d *Daemon) applyHotConfiguration(next config.Config, digest string) error {

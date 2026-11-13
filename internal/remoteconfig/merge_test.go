@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/example/app-runner/internal/apikey"
 )
 
 func testLocal(t *testing.T) Local {
@@ -49,6 +51,23 @@ func TestMergeUsesLocalOwnershipAndRemoteDocument(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMergeKeepsProviderAPIKeySourcesLocal(t *testing.T) {
+	key := newTestPackKey(t, "pack-key-1")
+	local := testLocal(t)
+	local.ProviderAPIKeys = map[string]apikey.Source{"claude": {File: "/home/runner/.secrets/anthropic.key"}}
+	merged, err := Merge(local, parsed(t, deliveryBody(dockerConfig(key), key)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.Config.ProviderAPIKeys["claude"].File != "/home/runner/.secrets/anthropic.key" {
+		t.Fatalf("provider API key source was not merged: %+v", merged.Config.ProviderAPIKeys)
+	}
+	local.ProviderAPIKeys = map[string]apikey.Source{"opencode": {Env: "OPENCODE_KEY"}}
+	if _, err := Merge(local, parsed(t, deliveryBody(dockerConfig(key), key))); err == nil {
+		t.Fatal("unsupported provider API key source merged")
 	}
 }
 
