@@ -290,9 +290,51 @@ func TestAllowedNames(t *testing.T) {
 			t.Errorf("bare platform tool %q allowed", definition.Name)
 		}
 	}
-	for _, name := range []string{"", "bash", "BASH", " Bash", "Bash ", "mcp__platform__", "mcp__platform__platform_record_hook_event", "mcp__platform__platform_list_attempt_tools", "mcp__other__platform_run_check", "CronCreate"} {
+	for _, name := range []string{"", "bash", "BASH", " Bash", "Bash ", "mcp__platform__", "mcp__platform__platform_record_hook_event", "mcp__platform__platform_list_attempt_tools", "mcp__other__platform_run_check", "cronCreate", "CRONCREATE", " Workflow", "Workflow ", "mcp__platform__SendMessage", "SendMessage2", "Task Stop"} {
 		if AllowedName(name) {
 			t.Errorf("%q allowed", name)
+		}
+	}
+	if len(builtinNames) != len(builtins)+len(newerClaudeBuiltins) {
+		t.Fatalf("built-in allowlist has %d names, want %d", len(builtinNames), len(builtins)+len(newerClaudeBuiltins))
+	}
+}
+
+var newerClaudeBuiltins = []string{"CronCreate", "CronDelete", "CronList", "EnterWorktree", "ExitWorktree", "ListAgents", "ReportFindings", "ScheduleWakeup", "SendMessage", "TaskStop", "Workflow"}
+
+func TestNewerClaudeBuiltinsShowTheirNames(t *testing.T) {
+	for index, name := range newerClaudeBuiltins {
+		if !AllowedName(name) {
+			t.Errorf("built-in %q not allowed", name)
+			continue
+		}
+		tracker := NewTracker()
+		id := fmt.Sprintf("toolu_new_%d", index)
+		call, ok := Summarize(decoded(t, event("assistant", toolUse(id, name, map[string]any{"prompt": "secret-input-" + name}))), tracker)
+		if !ok || call.Text != "Tool call: "+name || call.Tools != name || call.ToolOutputRedactions != 0 || call.CommandArgumentRedactions != 1 {
+			t.Errorf("%s call summary=%+v ok=%v", name, call, ok)
+		}
+		result, ok := Summarize(decoded(t, event("user", toolResult(id, false, "secret-output-"+name))), tracker)
+		if !ok || result.Text != "Tool result: "+name+" succeeded" || result.Tools != name+":succeeded" || result.ToolOutputRedactions != 1 {
+			t.Errorf("%s result summary=%+v ok=%v", name, result, ok)
+		}
+		if strings.Contains(call.Text+call.Tools+result.Text+result.Tools, "secret-") {
+			t.Errorf("%s summary leaked input or output", name)
+		}
+	}
+}
+
+func TestNewerClaudeBuiltinVariantsStayUnlisted(t *testing.T) {
+	for index, name := range []string{"cronCreate", "WORKFLOW", " SendMessage", "TaskStop ", "mcp__platform__ListAgents", "ReportFindingsX"} {
+		tracker := NewTracker()
+		id := fmt.Sprintf("toolu_variant_%d", index)
+		call, ok := Summarize(decoded(t, event("assistant", toolUse(id, name, map[string]any{"x": 1}))), tracker)
+		if !ok || call.Text != "Tool call: unlisted tool" || call.Tools != "unlisted tool" || call.ToolOutputRedactions != 1 || call.CommandArgumentRedactions != 1 {
+			t.Errorf("%q call summary=%+v ok=%v", name, call, ok)
+		}
+		result, _ := Summarize(decoded(t, event("user", toolResult(id, true, "out"))), tracker)
+		if result.Text != "Tool result: unlisted tool failed" {
+			t.Errorf("%q result summary=%+v", name, result)
 		}
 	}
 }

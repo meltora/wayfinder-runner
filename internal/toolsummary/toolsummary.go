@@ -19,10 +19,12 @@ const (
 var toolIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 var builtinNames = map[string]struct{}{
-	"Agent": {}, "Bash": {}, "BashOutput": {}, "Edit": {}, "ExitPlanMode": {}, "Glob": {}, "Grep": {},
-	"KillBash": {}, "KillShell": {}, "LS": {}, "MultiEdit": {}, "NotebookEdit": {}, "NotebookRead": {},
-	"Read": {}, "Skill": {}, "SlashCommand": {}, "Task": {}, "TaskOutput": {}, "TodoWrite": {},
-	"ToolSearch": {}, "WebFetch": {}, "WebSearch": {}, "Write": {},
+	"Agent": {}, "Bash": {}, "BashOutput": {}, "CronCreate": {}, "CronDelete": {}, "CronList": {},
+	"Edit": {}, "EnterWorktree": {}, "ExitPlanMode": {}, "ExitWorktree": {}, "Glob": {}, "Grep": {},
+	"KillBash": {}, "KillShell": {}, "LS": {}, "ListAgents": {}, "MultiEdit": {}, "NotebookEdit": {},
+	"NotebookRead": {}, "Read": {}, "ReportFindings": {}, "ScheduleWakeup": {}, "SendMessage": {},
+	"Skill": {}, "SlashCommand": {}, "Task": {}, "TaskOutput": {}, "TaskStop": {}, "TodoWrite": {},
+	"ToolSearch": {}, "WebFetch": {}, "WebSearch": {}, "Workflow": {}, "Write": {},
 }
 
 var platformNames = func() map[string]struct{} {

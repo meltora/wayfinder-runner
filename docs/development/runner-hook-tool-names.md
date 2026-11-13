@@ -227,7 +227,7 @@ Implementer: develop-implementer (Opus 5.5), 2026-11-09. Branch `fd3-hook-tool-n
 
 **Follow-up (out of scope)**
 
-- The planner could add the 11 extra Claude 2.1.299 built-in names from the `system/init` `tools` array to D-2. Today they show as `unlisted tool`.
+- The planner could add the 11 extra Claude 2.1.299 built-in names from the `system/init` `tools` array to D-2. Today they show as `unlisted tool`. **Picked up (13 November 2026):** `runner-claude-tool-names-r3.md` adds them and bumps the policy to `runner-redaction-3`.
 - REQ-14 live Build after merge (coordinator).
 
 ## Reviewer requirement review
@@ -279,7 +279,7 @@ Reviewer: develop-reviewer, Opus 5.5 (`claude-opus-5-5`), fresh context, 2026-11
 | -- | -------- | ------- | ------ |
 | R-1 | low (non-blocking) | The README paragraph has one unwrapped line ("other name, including MCP tools from other servers, shows as `unlisted tool`. A result whose call…"), about 120 columns where the surrounding text wraps at 80. | Optional rewrap in a later docs touch. |
 | R-2 | low (non-blocking) | In `docs/TESTING.md` the new paragraph sits between the `TestClaudeBash` paragraph and the paragraph that begins "They probe `claude --version`…". That "They" meant the provider CLI probe tests, but it now reads as if it refers to the two tool summary tests. | Optional: move the new paragraph after the CLI probe paragraph, or start that paragraph with "The provider CLI probe tests probe…". |
-| R-3 | info | The `tools` local log value and the platform summary both name results of over-cap or invalid IDs `unknown tool`. That is the intended fail-closed behavior; nothing to change. The 11 extra Claude 2.1.299 built-ins (implementer follow-up) show as `unlisted tool` until a planner adds them to D-2. | Follow-up only. |
+| R-3 | info | The `tools` local log value and the platform summary both name results of over-cap or invalid IDs `unknown tool`. That is the intended fail-closed behavior; nothing to change. The 11 extra Claude 2.1.299 built-ins (implementer follow-up) show as `unlisted tool` until a planner adds them to D-2. | Follow-up only. The 11 names are added by `runner-claude-tool-names-r3.md` (13 November 2026). |
 
 ## Owner questions (non-blocking)
 

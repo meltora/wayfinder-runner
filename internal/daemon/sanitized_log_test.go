@@ -138,7 +138,7 @@ func toolSummaryValidatedEvents(t *testing.T, events *capturedEvents) []v1.Sanit
 		if event.ContentDigestSHA256 != v1.SanitizedLogContentDigest(event) {
 			t.Fatalf("digest mismatch: %s", encoded)
 		}
-		if event.Redaction.PolicyVersion != "runner-redaction-2" {
+		if event.Redaction.PolicyVersion != "runner-redaction-3" {
 			t.Fatalf("policy version=%q", event.Redaction.PolicyVersion)
 		}
 		out = append(out, event)

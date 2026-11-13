@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	runnerRedactionPolicyVersion = "runner-redaction-2"
+	runnerRedactionPolicyVersion = "runner-redaction-3"
 	maxSanitizedLogsPerJob       = 512
 )
 
