@@ -19,6 +19,7 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/apikey"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/provider"
 )
@@ -55,6 +56,7 @@ type Detector struct {
 	agentPackTrustRootKeyIDs                              []string
 	providerBinaries                                      map[string]string
 	providerEnvironment                                   map[string][]string
+	providerAPIKeys                                       map[string]apikey.Source
 	providerVersionCache                                  *ProviderVersionCache
 }
 
@@ -253,12 +255,15 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 			if out, err := d.cachedProviderVersion(ctx, name, binary, resolved); err == nil {
 				ac.Version = providerVersion(name, out, append([]string{binary, resolved}, d.providerEnvironmentValues(name)...)...)
 			}
-			if d.AuthReady != nil {
+			if source, ok := d.providerAPIKeys[name]; ok {
+				ac.AuthReady = apiKeyResolvable(source)
+			} else if d.AuthReady != nil {
 				ac.AuthReady = d.AuthReady(name)
 			} else {
 				ac.AuthReady = d.authReady(name)
 			}
 		}
+		ac.AuthMode = d.authMode(name)
 		m.Agents = append(m.Agents, providerCapabilityAliases(ac)...)
 	}
 	for _, sup := range []string{"herdr", "tmux"} {

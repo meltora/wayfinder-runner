@@ -13,31 +13,32 @@ import (
 )
 
 type Policy struct {
-	Mode                string
-	User                string
-	MemoryMB            int
-	CPUs                float64
-	PIDs                int
-	NetworkNone         bool
-	NetworkName         string
-	ReadOnlyFS          bool
-	ReadOnlyWorkDir     bool
-	WorkDir             string
-	WorkspaceRoot       string
-	AgentPackDir        string
-	JobHome             string
-	NPMCacheDir         string
-	MCPSock             string
-	MCPTokenFile        string
-	Image               string
-	PullNever           bool
-	RunnerID            string
-	AttemptID           string
-	NestedSandbox       bool
-	UnprivilegedBwrap   bool
-	DisableLogs         bool
-	Environment         []string
-	ManagedConfigMounts []supervisor.ManagedConfigMount
+	Mode                 string
+	User                 string
+	MemoryMB             int
+	CPUs                 float64
+	PIDs                 int
+	NetworkNone          bool
+	NetworkName          string
+	ReadOnlyFS           bool
+	ReadOnlyWorkDir      bool
+	WorkDir              string
+	WorkspaceRoot        string
+	AgentPackDir         string
+	JobHome              string
+	NPMCacheDir          string
+	MCPSock              string
+	MCPTokenFile         string
+	Image                string
+	PullNever            bool
+	RunnerID             string
+	AttemptID            string
+	NestedSandbox        bool
+	UnprivilegedBwrap    bool
+	DisableLogs          bool
+	Environment          []string
+	ManagedConfigMounts  []supervisor.ManagedConfigMount
+	ForwardedSecretNames []string
 }
 
 const (
@@ -203,6 +204,12 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 		}
 		dockerArgs = append(dockerArgs, "-e", entry)
 	}
+	for _, name := range p.ForwardedSecretNames {
+		if !forwardedSecretName.MatchString(name) {
+			return "", nil, fmt.Errorf("docker isolation received an invalid forwarded secret name")
+		}
+		dockerArgs = append(dockerArgs, "-e", name)
+	}
 	if p.UnprivilegedBwrap {
 		dockerArgs = append(dockerArgs, "-e", unprivilegedBubblewrapEnvPath)
 	}
@@ -217,6 +224,8 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 	dockerArgs = append(dockerArgs, args...)
 	return "docker", dockerArgs, nil
 }
+
+var forwardedSecretName = regexp.MustCompile(`^(ANTHROPIC_API_KEY|CODEX_API_KEY)$`)
 
 var containerEnvironmentKey = regexp.MustCompile(`^(CLAUDE_CODE_SUBPROCESS_ENV_SCRUB|OPENCODE_(CONFIG_CONTENT|CONFIG_DIR|DISABLE_[A-Z0-9_]+))$`)
 

@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/example/app-runner/internal/redact"
 )
 
 func validEvent(eventType string) Event {
@@ -77,6 +79,16 @@ func TestAppendDrain(t *testing.T) {
 	evts, err = s.Drain(10)
 	if err != nil || len(evts) != 0 {
 		t.Fatalf("spool should be empty after drain: %d %v", len(evts), err)
+	}
+}
+
+func TestRedactionRemovesRememberedProviderAPIKeys(t *testing.T) {
+	const key = "opaque-provider-key-without-known-prefix"
+	t.Cleanup(redact.ForgetSecretsForTest)
+	redact.RememberSecret(key)
+	out := Redact(map[string]any{"detail": "request failed for " + key, "nested": map[string]any{"line": key}})
+	if strings.Contains(fmt.Sprint(out), key) {
+		t.Fatalf("remembered key leaked: %v", out)
 	}
 }
 

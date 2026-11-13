@@ -20,6 +20,7 @@ type UsageAccumulator struct {
 	output     uint64
 	cacheRead  *uint64
 	cacheWrite *uint64
+	pending    map[string]usageCounters
 }
 
 func NewUsageAccumulator(adapter string) *UsageAccumulator {
@@ -53,21 +54,22 @@ func (a *UsageAccumulator) Snapshot() *v1.ProviderUsage {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !a.reported || a.invalid {
+	totals, ok := a.totals()
+	if !ok {
 		return nil
 	}
 	usage := &v1.ProviderUsage{
 		Provider:     a.provider,
 		Model:        a.model,
-		InputTokens:  a.input,
-		OutputTokens: a.output,
+		InputTokens:  totals.input,
+		OutputTokens: totals.output,
 	}
-	if a.cacheRead != nil {
-		value := *a.cacheRead
+	if totals.cacheRead != nil {
+		value := *totals.cacheRead
 		usage.CacheReadInputTokens = &value
 	}
-	if a.cacheWrite != nil {
-		value := *a.cacheWrite
+	if totals.cacheWrite != nil {
+		value := *totals.cacheWrite
 		usage.CacheCreationInputTokens = &value
 	}
 	return usage
@@ -81,8 +83,11 @@ func (a *UsageAccumulator) observeClaude(event map[string]any) {
 			a.observeModel(event["model"])
 		}
 	case "assistant":
-		if message, ok := event["message"].(map[string]any); ok && a.model == "" {
-			a.observeModel(message["model"])
+		if message, ok := event["message"].(map[string]any); ok {
+			if a.model == "" {
+				a.observeModel(message["model"])
+			}
+			a.observePendingClaudeMessage(message)
 		}
 	case "result":
 		usage, present, ok := optionalObject(event["usage"])
@@ -100,6 +105,7 @@ func (a *UsageAccumulator) observeClaude(event map[string]any) {
 			usage["cache_creation_input_tokens"],
 			nil,
 		)
+		a.pending = nil
 	}
 }
 

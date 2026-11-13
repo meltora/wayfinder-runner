@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/apikey"
 	"github.com/example/app-runner/internal/safeio"
 	"gopkg.in/yaml.v3"
 )
@@ -38,6 +39,7 @@ type Config struct {
 	WorkIntakeProposal             WorkIntakeProposalConfig                       `yaml:"work_intake_proposal,omitempty"`
 	ProviderBinaries               map[string]string                              `yaml:"provider_binaries,omitempty"`
 	ProviderEnvironment            map[string]map[string]string                   `yaml:"provider_environment,omitempty"`
+	ProviderAPIKeys                map[string]apikey.Source                       `yaml:"provider_api_keys,omitempty"`
 	JobImage                       string                                         `yaml:"job_image,omitempty"`
 	JobMemoryMB                    int                                            `yaml:"job_memory_mb,omitempty"`
 	JobCPUs                        float64                                        `yaml:"job_cpus,omitempty"`
@@ -165,6 +167,7 @@ func Normalize(in Config) Config {
 		}
 	}
 	out.ProviderEnvironment = normalizeProviderEnvironment(in.ProviderEnvironment)
+	out.ProviderAPIKeys = normalizeProviderAPIKeys(in.ProviderAPIKeys)
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))
 		for key, value := range in.Labels {
@@ -330,6 +333,9 @@ func (c Config) Validate() error {
 		}
 	}
 	if err := validateProviderEnvironment(c.ProviderEnvironment); err != nil {
+		return err
+	}
+	if err := validateProviderAPIKeys(c); err != nil {
 		return err
 	}
 	if c.JobMemoryMB < 128 || c.JobCPUs <= 0 || c.JobPIDs < 16 {

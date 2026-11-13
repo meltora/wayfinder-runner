@@ -36,22 +36,23 @@ type jobRunner struct {
 	proc     supervisor.Process
 	logger   *slog.Logger
 
-	ctx               context.Context
-	cancel            context.CancelFunc
-	controlMu         sync.Mutex
-	procMu            sync.Mutex
-	cancelled         bool
-	leaseLost         bool
-	completionStarted bool
-	sessionID         string
-	providerError     string
-	outputTail        *providerOutputTail
-	capacityFailure   *provider.CapacityFailure
-	providerUsage     *provider.UsageAccumulator
-	controlAction     v1.JobControlAction
-	controlResultDone chan struct{}
-	sanitizedLogs     int
-	toolTracker       *toolsummary.Tracker
+	ctx                context.Context
+	cancel             context.CancelFunc
+	controlMu          sync.Mutex
+	procMu             sync.Mutex
+	cancelled          bool
+	leaseLost          bool
+	completionStarted  bool
+	sessionID          string
+	providerError      string
+	outputTail         *providerOutputTail
+	capacityFailure    *provider.CapacityFailure
+	providerUsage      *provider.UsageAccumulator
+	tokenBudgetFailure *tokenBudgetFailure
+	controlAction      v1.JobControlAction
+	controlResultDone  chan struct{}
+	sanitizedLogs      int
+	toolTracker        *toolsummary.Tracker
 
 	reviewFeedbackContinuation *v1.ReviewFeedbackContinuationAuthority
 	providerCredential         *v1.ProviderCredential
@@ -385,6 +386,10 @@ func (jr *jobRunner) run() {
 		finish(jr.startupFailureOutcome(v1.JobFailureAgentStart, agentPromptTooLargeMessage), nil)
 		return
 	}
+	if failure, exhausted := jr.tokenBudgetStartFailure(); exhausted {
+		finish(jr.startupFailureOutcome(failure.code, failure.message), nil)
+		return
+	}
 	if err := os.MkdirAll(jr.workDir, 0o700); err != nil {
 		finish(
 			jr.startupFailureOutcome(
@@ -487,6 +492,12 @@ func (jr *jobRunner) run() {
 		)
 		return
 	}
+	apiKey, err := d.providerAPIKey(adapterName)
+	if err != nil {
+		jr.logger.Error("provider API key unavailable", "provider", adapterName, "err", redact.KnownSecretsError(err))
+		finish(jr.startupFailureOutcome(v1.JobFailureAgentStart, providerAPIKeyUnavailableMessage), nil)
+		return
+	}
 	spec, err := adapter.BuildSpec(provider.StartParams{
 		Job:             job,
 		WorkDir:         workDir,
@@ -499,7 +510,7 @@ func (jr *jobRunner) run() {
 		Model:           d.cfg.AgentModel,
 		ResumeSessionID: job.ResumeSessionID,
 		ReadOnly:        job.Kind == v1.JobKindPlan,
-		Environment:     d.agentEnvironment(adapterName),
+		Environment:     append(d.agentEnvironment(adapterName), apiKey.entries()...),
 	})
 	if err != nil {
 		finish(
@@ -582,6 +593,7 @@ func (jr *jobRunner) run() {
 			return
 		}
 		isoPolicy.Environment = provider.ContainerEnvironment(spec.Env)
+		isoPolicy.ForwardedSecretNames = apiKey.names()
 		isoPolicy.ManagedConfigMounts = append([]supervisor.ManagedConfigMount(nil), spec.ManagedConfigMounts...)
 		jobHome, err = isolation.PrepareHome(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName, d.agentEnvironment(adapterName))
 		if err != nil {
@@ -626,6 +638,9 @@ func (jr *jobRunner) run() {
 			nil,
 		)
 		return
+	}
+	if iso.Name() == "docker" {
+		spec.ProviderEnvironment = append(spec.ProviderEnvironment, apiKey.entries()...)
 	}
 	spec.Env = append(spec.Env,
 		"PLATFORM_MCP_SOCKET="+agentSockPath,
@@ -750,7 +765,8 @@ func (jr *jobRunner) run() {
 		}
 	}
 	capacityFailure, capacityExhausted := jr.currentCapacityFailure()
-	if exitErr != nil || capacityExhausted {
+	budgetFailure, budgetStopped := jr.currentTokenBudgetFailure()
+	if exitErr != nil || capacityExhausted || budgetStopped {
 		jr.procMu.Lock()
 		cancelled := jr.cancelled
 		leaseLost := jr.leaseLost
@@ -777,6 +793,10 @@ func (jr *jobRunner) run() {
 			if finalizationErr != nil {
 				jr.logger.Error("preserve partial build", "err", finalizationErr)
 			}
+		}
+		if budgetStopped && !cancelled && !leaseLost {
+			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: budgetFailure.code, FailureMessage: budgetFailure.message}, nil)
+			return
 		}
 		if capacityExhausted && !cancelled && !leaseLost {
 			lineage := jr.capacityRecoveryLineage(extra)
@@ -1015,6 +1035,7 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 }
 
 func (jr *jobRunner) redactProviderCredential(err error) error {
+	err = redact.KnownSecretsError(err)
 	if jr.providerCredential == nil {
 		return err
 	}
@@ -1153,6 +1174,7 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 				jr.procMu.Unlock()
 			}
 			usage.Observe(m)
+			jr.enforceTokenBudget(usage)
 			if providerError := providerErrorMessage(m); providerError != "" {
 				jr.procMu.Lock()
 				jr.providerError = providerError
