@@ -53,4 +53,5 @@ type JobFinishedEvent struct {
 	Retryable         *bool                                   `json:"retryable,omitempty"`
 	FailureMessage    string                                  `json:"failure_message,omitempty"`
 	AgentRunAuthority *AgentRunAuthority                      `json:"agent_run_authority,omitempty"`
+	ProviderUsage     *ProviderUsage                          `json:"provider_usage,omitempty"`
 }

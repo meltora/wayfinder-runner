@@ -47,6 +47,7 @@ type jobRunner struct {
 	providerError     string
 	outputTail        *providerOutputTail
 	capacityFailure   *provider.CapacityFailure
+	providerUsage     *provider.UsageAccumulator
 	controlAction     v1.JobControlAction
 	controlResultDone chan struct{}
 	sanitizedLogs     int
@@ -1135,6 +1136,10 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 	jr.procMu.Lock()
 	jr.outputTail = tail
 	jr.toolTracker = nil
+	if jr.providerUsage == nil {
+		jr.providerUsage = provider.NewUsageAccumulator(jr.d.cfg.Provider)
+	}
+	usage := jr.providerUsage
 	jr.procMu.Unlock()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
@@ -1147,6 +1152,7 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 				jr.sessionID = sid
 				jr.procMu.Unlock()
 			}
+			usage.Observe(m)
 			if providerError := providerErrorMessage(m); providerError != "" {
 				jr.procMu.Lock()
 				jr.providerError = providerError
@@ -1217,6 +1223,13 @@ func (jr *jobRunner) currentSessionID() string {
 	jr.procMu.Lock()
 	defer jr.procMu.Unlock()
 	return jr.sessionID
+}
+
+func (jr *jobRunner) currentProviderUsage() *v1.ProviderUsage {
+	jr.procMu.Lock()
+	usage := jr.providerUsage
+	jr.procMu.Unlock()
+	return usage.Snapshot()
 }
 
 func (jr *jobRunner) currentProviderError() string {

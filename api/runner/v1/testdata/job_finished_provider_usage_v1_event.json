@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "type": "event",
+  "id": "evt-0004",
+  "sent_at": "2026-08-07T12:50:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "kind": "job_finished",
+    "manifest_kind": "build",
+    "lease_id": "lease-0002",
+    "job_id": "job-0002",
+    "attempt_id": "attempt-0002",
+    "manifest_id": "manifest-0002",
+    "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fencing_token": 9,
+    "observed_at": "2026-08-07T12:49:59Z",
+    "state": "succeeded",
+    "provider_session_id": "session-0002",
+    "provider_usage": {
+      "provider": "claude",
+      "model": "claude-opus-5-5",
+      "input_tokens": 1200,
+      "output_tokens": 340,
+      "cache_read_input_tokens": 9000,
+      "cache_creation_input_tokens": 150
+    }
+  }
+}
