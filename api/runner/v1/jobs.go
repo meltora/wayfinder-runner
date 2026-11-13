@@ -45,6 +45,7 @@ type JobSpec struct {
 	ProviderCapacityResumePolicy CapacityResumePolicy `json:"provider_capacity_resume_policy,omitempty"`
 	TokenBudget                  *TokenBudget         `json:"token_budget,omitempty"`
 	AgentActivity                *AgentActivityPolicy `json:"agent_activity,omitempty"`
+	AgentGuidance                *AgentGuidance       `json:"agent_guidance,omitempty"`
 
 	reviewCommentPresent bool
 }
