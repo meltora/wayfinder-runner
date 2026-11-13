@@ -39,6 +39,11 @@ func JobFinishedEvent(event v1.JobFinishedEvent) error {
 			return err
 		}
 	}
+	if event.ProviderUsage != nil {
+		if err := ProviderUsage(*event.ProviderUsage); err != nil {
+			return err
+		}
+	}
 	if err := boundedText("failure_message", event.FailureMessage, 512, false); err != nil {
 		return err
 	}

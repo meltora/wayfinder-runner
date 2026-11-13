@@ -37,5 +37,6 @@ func (jr *jobRunner) jobFinishedEvent(outcome jobOutcome) v1.JobFinishedEvent {
 		Retryable:         outcome.Retryable,
 		FailureMessage:    truncateUTF8Bytes(outcome.FailureMessage, 512),
 		AgentRunAuthority: authority,
+		ProviderUsage:     jr.currentProviderUsage(),
 	}
 }
