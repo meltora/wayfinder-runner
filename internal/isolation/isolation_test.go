@@ -177,6 +177,25 @@ func TestDockerWrapRejectsUnapprovedContainerEnvironment(t *testing.T) {
 	}
 }
 
+func TestDockerWrapForwardsProviderAPIKeysByNameOnly(t *testing.T) {
+	d := Docker{}
+	p := Policy{NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser, ForwardedSecretNames: []string{"ANTHROPIC_API_KEY"}}
+	_, args, err := d.Wrap("claude", nil, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-e ANTHROPIC_API_KEY ") || strings.Contains(joined, "ANTHROPIC_API_KEY=") {
+		t.Fatalf("docker args must forward the key by name only: %s", joined)
+	}
+	for _, name := range []string{"GH_TOKEN", "ANTHROPIC_API_KEY=value", "PATH"} {
+		p.ForwardedSecretNames = []string{name}
+		if _, _, err := d.Wrap("claude", nil, p); err == nil {
+			t.Fatalf("forwarded secret name %q accepted", name)
+		}
+	}
+}
+
 func TestDockerWrapAttachesARestrictedJobToTheNamedNetwork(t *testing.T) {
 	_, args, err := (Docker{}).Wrap("claude", nil, Policy{
 		NetworkNone: false, NetworkName: "our-runner-jobs-dev", RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser,

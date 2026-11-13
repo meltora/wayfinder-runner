@@ -170,6 +170,11 @@ func JobSpec(job v1.JobSpec) error {
 		job.ProviderCapacityResumePolicy != v1.CapacityResumeAutomatic {
 		return fmt.Errorf("provider_capacity_resume_policy must be manual or automatic")
 	}
+	if job.TokenBudget != nil {
+		if err := TokenBudget(*job.TokenBudget); err != nil {
+			return err
+		}
+	}
 	if job.AgentRunAuthority != nil {
 		if err := AgentRunAuthority(*job.AgentRunAuthority); err != nil {
 			return err

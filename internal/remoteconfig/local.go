@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/example/app-runner/internal/apikey"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/safeio"
 	"gopkg.in/yaml.v3"
@@ -27,6 +28,7 @@ type Local struct {
 	ControlPlaneURL     string                        `yaml:"control_plane_url"`
 	StateDir            string                        `yaml:"state_dir"`
 	ProviderEnvironment map[string]map[string]string  `yaml:"provider_environment,omitempty"`
+	ProviderAPIKeys     map[string]apikey.Source      `yaml:"provider_api_keys,omitempty"`
 	ProviderBinaries    map[string]string             `yaml:"provider_binaries,omitempty"`
 	AcknowledgeDirect   bool                          `yaml:"acknowledge_direct,omitempty"`
 	Checks              map[string]config.CheckConfig `yaml:"checks,omitempty"`

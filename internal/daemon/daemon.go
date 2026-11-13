@@ -585,6 +585,7 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	det := capability.New(d.runnerID, Version, hot.labels, hot.agentPackPublicKeys).
 		WithProviderBinaries(d.cfg.ProviderBinaries).
 		WithProviderEnvironment(d.cfg.ProviderEnvironment).
+		WithProviderAPIKeys(d.cfg.ProviderAPIKeys).
 		WithProviderVersionCache(d.providerVersionCache)
 	if d.agentPackTrust != nil {
 		det = det.WithAgentPackTrust(d.agentPackTrustCapability(hot.agentPackPublicKeys))

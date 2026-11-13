@@ -15,6 +15,7 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/hookevent"
+	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/validation"
 )
@@ -63,6 +64,7 @@ func redactValue(value any, depth int) any {
 	}
 	switch typed := value.(type) {
 	case string:
+		typed = redact.KnownSecrets(typed)
 		if secretValuePattern.MatchString(typed) {
 			return "[redacted]"
 		}

@@ -109,6 +109,7 @@ type AgentCapability struct {
 	Provider              string   `json:"provider"`
 	Version               string   `json:"version,omitempty"`
 	AuthReady             bool     `json:"auth_ready"`
+	AuthMode              string   `json:"auth_mode,omitempty"`
 	Available             bool     `json:"available"`
 	ManagedHooksSupported bool     `json:"managed_hooks_supported"`
 	ManagedHooksVersion   string   `json:"managed_hooks_version,omitempty"`
