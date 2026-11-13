@@ -31,7 +31,37 @@ func redactAbsolutePaths(text string) (string, int) {
 	return text, total
 }
 
+var pathContinuation = regexp.MustCompile(`^ +` + pathSegment + `+(?:` + pathSeparator + pathSegment + `*)+`)
+
 func replacePathMatches(pattern *regexp.Regexp, text string) (string, int) {
+	matches := pattern.FindAllStringSubmatchIndex(text, -1)
+	if len(matches) == 0 {
+		return text, 0
+	}
+	var builder strings.Builder
+	last, count := 0, 0
+	for _, match := range matches {
+		if match[4] < last {
+			continue
+		}
+		end := match[5]
+		for {
+			next := pathContinuation.FindStringIndex(text[end:])
+			if next == nil {
+				break
+			}
+			end += next[1]
+		}
+		builder.WriteString(text[last:match[4]])
+		builder.WriteString(redact.Placeholder)
+		last = end
+		count++
+	}
+	builder.WriteString(text[last:])
+	return builder.String(), count
+}
+
+func replaceGroup(pattern *regexp.Regexp, group int, text string) (string, int) {
 	matches := pattern.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
 		return text, 0
@@ -39,9 +69,9 @@ func replacePathMatches(pattern *regexp.Regexp, text string) (string, int) {
 	var builder strings.Builder
 	last := 0
 	for _, match := range matches {
-		builder.WriteString(text[last:match[4]])
+		builder.WriteString(text[last:match[2*group]])
 		builder.WriteString(redact.Placeholder)
-		last = match[5]
+		last = match[2*group+1]
 	}
 	builder.WriteString(text[last:])
 	return builder.String(), len(matches)
