@@ -25,8 +25,16 @@ func (jr *jobRunner) publishAgentActivity(providerEvent map[string]any) {
 	}
 }
 
+func (jr *jobRunner) knownActivitySecrets() []string {
+	secrets := []string{jr.jobToken}
+	if jr.providerCredential != nil {
+		secrets = append(secrets, jr.providerCredential.Token)
+	}
+	return secrets
+}
+
 func (jr *jobRunner) publishAgentActivityItem(policy v1.AgentActivityPolicy, item agentactivity.Item) {
-	sanitized := agentactivity.Sanitize(item.Text, policy.MaxMessageBytes)
+	sanitized := agentactivity.Sanitize(item.Text, policy.MaxMessageBytes, jr.knownActivitySecrets()...)
 	if sanitized.Message == "" {
 		return
 	}

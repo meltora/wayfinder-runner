@@ -25,19 +25,34 @@ type redactionRule struct {
 }
 
 var redactionRules = []redactionRule{
-	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`), "credential"},
 	{regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s/@]+@\S*`), "credential"},
 	{regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]{12,}`), "credential"},
-	{regexp.MustCompile(`\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})`), "credential"},
-	{regexp.MustCompile(`(?i)\b[a-z0-9_-]*(?:api[_-]?key|token|secret|password|passwd|authorization)[a-z0-9_-]*\s*[:=]\s*\S+`), "credential"},
+	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*`), "credential"},
+	{regexp.MustCompile(`(?i)["']?[a-z0-9_-]*(?:api[_-]?key|token|secret|password|passwd|authorization|credential)[a-z0-9_-]*["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|\S+)`), "credential"},
+	{regexp.MustCompile(`\b(?:sk-ant-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[bpas]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16})`), "credential"},
 	{regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`), "personal_data"},
 }
 
-var absolutePathPattern = regexp.MustCompile(`(^|[\s"'(\[=,:])((?:~|[A-Za-z]:)?/[A-Za-z0-9._@+-]+(?:/[A-Za-z0-9._@+-]*)+)`)
+var pemBlockPattern = regexp.MustCompile(`(?i)-----\s*BEGIN`)
 
-func Sanitize(text string, maxBytes int) Sanitized {
+var highEntropyPattern = regexp.MustCompile(`[A-Za-z0-9+/=_-]{32,}`)
+
+var absolutePathPattern = regexp.MustCompile(`(^|[^A-Za-z0-9._@+/\\-])(~[/\\][A-Za-z0-9._@+/\\-]*|(?:[A-Za-z]:)?[/\\][A-Za-z0-9._@+-]+(?:[/\\][A-Za-z0-9._@+-]*)+)`)
+
+func Sanitize(text string, maxBytes int, knownSecrets ...string) Sanitized {
+	if pemBlockPattern.MatchString(text) {
+		return Sanitized{Categories: []string{}}
+	}
 	categories := map[string]struct{}{}
 	count := 0
+	for _, secret := range knownSecrets {
+		before := strings.Count(text, redact.Placeholder)
+		text = redact.Token(text, secret)
+		if added := strings.Count(text, redact.Placeholder) - before; added > 0 {
+			count += added
+			categories["credential"] = struct{}{}
+		}
+	}
 	for _, rule := range redactionRules {
 		text = rule.pattern.ReplaceAllStringFunc(text, func(string) string {
 			count++
@@ -50,6 +65,14 @@ func Sanitize(text string, maxBytes int) Sanitized {
 		count += pathCount
 		categories["filesystem_path"] = struct{}{}
 	}
+	text = highEntropyPattern.ReplaceAllStringFunc(text, func(match string) string {
+		if !mixedCharacterClasses(match) {
+			return match
+		}
+		count++
+		categories["credential"] = struct{}{}
+		return redact.Placeholder
+	})
 	message, truncated := truncate(normalizeWhitespace(text), maxBytes)
 	values := make([]string, 0, len(categories))
 	for category := range categories {
@@ -73,6 +96,19 @@ func redactAbsolutePaths(text string) (string, int) {
 	}
 	builder.WriteString(text[last:])
 	return builder.String(), len(matches)
+}
+
+func mixedCharacterClasses(value string) bool {
+	digit, letter := false, false
+	for _, r := range value {
+		switch {
+		case r >= '0' && r <= '9':
+			digit = true
+		case unicode.IsLetter(r):
+			letter = true
+		}
+	}
+	return digit && letter
 }
 
 func normalizeWhitespace(text string) string {

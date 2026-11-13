@@ -25,7 +25,7 @@ Reasoning and thinking blocks are never forwarded.
 
 ## Sanitizing
 
-`internal/agentactivity` replaces private keys, credentialed URLs, bearer tokens, known token prefixes, secret assignments, e-mail addresses and absolute paths with `[redacted]`, records the count and sorted categories, strips control characters, collapses whitespace and truncates on a UTF-8 boundary with `…`. Policy version `runner-activity-redaction-1`.
+`internal/agentactivity` drops any message that contains a PEM `-----BEGIN` marker. It then replaces the job's own secrets (MCP job token and provider installation token, through `internal/redact`), credentialed URLs, bearer tokens, JWTs, quoted or unquoted secret assignments, known token prefixes (`sk-`, `sk-ant-`, `gh[pousr]_`, `github_pat_`, `xox[bpas]-`, `AKIA`/`ASIA`), e-mail addresses, absolute Unix, home and Windows paths, and runs of 32 or more base64-like characters mixing letters and digits with `[redacted]`. It records the count and sorted categories, strips control characters, collapses whitespace and truncates on a UTF-8 boundary with `…`. Policy version `runner-activity-redaction-1`.
 
 ## Digest
 

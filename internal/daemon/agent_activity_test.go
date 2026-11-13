@@ -94,6 +94,19 @@ func TestAgentActivityStopsAfterTotalLimitNotice(t *testing.T) {
 	}
 }
 
+func TestAgentActivityRedactsRunnerKnownSecrets(t *testing.T) {
+	jr, events := activityJobRunner(t, &v1.AgentActivityPolicy{SchemaVersion: 1, MaxEvents: 10, MaxEventsPerMinute: 10, MaxMessageBytes: 280})
+	jr.jobToken = "plainjobtokenvalue"
+	jr.providerCredential = &v1.ProviderCredential{Kind: v1.ProviderCredentialGitHubInstallationToken, Token: "installationcredentialvalue"}
+	jr.publishAgentActivity(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
+		map[string]any{"type": "text", "text": "using plainjobtokenvalue and installationcredentialvalue"},
+	}}})
+	activity := decodeActivity(t, events)
+	if len(activity) != 1 || activity[0].Message != "using [redacted] and [redacted]" || activity[0].Redaction.RedactionCount != 2 {
+		t.Fatalf("activity=%#v", activity)
+	}
+}
+
 func TestAgentActivityTruncatesToPolicyBytes(t *testing.T) {
 	jr, events := activityJobRunner(t, &v1.AgentActivityPolicy{SchemaVersion: 1, MaxEvents: 10, MaxEventsPerMinute: 10, MaxMessageBytes: 64})
 	jr.publishAgentActivity(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
