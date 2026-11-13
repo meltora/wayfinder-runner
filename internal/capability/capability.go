@@ -150,6 +150,7 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 		HumanChangeRequestTransportVersion:    v1.HumanChangeRequestTransportVersion,
 		ApprovedPlanTransportVersion:          v1.ApprovedPlanTransportVersion,
 		AgentActivityTransportVersion:         v1.AgentActivityTransportVersion,
+		RunGuardrailTransportVersion:          v1.RunGuardrailTransportVersion,
 		TrustedAgentPackKeyIDs:                append([]string{}, d.trustedAgentPackKeyIDs...),
 		SourcePublicationProviders:            sourcePublicationProviders,
 		PreviewObservationProfiles:            previewObservationProfiles,
