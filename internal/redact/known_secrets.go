@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"sort"
 	"sync"
 )
 
@@ -18,6 +19,17 @@ func RememberSecret(value string) {
 	knownSecretsMu.Lock()
 	knownSecrets[value] = struct{}{}
 	knownSecretsMu.Unlock()
+}
+
+func RememberedSecrets() []string {
+	knownSecretsMu.RLock()
+	secrets := make([]string, 0, len(knownSecrets))
+	for secret := range knownSecrets {
+		secrets = append(secrets, secret)
+	}
+	knownSecretsMu.RUnlock()
+	sort.Strings(secrets)
+	return secrets
 }
 
 func KnownSecrets(text string) string {

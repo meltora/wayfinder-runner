@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/apikey"
+	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/validation"
 )
 
@@ -116,6 +118,25 @@ func TestAgentActivityRedactsAgentEnvironmentSecrets(t *testing.T) {
 	}}})
 	activity := decodeActivity(t, events)
 	if len(activity) != 1 || activity[0].Message != "gateway [redacted] push [redacted] size tiny" || activity[0].Redaction.RedactionCount != 2 {
+		t.Fatalf("activity=%#v", activity)
+	}
+}
+
+func TestAgentActivityRedactsHostHeldProviderAPIKey(t *testing.T) {
+	t.Cleanup(redact.ForgetSecretsForTest)
+	const hostKey = "orchardlanternpebble7"
+	t.Setenv("DAEMON_TEST_MODEL_KEY", hostKey)
+	jr, events := activityJobRunner(t, &v1.AgentActivityPolicy{SchemaVersion: 1, MaxEvents: 10, MaxEventsPerMinute: 10, MaxMessageBytes: 280})
+	jr.d.supervisor = namedTestSupervisor("direct")
+	jr.d.cfg.ProviderAPIKeys = map[string]apikey.Source{"claude": {Env: "DAEMON_TEST_MODEL_KEY"}}
+	if key, err := jr.d.providerAPIKey("claude"); key == nil || err != nil {
+		t.Fatalf("key=%v err=%v", key, err)
+	}
+	jr.publishAgentActivity(map[string]any{"type": "assistant", "message": map[string]any{"content": []any{
+		map[string]any{"type": "text", "text": "calling model with " + hostKey + " now"},
+	}}})
+	activity := decodeActivity(t, events)
+	if len(activity) != 1 || activity[0].Message != "calling model with [redacted] now" || activity[0].Redaction.RedactionCount != 1 {
 		t.Fatalf("activity=%#v", activity)
 	}
 }

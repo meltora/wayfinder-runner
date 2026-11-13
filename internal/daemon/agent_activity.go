@@ -6,6 +6,7 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/agentactivity"
+	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/validation"
 )
 
@@ -26,7 +27,8 @@ func (jr *jobRunner) publishAgentActivity(providerEvent map[string]any) {
 }
 
 func (jr *jobRunner) knownActivitySecrets() []string {
-	return append([]string{jr.jobToken}, jr.knownSecrets()...)
+	secrets := append([]string{jr.jobToken}, jr.knownSecrets()...)
+	return append(secrets, redact.RememberedSecrets()...)
 }
 
 func (jr *jobRunner) publishAgentActivityItem(policy v1.AgentActivityPolicy, item agentactivity.Item) {
