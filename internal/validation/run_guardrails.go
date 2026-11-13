@@ -82,6 +82,9 @@ func runNetworkPolicyShape(value v1.RunNetworkPolicyEvent) error {
 		if value.JobNetwork != v1.RunJobNetworkHost || value.EgressPolicyID != nil {
 			return fmt.Errorf("direct isolation requires the host job network without an egress policy")
 		}
+		if value.AgentSandboxNetwork != v1.AgentSandboxNetworkNotRecorded {
+			return fmt.Errorf("direct isolation cannot report a denied agent sandbox network")
+		}
 		return nil
 	case v1.RunIsolationDocker:
 	default:

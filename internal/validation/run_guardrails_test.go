@@ -93,6 +93,9 @@ func validRunNetworkPolicy(isolation v1.RunIsolation, network v1.RunJobNetwork, 
 		Isolation: isolation, JobNetwork: network, EgressPolicyID: egress,
 		AgentSandboxNetwork: v1.AgentSandboxNetworkDenyAll,
 	}
+	if isolation == v1.RunIsolationDirect {
+		value.AgentSandboxNetwork = v1.AgentSandboxNetworkNotRecorded
+	}
 	value.ContentDigestSHA256 = v1.RunNetworkPolicyContentDigest(value)
 	return value
 }
@@ -123,6 +126,10 @@ func TestRunNetworkPolicyEvent(t *testing.T) {
 	sandbox.AgentSandboxNetwork = "open"
 	sandbox.ContentDigestSHA256 = v1.RunNetworkPolicyContentDigest(sandbox)
 	invalid["sandbox"] = sandbox
+	directDenyAll := validRunNetworkPolicy(v1.RunIsolationDirect, v1.RunJobNetworkHost, nil)
+	directDenyAll.AgentSandboxNetwork = v1.AgentSandboxNetworkDenyAll
+	directDenyAll.ContentDigestSHA256 = v1.RunNetworkPolicyContentDigest(directDenyAll)
+	invalid["direct deny all"] = directDenyAll
 	tampered := validRunNetworkPolicy(v1.RunIsolationDocker, v1.RunJobNetworkNone, nil)
 	tampered.AgentSandboxNetwork = v1.AgentSandboxNetworkNotRecorded
 	invalid["digest"] = tampered
