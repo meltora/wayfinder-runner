@@ -28,7 +28,7 @@ var redactionRules = []redactionRule{
 	{regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://[^\s/@]+@\S*`), "credential"},
 	{regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]{12,}`), "credential"},
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*`), "credential"},
-	{regexp.MustCompile(`(?i)["']?[a-z0-9_-]*(?:api[_-]?key|token|secret|password|passwd|authorization|credential)[a-z0-9_-]*["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|\S+)`), "credential"},
+	{regexp.MustCompile(`(?i)["']?[a-z0-9_-]*(?:api[_-]?key|token|secret|password|passwd|authorization|credential)[a-z0-9_-]*["']?\s*[:=]\s*(?:"(?:[^"\\]|\\(?s:.))*"?|'(?:[^'\\]|\\(?s:.))*'?|\S+)`), "credential"},
 	{regexp.MustCompile(`\b(?:sk-ant-[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprse]-[A-Za-z0-9-]{10,}|(?:AKIA|ASIA)[0-9A-Z]{16})`), "credential"},
 	{regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`), "personal_data"},
 }
@@ -37,15 +37,14 @@ var pemBlockPattern = regexp.MustCompile(`(?i)-----\s*BEGIN`)
 
 var highEntropyPattern = regexp.MustCompile(`[A-Za-z0-9+/=_-]{32,}`)
 
-var absolutePathPattern = regexp.MustCompile(`(^|[^A-Za-z0-9._@+/\\-])(~[/\\][A-Za-z0-9._@+/\\-]*|(?:[A-Za-z]:)?[/\\][A-Za-z0-9._@+-]+(?:[/\\][A-Za-z0-9._@+-]*)+)`)
-
 func Sanitize(text string, maxBytes int, knownSecrets ...string) Sanitized {
+	text = canonicalize(text)
 	if pemBlockPattern.MatchString(text) {
 		return Sanitized{Categories: []string{}}
 	}
 	categories := map[string]struct{}{}
 	count := 0
-	for _, secret := range knownSecrets {
+	for _, secret := range knownSecretForms(knownSecrets) {
 		before := strings.Count(text, redact.Placeholder)
 		text = redact.Token(text, secret)
 		if added := strings.Count(text, redact.Placeholder) - before; added > 0 {
@@ -82,20 +81,15 @@ func Sanitize(text string, maxBytes int, knownSecrets ...string) Sanitized {
 	return Sanitized{Message: message, Truncated: truncated, RedactionCount: count, Categories: values}
 }
 
-func redactAbsolutePaths(text string) (string, int) {
-	matches := absolutePathPattern.FindAllStringSubmatchIndex(text, -1)
-	if len(matches) == 0 {
-		return text, 0
+func knownSecretForms(secrets []string) []string {
+	forms := make([]string, 0, len(secrets)*2)
+	for _, secret := range secrets {
+		forms = append(forms, secret)
+		if canonical := canonicalize(secret); canonical != secret {
+			forms = append(forms, canonical)
+		}
 	}
-	var builder strings.Builder
-	last := 0
-	for _, match := range matches {
-		builder.WriteString(text[last:match[4]])
-		builder.WriteString(redact.Placeholder)
-		last = match[5]
-	}
-	builder.WriteString(text[last:])
-	return builder.String(), len(matches)
+	return forms
 }
 
 func mixedCharacterClasses(value string) bool {

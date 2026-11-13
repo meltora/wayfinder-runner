@@ -90,6 +90,57 @@ func TestSanitizeDropsControlCharactersAndInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestSanitizeRedactsEvasivePathsAndSecrets(t *testing.T) {
+	cases := []struct {
+		name       string
+		in         string
+		want       string
+		categories []string
+	}{
+		{"file uri", "open file:///home/omar/secret.txt now", "open [redacted] now", []string{"filesystem_path"}},
+		{"leading double slash", "open //home/omar/secret.txt now", "open [redacted] now", []string{"filesystem_path"}},
+		{"unc path", `open \\server\share\secret.txt now`, "open [redacted] now", []string{"filesystem_path"}},
+		{"non ascii segment", "open /home/ömar/secret.txt now", "open [redacted] now", []string{"filesystem_path"}},
+		{"non ascii first segment", "open /ünïcode/dir/file now", "open [redacted] now", []string{"filesystem_path"}},
+		{"relative path kept", "edited src/foo.ts now", "edited src/foo.ts now", []string{}},
+		{"relative non ascii path kept", "edited src/ömar/foo.ts now", "edited src/ömar/foo.ts now", []string{}},
+		{"url path kept", "see https://example.com/docs/page ok", "see https://example.com/docs/page ok", []string{}},
+		{"escaped quote value", `cfg "api_key": "abc\"leakedpart" set`, "cfg [redacted] set", []string{"credential"}},
+		{"escaped single quote value", `cfg token='abc\'leakedpart' set`, "cfg [redacted] set", []string{"credential"}},
+		{"unterminated quoted value", `cfg "password": "abc leaked tail`, "cfg [redacted]", []string{"credential"}},
+		{"zero width split token", "key sk-ant-\u200bapi03-abcdefghijklmnop end", "key [redacted] end", []string{"credential"}},
+		{"fullwidth token", "key ｓｋ－ａｎｔ－ａｐｉ０３－ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐ end", "key [redacted] end", []string{"credential"}},
+		{"soft hyphen split key name", "set API_\u00adKEY=supersecretvalue now", "set [redacted] now", []string{"credential"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Sanitize(tc.in, 280)
+			if got.Message != tc.want || !reflect.DeepEqual(got.Categories, tc.categories) {
+				t.Fatalf("got %#v", got)
+			}
+		})
+	}
+}
+
+func TestSanitizeDropsPEMHiddenByFormatCharactersOrFullwidth(t *testing.T) {
+	for _, in := range []string{
+		"key -----\u200bBEGIN PRIVATE KEY----- abc",
+		"key －－－－－ＢＥＧＩＮ PRIVATE KEY abc",
+	} {
+		if got := Sanitize(in, 280); got.Message != "" {
+			t.Fatalf("PEM content forwarded: %q", got.Message)
+		}
+	}
+}
+
+func TestSanitizeRedactsKnownSecretAfterNormalisation(t *testing.T) {
+	secret := "installation-token-value"
+	got := Sanitize("pushing with installation-\u200btoken-value now", 280, secret)
+	if got.Message != "pushing with [redacted] now" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
 func TestSanitizeBlankInput(t *testing.T) {
 	if got := Sanitize(" \n\t ", 280); got.Message != "" {
 		t.Fatalf("got %q", got.Message)
