@@ -27,7 +27,11 @@ func (a *UsageAccumulator) BudgetedTokens() (uint64, bool) {
 	if !ok {
 		return 0, false
 	}
-	total, ok := checkedSum(totals.input, totals.output, valueOrZero(totals.cacheWrite))
+	input := totals.input
+	if a.provider == "codex" {
+		input -= min(input, valueOrZero(totals.cacheRead))
+	}
+	total, ok := checkedSum(input, totals.output, valueOrZero(totals.cacheWrite))
 	return total, ok
 }
 

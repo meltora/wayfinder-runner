@@ -10,6 +10,29 @@ func TestBudgetedTokensExcludesCacheReads(t *testing.T) {
 	}
 }
 
+func TestBudgetedTokensRemovesCodexCachedInputFromInput(t *testing.T) {
+	accumulator := NewUsageAccumulator("codex")
+	observeLines(t, accumulator,
+		`{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":50}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}`,
+	)
+	if total, ok := accumulator.BudgetedTokens(); !ok || total != 265 {
+		t.Fatalf("budgeted = %d %v, want 265", total, ok)
+	}
+	snapshot := accumulator.Snapshot()
+	if snapshot == nil || snapshot.InputTokens != 1010 || snapshot.CacheReadInputTokens == nil || *snapshot.CacheReadInputTokens != 800 {
+		t.Fatalf("snapshot must keep provider-reported counters, got %+v", snapshot)
+	}
+}
+
+func TestBudgetedTokensNeverRemovesMoreThanCodexInput(t *testing.T) {
+	accumulator := NewUsageAccumulator("codex")
+	observeLines(t, accumulator, `{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":40,"output_tokens":5}}`)
+	if total, ok := accumulator.BudgetedTokens(); !ok || total != 5 {
+		t.Fatalf("budgeted = %d %v, want 5", total, ok)
+	}
+}
+
 func TestBudgetedTokensCountsClaudeAssistantUsageBeforeResult(t *testing.T) {
 	accumulator := NewUsageAccumulator("claude")
 	observeLines(t, accumulator,
@@ -55,8 +78,8 @@ func TestBudgetedTokensReportsNothingWhenCountersAreInvalid(t *testing.T) {
 	observeLines(t, accumulator,
 		`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":2}}`,
 	)
-	if total, ok := accumulator.BudgetedTokens(); !ok || total != 12 {
-		t.Fatalf("codex budgeted = %d %v, want 12", total, ok)
+	if total, ok := accumulator.BudgetedTokens(); !ok || total != 8 {
+		t.Fatalf("codex budgeted = %d %v, want 8", total, ok)
 	}
 	observeLines(t, accumulator, `{"type":"turn.completed","usage":{"input_tokens":"x","output_tokens":2}}`)
 	if _, ok := accumulator.BudgetedTokens(); ok {

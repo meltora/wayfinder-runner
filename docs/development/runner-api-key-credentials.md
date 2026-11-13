@@ -14,9 +14,9 @@
 | Planner                | Opus 5.5 (`claude-opus-5-5`); swarm slice 22 agent, 13 November 2026 |
 | Implementer            | Opus 5.5 (`claude-opus-5-5`); same agent, 13 November 2026 |
 | Reviewer               | pending |
-| Repair attempt         | 0 |
+| Repair attempt         | 1 |
 | Updated                | 2026-11-13 |
-| Baseline               | app-runner `main` at `7e272f9`, branch `slice/runner-api-key-credentials`. |
+| Baseline               | app-runner `main` at `7e272f9`, branch `slice/runner-api-key-credentials-r` (fetched by the coordinator from the scratch clone branch `slice/runner-api-key-credentials`). |
 
 ## Outcome
 
@@ -39,12 +39,13 @@ Excluded: OpenCode API-key mode; work-intake generation with an API key; Cloud m
 | R-05 | Remote configuration cannot set or change key sources. | `TestMergeKeepsProviderAPIKeySourcesLocal` | implemented |
 | R-06 | Capability report states `auth_mode` (`subscription`/`api_key`) and `auth_ready` per provider, no key material. | `TestCollectReportsAPIKeyModeWithoutKeyMaterial`, `TestCollectReportsSubscriptionModeByDefault` | implemented |
 | R-07 | `token_budget` is strictly decoded (positive integers, unknown fields rejected); new failure codes are valid on job_finished. | `internal/validation/token_budget_test.go` | implemented |
-| R-08 | Budgeted tokens = input + output + cache creation, from provider-reported usage including Claude assistant events; malformed usage ignored. | `internal/provider/usage_budget_test.go` | implemented |
+| R-08 | Budgeted tokens = uncached input + output + cache creation, from provider-reported usage including Claude assistant events; malformed usage ignored. Codex `input_tokens` include `cached_input_tokens`, so for Codex the cached input (capped at input) is subtracted; the reported `provider_usage` keeps the raw counters. | `internal/provider/usage_budget_test.go` | implemented |
 | R-09 | The provider is stopped when the run or project limit is reached, with the tighter limit's code; a zero project remainder refuses the start; no budget means no stop. | `internal/daemon/job_token_budget_test.go` | implemented |
 
 ## Design and decisions
 
-- Key variables passed to the provider: `ANTHROPIC_API_KEY` for Claude, `CODEX_API_KEY` for Codex. Uncertain: not verified against live CLIs; Claude precedence over a stored subscription login is assumed.
+- Key variables passed to the provider: `ANTHROPIC_API_KEY` for Claude, `CODEX_API_KEY` for Codex.
+- Open owner verification item. Build and planning run `claude -p --input-format text --output-format stream-json` without `--bare` (`internal/provider/provider.go` 309), because `--bare` skips the hooks the runner's telemetry needs. `claude --help` states `ANTHROPIC_API_KEY` is the only Anthropic auth source only under `--bare`; it does not show whether the key wins over a stored subscription login in non-bare `-p` mode. No verifiable mechanism that forces API-key auth while keeping hooks was found, so none was added. `auth_mode: api_key` therefore means "a key source is configured and readable", not proof of which credential the CLI used. The same applies to `CODEX_API_KEY` versus a stored ChatGPT login for `codex exec`.
 - Enforcement follows provider events and can overshoot by one event; unparseable usage fails open; a clean exit over the limit stays successful.
 - Agent subprocesses inherit the provider environment and could read the key.
 
@@ -56,7 +57,8 @@ Done as listed in scope; new packages `internal/apikey`, files `internal/config/
 
 - `gofmt -l .`: clean.
 - `go vet ./...`: clean.
-- `go test ./...`: 3600 passed in 17 packages.
+- `go test ./...`: 3600 passed in 17 packages (initial run).
+- Repair 1 (Codex cached-input rule, new tests `TestBudgetedTokensRemovesCodexCachedInputFromInput` and `TestBudgetedTokensNeverRemovesMoreThanCodexInput`): `gofmt -l .` clean, `go vet ./...` clean, `go test ./...` 5332 passed in 48 packages.
 
 ## Implementation report
 
