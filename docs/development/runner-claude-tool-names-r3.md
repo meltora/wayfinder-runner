@@ -6,14 +6,14 @@
 | ---------------------- | ----- |
 | ID                     | RHTN follow-up R-3 `runner-claude-tool-names-r3` |
 | Kind                   | bug (missing evidence: newer Claude built-in tool calls show as `unlisted tool`) |
-| Status                 | review_ready |
+| Status                 | done |
 | Risk                   | medium. The slice widens the fixed name allowlist that decides which agent-derived text leaves the runner. Only fixed, reviewed literal names are added; tool input, output and IDs stay dropped. A defect could reveal a name that should stay hidden, but cannot forward a model-chosen string, because the match stays exact against compile-time literals. |
 | Complexity             | easy. One map literal, one policy version constant, tests, README and records. No protocol, app or migration change. |
 | Parent scope           | `docs/development/runner-hook-tool-names.md` (RHTN), reviewer finding R-3 and the implementer follow-up "add the 11 extra Claude 2.1.299 built-in names". RHTN REQ-14 (live Build) stays with the coordinator and is not part of this slice. |
 | Product sources        | `PRODUCT.md` agent run evidence (sanitized logs are runner-redacted, bounded and non-authoritative). README "Hook telemetry is occurrence-only" and the `tool_summary` paragraph after it. |
 | Planner                | Opus 5.5 (`claude-opus-5-5`); develop-planner role, swarm slice 03, 13 November 2026 |
 | Implementer            | Opus 5.5 (`claude-opus-5-5`); develop-implementer role, same agent, 13 November 2026 |
-| Reviewer               | pending (fresh Opus 5.5 reviewer) |
+| Reviewer               | Opus 5.5 (`claude-opus-5-5`), fresh context; develop-reviewer role, 13 November 2026 |
 | Repair attempt         | 0 |
 | Updated                | 2026-11-13 |
 | Baseline               | app-runner `main` at `90243ce`, worktree `.claude/worktrees/slice-runner-claude-tool-names`, branch `slice/runner-claude-tool-names`. |
@@ -89,3 +89,30 @@ Inapplicable dimensions: no persistence, permissions, UI, retry or wire format c
 | REQ-02 | implemented |
 | REQ-03 | implemented |
 | REQ-04 | implemented |
+
+## Reviewer requirement review
+
+Reviewer: develop-reviewer, Opus 5.5 (`claude-opus-5-5`), fresh context, 2026-11-13. Reviewed `main..d02cd35`.
+
+| ID | Verdict | Code evidence | Test / runtime evidence | Gap or finding |
+| -- | ------- | ------------- | ----------------------- | -------------- |
+| REQ-01 | implemented | `internal/toolsummary/toolsummary.go:21` `builtinNames` holds the 23 RHTN D-2 names plus the 11 R-3 names as literals; `AllowedName` (`:84`) is an exact map lookup. | `TestNewerClaudeBuiltinsShowTheirNames` (call text, `Tools`, zero `tool_output` and one `command_argument` redaction, result `<name> succeeded`, no `secret-` input/output leak); `TestAllowedNames` checks all 23 old names and that the map size is 23+11, so no extra or duplicate entry. PASS. | none |
+| REQ-02 | implemented | Same exact lookup; no normalization, trimming or prefix handling added. | `TestAllowedNames` negatives (`cronCreate`, `CRONCREATE`, ` Workflow`, `Workflow `, `mcp__platform__SendMessage`, `SendMessage2`, `Task Stop`); `TestNewerClaudeBuiltinVariantsStayUnlisted` shows `unlisted tool` with input and output counted as redactions. PASS. | none |
+| REQ-03 | implemented | `internal/daemon/sanitized_log.go:16` `runner-redaction-3`; the only non-test, non-doc use of the version string. | `toolSummaryValidatedEvents` (`sanitized_log_test.go:141`) asserts it per emitted event; `TestToolSummaryLogLineAndEventForSeveralAndHostileBlocks` and `TestToolSummaryCountsAgainstTheSanitizedLogCap` PASS. Full `./internal/daemon` PASS. | none |
+| REQ-04 | implemented | `README.md:1170-1184` lists the 34 names and `runner-redaction-3`; `runner-hook-tool-names.md` Follow-up and R-3 row link this record. | Review. | none |
+
+Contract reconciliation: the names-only invariant holds (input, output and IDs are still dropped; the test asserts no input/output substring appears). App compatibility: `app/src/server/runner-protocol/v1/agent-runs/schemas/sanitized-log-event.schema.ts` validates `policy_version` as non-blank `boundedText(128)`; no app source or SQL migration pins a `runner-redaction-*` value (only test fixtures use `runner-redaction-1`). Runner side: `internal/validation/agent_run.go:195` checks it as bounded text; the remaining `runner-redaction-1` strings in `api/runner/v1/agent_run_test.go:110` and `internal/validation/agent_run_test.go:200` are arbitrary valid inputs, not dependencies on the old value. The diff adds no code comments.
+
+## Review findings and repair
+
+| Finding | Severity | Acceptance IDs | Required correction and verification | Owner | State |
+| ------- | -------- | -------------- | ------------------------------------ | ----- | ----- |
+| REV-01 | nonblocking (environment) | none | Running the four packages together under the default 10-minute `go test` timeout timed out in `./internal/daemon` (panic during the unrelated `TestAwaitControlResultHandlesAbsentAndPendingBarrier`, 1 s into that test) at host load average about 10. A rerun of `./internal/daemon` alone with `-timeout 40m` passed in 836 s. This is suite length under host load, not a slice defect. Optional: use a longer `-timeout` for daemon tests on shared hosts. | coordinator | open |
+
+## Completion
+
+- Decision: verified done.
+- Verified by: develop-reviewer, Opus 5.5 (`claude-opus-5-5`), 2026-11-13.
+- Gate: REQ-01 to REQ-04 implemented; no blocking findings. Evidence: `go test -count=1 ./internal/toolsummary ./internal/validation ./api/runner/v1` PASS; `go test -count=1 -timeout 40m ./internal/daemon` PASS (836 s); targeted `-run 'TestAllowedNames|TestNewerClaude|ToolSummary|Sanitized'` PASS; `go vet ./...` clean; `gofmt -l internal api cmd` empty.
+- Remaining parent-feature or excluded work: RHTN REQ-14 live Build (coordinator); RHTN R-2 docs nit; hook events, non-platform MCP names, Codex and OpenCode names stay excluded.
+- Product/checkpoint links updated: `docs/development/runner-hook-tool-names.md` (by the implementer).
