@@ -195,6 +195,11 @@ func JobSpec(job v1.JobSpec) error {
 			return err
 		}
 	}
+	if job.ElevatedCapabilities != nil {
+		if err := ElevatedCapabilities(*job.ElevatedCapabilities); err != nil {
+			return err
+		}
+	}
 	if len(job.RequiredChecks) > MaxRequiredChecks {
 		return fmt.Errorf("job exceeds required-check limit")
 	}
