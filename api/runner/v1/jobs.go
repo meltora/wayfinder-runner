@@ -46,6 +46,7 @@ type JobSpec struct {
 	TokenBudget                  *TokenBudget         `json:"token_budget,omitempty"`
 	AgentActivity                *AgentActivityPolicy `json:"agent_activity,omitempty"`
 	AgentGuidance                *AgentGuidance       `json:"agent_guidance,omitempty"`
+	RunGuardrails                *RunGuardrailsPolicy `json:"run_guardrails,omitempty"`
 
 	reviewCommentPresent bool
 }

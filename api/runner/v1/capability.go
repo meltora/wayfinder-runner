@@ -67,6 +67,7 @@ type CapabilityManifest struct {
 	ApprovedPlanTransportVersion                             int                                                              `json:"approved_plan_transport_version,omitempty"`
 	AgentActivityTransportVersion                            int                                                              `json:"agent_activity_transport_version,omitempty"`
 	AgentGuidanceTransportVersion                            int                                                              `json:"agent_guidance_transport_version,omitempty"`
+	RunGuardrailTransportVersion                             int                                                              `json:"run_guardrail_transport_version,omitempty"`
 	RunnerConfigurationDigest                                string                                                           `json:"runner_configuration_digest,omitempty"`
 	Signature                                                string                                                           `json:"signature"`
 }

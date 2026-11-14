@@ -190,6 +190,11 @@ func JobSpec(job v1.JobSpec) error {
 			return err
 		}
 	}
+	if job.RunGuardrails != nil {
+		if err := RunGuardrailsPolicy(*job.RunGuardrails); err != nil {
+			return err
+		}
+	}
 	if len(job.RequiredChecks) > MaxRequiredChecks {
 		return fmt.Errorf("job exceeds required-check limit")
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/example/app-runner/internal/mcpbridge"
 	"github.com/example/app-runner/internal/provider"
 	"github.com/example/app-runner/internal/redact"
+	"github.com/example/app-runner/internal/refusedrequest"
 	"github.com/example/app-runner/internal/repo"
 	"github.com/example/app-runner/internal/supervisor"
 	"github.com/example/app-runner/internal/toolsummary"
@@ -55,6 +56,7 @@ type jobRunner struct {
 	sanitizedLogs      int
 	toolTracker        *toolsummary.Tracker
 	activityLimiter    *agentactivity.Limiter
+	refusedRequests    *refusedrequest.Recorder
 
 	reviewFeedbackContinuation *v1.ReviewFeedbackContinuationAuthority
 	providerCredential         *v1.ProviderCredential
@@ -749,6 +751,7 @@ func (jr *jobRunner) run() {
 		return
 	}
 	jr.procMu.Unlock()
+	jr.publishRunNetworkPolicy(ctx)
 
 	exitErr := proc.Wait()
 	removePromptFile()
@@ -1197,6 +1200,7 @@ func (jr *jobRunner) consumeOutput(r io.Reader) {
 			jr.logger.Info("agent event", logAttributes...)
 			jr.publishSanitizedAgentStatus(m, tools)
 			jr.publishAgentActivity(m)
+			jr.publishRefusedRequests(m)
 		} else {
 			tail.add(line)
 			jr.logger.Debug("unstructured agent output suppressed", "bytes", len(line))
