@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/example/app-runner/internal/elevatedcapability"
@@ -39,9 +40,9 @@ func claudeAllowedDomains(grants elevatedcapability.Grants) []string {
 	return domains
 }
 
-func withApprovedHooks(managed map[string]any, approved map[string][]map[string]any) map[string]any {
+func withApprovedHooks(managed map[string]any, approved map[string][]map[string]any) (map[string]any, error) {
 	if len(approved) == 0 {
-		return managed
+		return managed, nil
 	}
 	merged := make(map[string]any, len(managed)+len(approved))
 	for event, groups := range managed {
@@ -61,11 +62,14 @@ func withApprovedHooks(managed map[string]any, approved map[string][]map[string]
 			}
 		case []any:
 			combined = append(combined, existing...)
+		case nil:
+		default:
+			return nil, fmt.Errorf("managed %s hooks have an unsupported shape %T", event, existing)
 		}
 		for _, group := range approved[event] {
 			combined = append(combined, group)
 		}
 		merged[event] = combined
 	}
-	return merged
+	return merged, nil
 }

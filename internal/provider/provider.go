@@ -297,7 +297,9 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 			return supervisor.Spec{}, err
 		}
 	}
-	hooks = withApprovedHooks(hooks, elevated.Hooks)
+	if hooks, err = withApprovedHooks(hooks, elevated.Hooks); err != nil {
+		return supervisor.Spec{}, err
+	}
 	if len(hooks) > 0 {
 		settings["hooks"] = hooks
 	}

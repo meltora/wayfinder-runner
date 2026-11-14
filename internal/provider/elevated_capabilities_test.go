@@ -65,6 +65,33 @@ func TestClaudeBuildSpecAppliesApprovedElevatedCapabilities(t *testing.T) {
 	}
 }
 
+func TestWithApprovedHooksKeepsManagedGroupsOnSharedEvent(t *testing.T) {
+	managedGroup := map[string]any{"matcher": "*", "hooks": []map[string]any{{"type": "command", "command": "/opt/platform/hook post-tool"}}}
+	approvedGroup := map[string]any{"matcher": "Edit", "hooks": []map[string]any{{"type": "command", "command": "/usr/bin/true"}}}
+	for name, managed := range map[string]any{
+		"typed":   []map[string]any{managedGroup},
+		"untyped": []any{managedGroup},
+	} {
+		t.Run(name, func(t *testing.T) {
+			merged, err := withApprovedHooks(map[string]any{"PostToolUse": managed}, map[string][]map[string]any{"PostToolUse": {approvedGroup}})
+			if err != nil {
+				t.Fatalf("merge: %v", err)
+			}
+			want := []any{managedGroup, approvedGroup}
+			if !reflect.DeepEqual(merged["PostToolUse"], want) {
+				t.Fatalf("PostToolUse = %#v", merged["PostToolUse"])
+			}
+		})
+	}
+}
+
+func TestWithApprovedHooksRefusesUnknownManagedShape(t *testing.T) {
+	_, err := withApprovedHooks(map[string]any{"PostToolUse": "unexpected"}, map[string][]map[string]any{"PostToolUse": {{"hooks": []map[string]any{}}}})
+	if err == nil {
+		t.Fatal("unknown managed hook shape merged")
+	}
+}
+
 func TestClaudeBuildSpecWithoutElevatedCapabilitiesKeepsDefaults(t *testing.T) {
 	p := testParams(t)
 	p.Job.Kind = v1.JobKindBuild
