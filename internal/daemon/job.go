@@ -1106,6 +1106,7 @@ func (jr *jobRunner) buildPrompt() string {
 			fmt.Fprintf(&b, "A signed, approved Agent Pack is provided as a verified, permission-restricted directory at %s; load its instructions and relevant skills before acting. ", jr.packDir)
 		}
 	}
+	b.WriteString(agentGuidancePrompt(jr.job.AgentGuidance))
 	switch jr.job.Kind {
 	case v1.JobKindPlan:
 		if context := jr.job.PlanRevisionContext; context != nil {

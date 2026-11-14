@@ -185,6 +185,11 @@ func JobSpec(job v1.JobSpec) error {
 			return err
 		}
 	}
+	if job.AgentGuidance != nil {
+		if err := AgentGuidance(*job.AgentGuidance); err != nil {
+			return err
+		}
+	}
 	if len(job.RequiredChecks) > MaxRequiredChecks {
 		return fmt.Errorf("job exceeds required-check limit")
 	}
