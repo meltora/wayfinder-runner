@@ -195,10 +195,10 @@ func TestCompositionAttemptLeavesTheWorktreeUntouchedAndReportsBothPhases(t *tes
 	}
 	args := run.supervisor.spec.Args
 	packDir := filepath.Join(run.jr.workDir, "pack")
-	if argumentFollowing(args, "--plugin-dir") != packDir || argumentFollowing(args, "--add-dir") != packDir {
+	configDir := settingsDirectory(t, args)
+	if argumentFollowing(args, "--plugin-dir") != filepath.Join(configDir, "claude-plugin") || argumentFollowing(args, "--add-dir") != packDir {
 		t.Fatalf("pack args = %v", args)
 	}
-	configDir := settingsDirectory(t, args)
 	if strings.HasPrefix(configDir, run.jr.workDir) {
 		t.Fatalf("ConfigDir %s is inside the job root", configDir)
 	}
