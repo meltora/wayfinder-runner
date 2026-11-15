@@ -259,6 +259,42 @@ func TestHookCommandReasonRefusesControlAndUnicodeWhitespace(t *testing.T) {
 	}
 }
 
+func TestNameReasonFollowsSymlinkTargets(t *testing.T) {
+	targets := t.TempDir()
+	links := t.TempDir()
+	for link, target := range map[string]string{
+		"formatter": "bash", "rbash": "bash", "lint": "vim.basic", "view-tool": "python3.12", "build": "make",
+	} {
+		writeRepositoryFile(t, targets, target, "")
+		if err := os.Symlink(filepath.Join(targets, target), filepath.Join(links, link)); err != nil {
+			t.Fatal(err)
+		}
+		if got := nameReason(filepath.Join(links, link)); got == "" {
+			t.Errorf("symlink %s -> %s accepted", link, target)
+		}
+	}
+	writeRepositoryFile(t, targets, "format-changed", "")
+	if err := os.Symlink(filepath.Join(targets, "format-changed"), filepath.Join(links, "fmt")); err != nil {
+		t.Fatal(err)
+	}
+	if got := nameReason(filepath.Join(links, "fmt")); got != "" {
+		t.Errorf("symlink to a trusted tool refused: %q", got)
+	}
+}
+
+func TestNameReasonRefusesEditorsAndMacroProcessors(t *testing.T) {
+	for _, program := range []string{
+		"/usr/bin/rbash", "/usr/bin/ex", "/usr/bin/rview", "/usr/bin/view", "/usr/bin/vi", "/usr/bin/vim",
+		"/usr/bin/vim.basic", "/usr/bin/vim.tiny", "/usr/bin/rvim", "/usr/bin/gvim", "/usr/bin/nvim",
+		"/usr/bin/m4", "/usr/bin/emacs", "/usr/bin/emacs-nox", "/usr/bin/ed", "/usr/bin/red", "/usr/bin/find",
+		"/usr/bin/rzsh", "/usr/bin/rksh", "/usr/bin/vimdiff", "/usr/bin/busybox.static",
+	} {
+		if got := nameReason(program); got != ReasonReferencedFileUnverifiable {
+			t.Errorf("nameReason(%q) = %q", program, got)
+		}
+	}
+}
+
 func TestResolveRefusesHooksOnDecisionEvents(t *testing.T) {
 	for _, event := range []string{"PreToolUse", "UserPromptSubmit", "PermissionRequest", "PreCompact"} {
 		root := t.TempDir()

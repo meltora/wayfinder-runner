@@ -19,7 +19,8 @@ var unverifiablePrograms = setOf(
 	"osascript", "pwsh", "powershell", "cmd", "cscript", "wscript", "git", "java", "javaw", "jshell", "kotlin",
 	"kotlinc", "scala", "groovy", "clojure", "clj", "rscript", "r", "julia", "erl", "escript", "elixir", "iex",
 	"racket", "guile", "sbcl", "ocaml", "ghc", "runghc", "runhaskell", "dart", "docker", "podman", "nerdctl",
-	"buildah", "kubectl", "ssh", "vim", "nvim", "emacs",
+	"buildah", "kubectl", "ssh", "vim", "nvim", "emacs", "rbash", "rzsh", "rksh", "ex", "view", "rview", "vi",
+	"rvim", "gvim", "gview", "vimdiff", "evim", "nvi", "elvis", "vile", "emacsclient", "ed", "red", "m4", "find",
 )
 
 var wrapperPrograms = setOf(
@@ -72,15 +73,36 @@ func hasInterpreterPrefix(name string) bool {
 	return false
 }
 
-func nameReason(token string) Reason {
-	name := normalizedProgramName(token)
-	switch {
-	case unverifiablePrograms[name], wrapperPrograms[name], hasInterpreterPrefix(name):
-		return ReasonReferencedFileUnverifiable
-	case projectRunnerPrograms[name]:
-		return ReasonCommandReferencesRepositoryFile
+func programNameCandidates(token string) []string {
+	bases := []string{filepath.Base(token)}
+	if filepath.IsAbs(token) {
+		if resolved, err := filepath.EvalSymlinks(token); err == nil {
+			bases = append(bases, filepath.Base(resolved))
+		}
 	}
-	return ""
+	var names []string
+	for _, base := range bases {
+		names = append(names, strings.ToLower(base), normalizedProgramName(base))
+		for _, separator := range []string{".", "-"} {
+			if prefix, _, found := strings.Cut(base, separator); found && prefix != "" {
+				names = append(names, normalizedProgramName(prefix))
+			}
+		}
+	}
+	return names
+}
+
+func nameReason(token string) Reason {
+	reason := Reason("")
+	for _, name := range programNameCandidates(token) {
+		switch {
+		case unverifiablePrograms[name], wrapperPrograms[name], hasInterpreterPrefix(name):
+			return ReasonReferencedFileUnverifiable
+		case projectRunnerPrograms[name]:
+			reason = ReasonCommandReferencesRepositoryFile
+		}
+	}
+	return reason
 }
 
 func setOf(values ...string) map[string]bool {
