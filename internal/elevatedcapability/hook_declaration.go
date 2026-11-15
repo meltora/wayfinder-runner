@@ -17,6 +17,12 @@ const (
 var hookEvents = map[string]bool{
 	"PreToolUse": true, "PostToolUse": true, "Notification": true, "UserPromptSubmit": true,
 	"Stop": true, "SubagentStop": true, "PreCompact": true, "SessionStart": true, "SessionEnd": true,
+	"PermissionRequest": true,
+}
+
+var grantableHookEvents = map[string]bool{
+	"PostToolUse": true, "Stop": true, "SubagentStop": true, "SessionStart": true, "SessionEnd": true,
+	"Notification": true,
 }
 
 type hookDeclaration struct {

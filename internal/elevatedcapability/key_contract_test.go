@@ -17,6 +17,25 @@ type keyContractCases struct {
 type keyContract struct {
 	NetworkAccess  keyContractCases `json:"networkAccess"`
 	RepositoryPath keyContractCases `json:"repositoryPath"`
+	Suffixes       []string         `json:"wildcardForbiddenSuffixes"`
+}
+
+func TestWildcardForbiddenSuffixesMatchContract(t *testing.T) {
+	contract := loadKeyContract(t)
+	if len(contract.Suffixes) == 0 || len(contract.Suffixes) != len(wildcardForbiddenSuffixes) {
+		t.Fatalf("contract lists %d suffixes, runner %d", len(contract.Suffixes), len(wildcardForbiddenSuffixes))
+	}
+	for _, suffix := range contract.Suffixes {
+		if !wildcardForbiddenSuffixes[suffix] {
+			t.Errorf("runner does not refuse wildcard over %q", suffix)
+		}
+		if _, ok := NormalizeHost("*." + suffix); ok {
+			t.Errorf("wildcard over %q accepted", suffix)
+		}
+		if _, ok := NormalizeHost("api." + suffix); !ok {
+			t.Errorf("host under %q refused", suffix)
+		}
+	}
 }
 
 func loadKeyContract(t *testing.T) keyContract {

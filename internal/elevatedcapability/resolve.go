@@ -30,6 +30,8 @@ const (
 
 	ReasonCommandReferencesRepositoryFile Reason = "command_references_repository_file"
 	ReasonReferencedFileUnverifiable      Reason = "referenced_file_unverifiable"
+	ReasonProgramNotAbsolute              Reason = "program_not_absolute"
+	ReasonHookEventNotAllowed             Reason = "hook_event_not_allowed"
 )
 
 type Outcome struct {
@@ -197,6 +199,11 @@ func (resolution *Resolution) applyHook(workDir, key string, content []byte) Rea
 	hooks, err := ParseHookDeclaration(content)
 	if err != nil {
 		return ReasonDeclarationInvalid
+	}
+	for event := range hooks {
+		if !grantableHookEvents[event] {
+			return ReasonHookEventNotAllowed
+		}
 	}
 	if reason := hookCommandsReason(hooks, workDir); reason != "" {
 		return reason
