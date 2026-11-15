@@ -48,6 +48,7 @@ type JobSpec struct {
 	AgentGuidance                *AgentGuidance            `json:"agent_guidance,omitempty"`
 	RunGuardrails                *RunGuardrailsPolicy      `json:"run_guardrails,omitempty"`
 	ElevatedCapabilities         *ElevatedCapabilityGrants `json:"elevated_capabilities,omitempty"`
+	ProviderAuthMode             string                    `json:"provider_auth_mode,omitempty"`
 
 	reviewCommentPresent bool
 }
