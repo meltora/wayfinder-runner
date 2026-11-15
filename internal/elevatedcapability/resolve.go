@@ -64,11 +64,12 @@ func (grants Grants) MCPServerNames() []string {
 }
 
 type Input struct {
-	Grants   *v1.ElevatedCapabilityGrants
-	WorkDir  string
-	Adapter  string
-	ReadOnly bool
-	Now      time.Time
+	Grants        *v1.ElevatedCapabilityGrants
+	WorkDir       string
+	ProtectedDirs []string
+	Adapter       string
+	ReadOnly      bool
+	Now           time.Time
 }
 
 type Resolution struct {
@@ -93,6 +94,7 @@ func Resolve(input Input) Resolution {
 	})
 	domains := map[string]bool{}
 	reasons := map[string]Reason{}
+	scope := newCommandScope(input.WorkDir, input.ProtectedDirs)
 	for _, grant := range grants {
 		if grant.Kind != v1.ElevatedCapabilityNetworkAccess {
 			continue
@@ -113,7 +115,7 @@ func Resolve(input Input) Resolution {
 		}
 		reason := eligibility(input, grant)
 		if reason == "" {
-			reason = resolution.applyDeclaration(input.WorkDir, grant, domains)
+			reason = resolution.applyDeclaration(scope, grant, domains)
 		}
 		reasons[grant.RequestID] = reason
 	}
@@ -145,22 +147,22 @@ func eligibility(input Input, grant v1.ElevatedCapabilityGrant) Reason {
 	return ""
 }
 
-func (resolution *Resolution) applyDeclaration(workDir string, grant v1.ElevatedCapabilityGrant, domains map[string]bool) Reason {
-	content, reason := readDeclaration(workDir, grant)
+func (resolution *Resolution) applyDeclaration(scope commandScope, grant v1.ElevatedCapabilityGrant, domains map[string]bool) Reason {
+	content, reason := readDeclaration(scope.workDir, grant)
 	if reason != "" {
 		return reason
 	}
 	switch grant.Kind {
 	case v1.ElevatedCapabilityMCPServer:
-		return resolution.applyMCP(workDir, content, domains)
+		return resolution.applyMCP(scope, content, domains)
 	case v1.ElevatedCapabilityHook:
-		return resolution.applyHook(workDir, grant.Key, content)
+		return resolution.applyHook(scope, grant.Key, content)
 	default:
 		return ReasonDeclarationInvalid
 	}
 }
 
-func (resolution *Resolution) applyMCP(workDir string, content []byte, domains map[string]bool) Reason {
+func (resolution *Resolution) applyMCP(scope commandScope, content []byte, domains map[string]bool) Reason {
 	servers, err := ParseMCPDeclaration(content)
 	if err != nil {
 		return ReasonDeclarationInvalid
@@ -173,7 +175,7 @@ func (resolution *Resolution) applyMCP(workDir string, content []byte, domains m
 		if remote, ok := server["url"].(string); ok && !HostAllowed(remote, domains) {
 			return ReasonRemoteHostNotApproved
 		}
-		if reason := MCPCommandReason(server, workDir); reason != "" {
+		if reason := scope.mcpCommandReason(server); reason != "" {
 			return reason
 		}
 	}
@@ -192,7 +194,7 @@ func sortedServerNames(servers map[string]map[string]any) []string {
 	return names
 }
 
-func (resolution *Resolution) applyHook(workDir, key string, content []byte) Reason {
+func (resolution *Resolution) applyHook(scope commandScope, key string, content []byte) Reason {
 	if !IsHookDeclarationPath(key) {
 		return ReasonHookScriptOnly
 	}
@@ -205,7 +207,7 @@ func (resolution *Resolution) applyHook(workDir, key string, content []byte) Rea
 			return ReasonHookEventNotAllowed
 		}
 	}
-	if reason := hookCommandsReason(hooks, workDir); reason != "" {
+	if reason := scope.hookCommandsReason(hooks); reason != "" {
 		return reason
 	}
 	for event, groups := range hooks {

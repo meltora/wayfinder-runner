@@ -1,6 +1,7 @@
 package elevatedcapability
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -67,6 +68,96 @@ func TestHookCommandReasonRefusesReviewProbes(t *testing.T) {
 	}
 }
 
+func TestHookCommandReasonRefusesThirdReviewProbes(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", "/home/runner-probe")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	root := filepath.Join(home, "jobs", "job-1", "repo")
+	for _, command := range []string{
+		"/proc/self/cwd/tools/fmt",
+		"/opt/fmt /proc/self/cwd/tools/fmt.py",
+		"/usr/bin/run-parts /proc/self/cwd/tools",
+		"/dev/fd/3",
+		"/opt/fmt /dev/stdin",
+		"/usr/bin/strace -o /dev/null python3 -m tools.fmt",
+		"/usr/bin/taskset 1 python3 -m tools.fmt",
+		"/usr/bin/prlimit python3 -m tools.fmt",
+		"/usr/bin/python3.12-dbg -m tools.fmt",
+		"/usr/bin/pypy3 x", "/usr/bin/perl-5.36 x", "/usr/bin/ruby3.3 x", "/usr/bin/nodejs22 x", "/usr/bin/php8.3 x",
+		"/usr/bin/lua5.4 x", "/usr/lib/jvm/bin/java17 x", "/usr/bin/bash5 x", "/usr/bin/zsh-5.9 x", "/usr/bin/dash.static x",
+		"/usr/bin/ksh93 x", "/usr/bin/fish3 x",
+		"$HOME/.cache/fmt",
+		"/home/runner-probe/.cache/fmt",
+		"/home/runner-probe/.local/bin/fmt",
+		"/home/runner-probe/.config/fmt",
+		filepath.Join(home, "jobs", "job-1", "tools", "fmt"),
+		"/opt/fmt " + filepath.Join(home, "jobs", "job-1", "x"),
+		"/opt/fmt run python3",
+		"/opt/fmt --exec=node",
+		"/opt/fmt eslint",
+	} {
+		if got := HookCommandReason(command, root); got == "" {
+			t.Errorf("HookCommandReason(%q) accepted", command)
+		}
+	}
+	for _, wrapper := range []string{
+		"strace", "ltrace", "taskset", "prlimit", "chrt", "nice", "ionice", "setpriv", "runuser", "su", "sudo", "doas",
+		"sg", "systemd-run", "bwrap", "firejail", "gdb", "valgrind", "faketime", "timeout", "xargs", "run-parts",
+		"nohup", "stdbuf", "unshare", "nsenter", "chroot", "flock", "watch", "script",
+	} {
+		if got := HookCommandReason("/usr/bin/"+wrapper+" /usr/local/bin/format-changed", root); got != ReasonReferencedFileUnverifiable {
+			t.Errorf("wrapper %s = %q", wrapper, got)
+		}
+	}
+	if got := HookCommandReason("/usr/local/bin/format-changed --quiet", root); got != "" {
+		t.Errorf("trusted absolute tool refused: %q", got)
+	}
+}
+
+func TestHookCommandReasonFollowsSymlinks(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	writeRepositoryFile(t, root, "tools/fmt", "#!/bin/sh\n")
+	link := filepath.Join(t.TempDir(), "fmt")
+	if err := os.Symlink(filepath.Join(root, "tools", "fmt"), link); err != nil {
+		t.Fatal(err)
+	}
+	scope := commandScope{workDir: root, roots: []string{filepath.Clean(root)}}
+	if !scope.refusedAbsolute(link) {
+		t.Fatalf("symlink into the checkout accepted")
+	}
+	linkedRoot := filepath.Join(t.TempDir(), "linked-repo")
+	if err := os.Symlink(root, linkedRoot); err != nil {
+		t.Fatal(err)
+	}
+	resolvedScope := newCommandScope(linkedRoot, nil)
+	if !resolvedScope.refusedAbsolute(filepath.Join(root, "tools", "fmt")) {
+		t.Fatalf("path under the resolved checkout accepted")
+	}
+}
+
+func TestNewCommandScopeIncludesRunnerDirectories(t *testing.T) {
+	t.Setenv("HOME", "/home/runner-probe")
+	scope := newCommandScope("/srv/state/jobs/job-1/repo", []string{"/srv/state", "/etc/runner"})
+	for _, path := range []string{
+		"/srv/state/identity.json", "/etc/runner/config.yaml", "/srv/state/jobs/job-1/prompt.md",
+		"/home/runner-probe/bin/x", "/proc/1/root/x", "/dev/stderr",
+	} {
+		if !scope.refusedAbsolute(path) {
+			t.Errorf("%s accepted", path)
+		}
+	}
+	if scope.refusedAbsolute("/usr/local/bin/format-changed") {
+		t.Errorf("trusted tool refused")
+	}
+	for _, root := range newCommandScope("/repo", nil).roots {
+		if root == "/" {
+			t.Fatalf("filesystem root became a refused root")
+		}
+	}
+}
+
 func TestHookCommandReasonRequiresAnAbsoluteProgram(t *testing.T) {
 	root := t.TempDir()
 	for command, want := range map[string]Reason{
@@ -111,6 +202,28 @@ func TestMCPCommandReasonRefusesReviewProbes(t *testing.T) {
 	} {
 		if got := MCPCommandReason(server, root); got == "" {
 			t.Errorf("MCPCommandReason(%v) accepted", server)
+		}
+	}
+}
+
+func TestMCPCommandReasonRefusesThirdReviewProbes(t *testing.T) {
+	t.Setenv("HOME", "/home/runner-probe")
+	root := t.TempDir()
+	for name, server := range map[string]map[string]any{
+		"proc pythonpath": {"command": "/usr/local/bin/mcp", "env": map[string]string{"PYTHONPATH": "/proc/self/cwd"}},
+		"proc in value":   {"command": "/usr/local/bin/mcp", "env": map[string]string{"OPTS": "--root=/proc/self/cwd"}},
+		"home in value":   {"command": "/usr/local/bin/mcp", "env": map[string]string{"PATH": "/usr/bin:/home/runner-probe/.local/bin"}},
+		"fd in value":     {"command": "/usr/local/bin/mcp", "env": map[string]string{"CONFIG": "/dev/fd/3"}},
+		"strace":          {"command": "/usr/bin/strace", "args": []string{"-o", "/dev/null", "python3", "-m", "tools.fmt"}},
+		"taskset":         {"command": "/usr/bin/taskset", "args": []string{"1", "python3", "-m", "tools.fmt"}},
+		"prlimit":         {"command": "/usr/bin/prlimit", "args": []string{"python3", "-m", "tools.fmt"}},
+		"interpreter arg": {"command": "/opt/mcp-launcher", "args": []string{"python3", "-m", "server"}},
+		"dbg":             {"command": "/usr/bin/python3.12-dbg", "args": []string{"-m", "server"}},
+		"proc command":    {"command": "/proc/self/cwd/bin/mcp"},
+		"home command":    {"command": "/home/runner-probe/.cache/mcp"},
+	} {
+		if got := MCPCommandReason(server, root); got == "" {
+			t.Errorf("%s: MCPCommandReason accepted", name)
 		}
 	}
 }

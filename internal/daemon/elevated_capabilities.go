@@ -7,8 +7,12 @@ import (
 )
 
 func (jr *jobRunner) resolveElevatedCapabilities(adapter, workDir string, readOnly bool) elevatedcapability.Grants {
+	var protectedDirs []string
+	if jr.d != nil && jr.d.cfg.StateDir != "" {
+		protectedDirs = []string{jr.d.cfg.StateDir}
+	}
 	resolution := elevatedcapability.Resolve(elevatedcapability.Input{
-		Grants: jr.job.ElevatedCapabilities, WorkDir: workDir, Adapter: adapter, ReadOnly: readOnly, Now: time.Now().UTC(),
+		Grants: jr.job.ElevatedCapabilities, WorkDir: workDir, ProtectedDirs: protectedDirs, Adapter: adapter, ReadOnly: readOnly, Now: time.Now().UTC(),
 	})
 	jr.elevatedOutcomes = resolution.Outcomes
 	for _, outcome := range resolution.Outcomes {
