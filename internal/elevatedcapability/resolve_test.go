@@ -36,15 +36,83 @@ func writeRepositoryFile(t *testing.T, root, name, content string) {
 	}
 }
 
+const testRepositoryID = "web-app"
+
 func grant(id string, kind v1.ElevatedCapabilityKind, key, digest string) v1.ElevatedCapabilityGrant {
-	return v1.ElevatedCapabilityGrant{RequestID: id, Kind: kind, Key: key, DeclarationDigest: digest, ExpiresAt: testNow.Add(time.Hour)}
+	return v1.ElevatedCapabilityGrant{RequestID: id, Kind: kind, Key: key, DeclarationDigest: digest, ExpiresAt: testNow.Add(time.Hour), RepositoryID: testRepositoryID}
+}
+
+func repositoriesFor(workDir string) map[string]string {
+	return map[string]string{testRepositoryID: workDir}
 }
 
 func resolveFor(workDir string, grants ...v1.ElevatedCapabilityGrant) Resolution {
 	return Resolve(Input{
-		Grants:  &v1.ElevatedCapabilityGrants{SchemaVersion: 1, Grants: grants},
-		WorkDir: workDir, Adapter: "claude", Now: testNow,
+		Grants:       &v1.ElevatedCapabilityGrants{SchemaVersion: 2, Grants: grants},
+		Repositories: repositoriesFor(workDir), Adapter: "claude", Now: testNow,
 	})
+}
+
+func TestResolveBindsDeclarationGrantsToTheirRepository(t *testing.T) {
+	jobDir := t.TempDir()
+	webApp := filepath.Join(jobDir, "repositories", "web-app")
+	docs := filepath.Join(jobDir, "repositories", "docs")
+	writeRepositoryFile(t, webApp, ".mcp.json", testMCP)
+	writeRepositoryFile(t, docs, ".mcp.json", testMCP)
+	writeRepositoryFile(t, docs, ".claude/hooks/format.json", testHook)
+	bound := grant("ecr_web", v1.ElevatedCapabilityMCPServer, ".mcp.json", digestOf(testMCP))
+	otherRepository := grant("ecr_docs_hook", v1.ElevatedCapabilityHook, ".claude/hooks/format.json", digestOf(testHook))
+	otherRepository.RepositoryID = "docs"
+	missing := grant("ecr_web_hook", v1.ElevatedCapabilityHook, ".claude/hooks/format.json", digestOf(testHook))
+	unbound := grant("ecr_unbound", v1.ElevatedCapabilityMCPServer, ".mcp.json", digestOf(testMCP))
+	unbound.RepositoryID = ""
+	foreign := grant("ecr_foreign", v1.ElevatedCapabilityMCPServer, ".mcp.json", digestOf(testMCP))
+	foreign.RepositoryID = "billing"
+	network := grant("ecr_net", v1.ElevatedCapabilityNetworkAccess, "registry.npmjs.org", digestOf("host"))
+	network.RepositoryID = ""
+	resolution := Resolve(Input{
+		Grants:       &v1.ElevatedCapabilityGrants{SchemaVersion: 2, Grants: []v1.ElevatedCapabilityGrant{bound, otherRepository, missing, unbound, foreign, network}},
+		Repositories: map[string]string{"web-app": webApp, "docs": docs}, Adapter: "claude", Now: testNow,
+	})
+	want := map[string]Reason{
+		"ecr_web": ReasonApplied, "ecr_docs_hook": ReasonApplied, "ecr_web_hook": ReasonDeclarationUnreadable,
+		"ecr_unbound": ReasonRepositoryNotBound, "ecr_foreign": ReasonRepositoryNotInJob, "ecr_net": ReasonApplied,
+	}
+	if got := reasonsByID(resolution); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reasons = %v", got)
+	}
+	if got := resolution.Grants.MCPServerNames(); !reflect.DeepEqual(got, []string{"docs"}) {
+		t.Fatalf("servers = %v", got)
+	}
+	if len(resolution.Grants.Hooks["PostToolUse"]) != 1 {
+		t.Fatalf("hooks = %#v", resolution.Grants.Hooks)
+	}
+}
+
+func TestResolveRefusesStdioProgramsUnderContainerIsolation(t *testing.T) {
+	root := t.TempDir()
+	writeRepositoryFile(t, root, ".mcp.json", testMCP)
+	writeRepositoryFile(t, root, "remote/.mcp.json", testRemoteMCP)
+	writeRepositoryFile(t, root, ".claude/hooks/format.json", testHook)
+	resolution := Resolve(Input{
+		Grants: &v1.ElevatedCapabilityGrants{SchemaVersion: 2, Grants: []v1.ElevatedCapabilityGrant{
+			grant("ecr_stdio", v1.ElevatedCapabilityMCPServer, ".mcp.json", digestOf(testMCP)),
+			grant("ecr_remote", v1.ElevatedCapabilityMCPServer, "remote/.mcp.json", digestOf(testRemoteMCP)),
+			grant("ecr_hook", v1.ElevatedCapabilityHook, ".claude/hooks/format.json", digestOf(testHook)),
+			grant("ecr_net", v1.ElevatedCapabilityNetworkAccess, "mcp.example.com", digestOf("host")),
+		}},
+		Repositories: repositoriesFor(root), Adapter: "claude", ContainerIsolation: true, Now: testNow,
+	})
+	want := map[string]Reason{
+		"ecr_stdio": ReasonContainerProgramUnverifiable, "ecr_remote": ReasonApplied,
+		"ecr_hook": ReasonContainerProgramUnverifiable, "ecr_net": ReasonApplied,
+	}
+	if got := reasonsByID(resolution); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reasons = %v", got)
+	}
+	if got := resolution.Grants.MCPServerNames(); !reflect.DeepEqual(got, []string{"tickets"}) || len(resolution.Grants.Hooks) != 0 {
+		t.Fatalf("grants = %+v", resolution.Grants)
+	}
 }
 
 func reasonsByID(resolution Resolution) map[string]Reason {
@@ -112,16 +180,16 @@ func TestResolveSkipsGrantsOutsideTheirScope(t *testing.T) {
 		t.Fatalf("expired grant reason = %s", got)
 	}
 	current := grant("ecr_mcp", v1.ElevatedCapabilityMCPServer, ".mcp.json", digestOf(testMCP))
-	grants := &v1.ElevatedCapabilityGrants{SchemaVersion: 1, Grants: []v1.ElevatedCapabilityGrant{current}}
-	codex := Resolve(Input{Grants: grants, WorkDir: root, Adapter: "codex", Now: testNow})
-	plan := Resolve(Input{Grants: grants, WorkDir: root, Adapter: "claude", ReadOnly: true, Now: testNow})
+	grants := &v1.ElevatedCapabilityGrants{SchemaVersion: 2, Grants: []v1.ElevatedCapabilityGrant{current}}
+	codex := Resolve(Input{Grants: grants, Repositories: repositoriesFor(root), Adapter: "codex", Now: testNow})
+	plan := Resolve(Input{Grants: grants, Repositories: repositoriesFor(root), Adapter: "claude", ReadOnly: true, Now: testNow})
 	if reasonsByID(codex)["ecr_mcp"] != ReasonAdapterUnsupported || !codex.Grants.Empty() {
 		t.Fatalf("codex resolution = %+v", codex)
 	}
 	if reasonsByID(plan)["ecr_mcp"] != ReasonReadOnlyJob || !plan.Grants.Empty() {
 		t.Fatalf("plan resolution = %+v", plan)
 	}
-	if none := Resolve(Input{WorkDir: root, Adapter: "claude", Now: testNow}); !none.Grants.Empty() || len(none.Outcomes) != 0 {
+	if none := Resolve(Input{Repositories: repositoriesFor(root), Adapter: "claude", Now: testNow}); !none.Grants.Empty() || len(none.Outcomes) != 0 {
 		t.Fatalf("absent grants resolved to %+v", none)
 	}
 }

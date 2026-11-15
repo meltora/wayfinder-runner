@@ -11,9 +11,9 @@ import (
 
 func validElevatedCapabilities() v1.ElevatedCapabilityGrants {
 	expiry := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
-	return v1.ElevatedCapabilityGrants{SchemaVersion: 1, Grants: []v1.ElevatedCapabilityGrant{
-		{RequestID: "ecr_hook", Kind: v1.ElevatedCapabilityHook, Key: ".claude/hooks/format.json", DeclarationDigest: strings.Repeat("a", 64), ExpiresAt: expiry},
-		{RequestID: "ecr_mcp", Kind: v1.ElevatedCapabilityMCPServer, Key: ".mcp.json", DeclarationDigest: strings.Repeat("b", 64), ExpiresAt: expiry},
+	return v1.ElevatedCapabilityGrants{SchemaVersion: 2, Grants: []v1.ElevatedCapabilityGrant{
+		{RequestID: "ecr_hook", Kind: v1.ElevatedCapabilityHook, Key: ".claude/hooks/format.json", DeclarationDigest: strings.Repeat("a", 64), ExpiresAt: expiry, RepositoryID: "web-app"},
+		{RequestID: "ecr_mcp", Kind: v1.ElevatedCapabilityMCPServer, Key: ".mcp.json", DeclarationDigest: strings.Repeat("b", 64), ExpiresAt: expiry, RepositoryID: "web-app"},
 		{RequestID: "ecr_net", Kind: v1.ElevatedCapabilityNetworkAccess, Key: "registry.npmjs.org", DeclarationDigest: strings.Repeat("c", 64), ExpiresAt: expiry},
 	}}
 }
@@ -23,7 +23,8 @@ func TestElevatedCapabilitiesValidation(t *testing.T) {
 		t.Fatalf("valid grants rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*v1.ElevatedCapabilityGrants){
-		"schema":       func(value *v1.ElevatedCapabilityGrants) { value.SchemaVersion = 2 },
+		"schema":       func(value *v1.ElevatedCapabilityGrants) { value.SchemaVersion = 3 },
+		"old schema":   func(value *v1.ElevatedCapabilityGrants) { value.SchemaVersion = 1 },
 		"empty":        func(value *v1.ElevatedCapabilityGrants) { value.Grants = nil },
 		"duplicate id": func(value *v1.ElevatedCapabilityGrants) { value.Grants[1].RequestID = value.Grants[0].RequestID },
 		"request id":   func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].RequestID = "../x" },
@@ -74,9 +75,9 @@ func TestJobSpecKeepsInvalidGrantShapesForPerGrantRefusal(t *testing.T) {
 }
 
 func TestJobSpecRefusesUnknownGrantField(t *testing.T) {
-	grant := `{"request_id":"ecr_1","kind":"mcp_server","key":".mcp.json","declaration_digest":"` + strings.Repeat("a", 64) + `","expires_at":"2027-01-01T00:00:00Z"}`
+	grant := `{"request_id":"ecr_1","kind":"mcp_server","key":".mcp.json","declaration_digest":"` + strings.Repeat("a", 64) + `","expires_at":"2027-01-01T00:00:00Z","repository_id":"web-app"}`
 	jobWith := func(envelope, grant string) []byte {
-		return []byte(`{"job_id":"j","attempt_id":"a","project_id":"p","kind":"build","lease_id":"l","manifest_id":"m","manifest_digest":"d","workflow_revision":1,"fencing_token":1,"lease_expires_at":"2027-01-01T00:00:00Z","repositories":[],"ticket":{"key":"K","summary":"s","description":"d"},"elevated_capabilities":{"schema_version":1,` + envelope + `"grants":[` + grant + `]}}`)
+		return []byte(`{"job_id":"j","attempt_id":"a","project_id":"p","kind":"build","lease_id":"l","manifest_id":"m","manifest_digest":"d","workflow_revision":1,"fencing_token":1,"lease_expires_at":"2027-01-01T00:00:00Z","repositories":[],"ticket":{"key":"K","summary":"s","description":"d"},"elevated_capabilities":{"schema_version":2,` + envelope + `"grants":[` + grant + `]}}`)
 	}
 	var job v1.JobSpec
 	if err := json.Unmarshal(jobWith("", grant), &job); err != nil {
@@ -91,12 +92,12 @@ func TestJobSpecRefusesUnknownGrantField(t *testing.T) {
 }
 
 func TestJobSpecDecodesElevatedCapabilitiesStrictly(t *testing.T) {
-	raw := []byte(`{"job_id":"j","attempt_id":"a","project_id":"p","kind":"build","lease_id":"l","manifest_id":"m","manifest_digest":"d","workflow_revision":1,"fencing_token":1,"lease_expires_at":"2027-01-01T00:00:00Z","repositories":[],"ticket":{"key":"K","summary":"s","description":"d"},"elevated_capabilities":{"schema_version":1,"grants":[{"request_id":"ecr_1","kind":"mcp_server","key":".mcp.json","declaration_digest":"` + strings.Repeat("a", 64) + `","expires_at":"2027-01-01T00:00:00Z"}]}}`)
+	raw := []byte(`{"job_id":"j","attempt_id":"a","project_id":"p","kind":"build","lease_id":"l","manifest_id":"m","manifest_digest":"d","workflow_revision":1,"fencing_token":1,"lease_expires_at":"2027-01-01T00:00:00Z","repositories":[],"ticket":{"key":"K","summary":"s","description":"d"},"elevated_capabilities":{"schema_version":2,"grants":[{"request_id":"ecr_1","kind":"mcp_server","key":".mcp.json","declaration_digest":"` + strings.Repeat("a", 64) + `","expires_at":"2027-01-01T00:00:00Z","repository_id":"web-app"}]}}`)
 	var job v1.JobSpec
 	if err := json.Unmarshal(raw, &job); err != nil {
 		t.Fatalf("decode job with grants: %v", err)
 	}
-	if job.ElevatedCapabilities == nil || len(job.ElevatedCapabilities.Grants) != 1 || job.ElevatedCapabilities.Grants[0].Kind != v1.ElevatedCapabilityMCPServer {
+	if job.ElevatedCapabilities == nil || len(job.ElevatedCapabilities.Grants) != 1 || job.ElevatedCapabilities.Grants[0].Kind != v1.ElevatedCapabilityMCPServer || job.ElevatedCapabilities.Grants[0].RepositoryID != "web-app" {
 		t.Fatalf("grants not decoded: %+v", job.ElevatedCapabilities)
 	}
 }

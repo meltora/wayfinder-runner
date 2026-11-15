@@ -29,7 +29,7 @@ func NormalizeHost(key string) (string, bool) {
 		}
 	}
 	if wildcard {
-		if wildcardForbiddenSuffixes[host] {
+		if wildcardForbiddenSuffixes[host] || underStorageDomain(labels) {
 			return "", false
 		}
 		return "*." + host, true
@@ -48,6 +48,20 @@ var wildcardForbiddenSuffixes = setOf(
 	"amazonaws.com", "azurewebsites.net", "blogspot.com", "fly.dev", "onrender.com", "ngrok.io",
 	"ngrok-free.app", "trycloudflare.com", "glitch.me", "repl.co", "now.sh", "surge.sh",
 )
+
+var wildcardForbiddenStorageDomains = setOf(
+	"amazonaws.com", "amazonaws.com.cn", "backblazeb2.com", "core.windows.net",
+	"digitaloceanspaces.com", "r2.cloudflarestorage.com", "r2.dev", "storage.googleapis.com",
+)
+
+func underStorageDomain(labels []string) bool {
+	for index := range labels {
+		if wildcardForbiddenStorageDomains[strings.Join(labels[index:], ".")] {
+			return true
+		}
+	}
+	return false
+}
 
 func HostAllowed(rawURL string, domains map[string]bool) bool {
 	parsed, err := url.Parse(rawURL)

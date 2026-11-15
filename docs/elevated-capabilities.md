@@ -11,6 +11,24 @@ An organization admin can approve a Claude Code hook declaration or a stdio MCP 
 - MCP server environment keys must be letters, digits and `_`, not starting with a digit. Keys that change how a program loads code or configuration are refused outright, compared case-insensitively: for example `LD_*`, `DYLD_*`, `BASH_ENV`, `ENV`, `BASH_FUNC_*`, `NODE_*`, `NPM_CONFIG_*`, `PYTHON*`, `PERL*`, `RUBY*`, `GIT_*`, `XDG_*`, `JAVA_*`, `HOME`, `ZDOTDIR`, `SHELL`, `EDITOR`, `TMPDIR` and `CLASSPATH`. Keys ending in `PATH` or `_DIRS`, including `PATH` itself, hold a colon-separated list in which every segment must be a non-empty absolute path outside the refused directories. Keys ending in `_DIR`, `_HOME`, `_FILE` or `_ROOT` must be one such absolute path. Other values may not name a path under the refused directories or a relative path.
 - Hook commands may not contain shell metacharacters, control characters, invalid UTF-8 or any whitespace other than space and tab.
 
+## Repository binding
+
+Grants travel in `elevated_capabilities` with `schema_version` 2. A `hook` or `mcp_server` grant carries the `repository_id` of the repository whose declaration the admin approved. The runner reads the declaration only from that repository's checkout, so the same path in another repository of the job is never enabled. A declaration grant without `repository_id` is refused with `repository_not_bound`, and one whose repository is not checked out in this job with `repository_not_in_job`. `network_access` grants are not tied to a repository. Every checkout of the job, the workspace root and the runner state directory count as refused directories for the command checks.
+
+## Docker isolation
+
+Under Docker isolation the agent runs in the job image, not on the host, so the runner cannot check that an absolute program path names the same file inside the container. It refuses every hook grant and every stdio MCP server (one with `command`) with `container_program_unverifiable`. Remote MCP servers (`url` only) and `network_access` grants still apply. The container home `/home/runner` is also a refused directory.
+
+## Outcome reporting
+
+After the job start evidence is recorded, the runner sends one `elevated_capability_outcomes` event (`schema_version` 1) for a job that carried grants. It is manifest bound like `run_network_policy`, carries `agent_run_authority` when the job has one, and lists every grant as `{request_id, applied, reason}`, where `applied` is true exactly when `reason` is `applied`. The reasons are pinned by `v1.ElevatedCapabilityOutcomeReasons`, which a daemon test keeps equal to the resolver's `elevatedcapability.Reasons`. `content_digest_sha256` is the command content digest of `{schema_version, outcomes}`. The event uses a stable id, `elevated-capability-outcomes-` plus the job start suffix, so a resend is deduplicated. Kinds and keys are not sent; the control plane already knows them from the request ids.
+
+## Network hosts
+
+- A `network_access` key is a bare lowercase host or `*.` followed by one. A wildcard directly over a listed public suffix (`wildcardForbiddenSuffixes`, for example `co.uk`, `github.io`) is refused.
+- A wildcard anywhere under a shared multi-tenant storage domain is refused (`wildcardForbiddenStorageDomains`): `amazonaws.com` (every S3 endpoint, regional, dash-regional and dualstack forms included), `amazonaws.com.cn`, `core.windows.net` (Azure blob, web, file and other storage endpoints), `r2.dev`, `r2.cloudflarestorage.com`, `storage.googleapis.com`, `digitaloceanspaces.com` and `backblazeb2.com`. Anyone can create a bucket under these domains, so `*.s3.amazonaws.com` or `*.my-bucket.s3.amazonaws.com` would let the agent reach storage it does not own. An exact bucket host such as `my-bucket.s3.amazonaws.com` is still accepted.
+- Both lists are pinned by `testdata/elevated-capability-key-contract.json`, which the app keeps as a byte-identical copy.
+
 ## Limitation
 
 The program name denylists (`unverifiablePrograms`, `wrapperPrograms`, `interpreterPrefixes` and `projectRunnerPrograms`) are not complete. Many tools can load configuration, plugins or scripts from the working directory, and new ones appear all the time. The checks catch common cases; they do not prove a command is safe. The admin's digest approval of the exact declaration remains the gate, and admins should approve only commands whose behaviour they know.

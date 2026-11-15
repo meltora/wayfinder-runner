@@ -3,7 +3,7 @@ package v1
 import "time"
 
 const (
-	ElevatedCapabilityTransportVersion = 1
+	ElevatedCapabilityTransportVersion = 2
 	MaxElevatedCapabilityGrants        = 64
 	MaxElevatedCapabilityKeyBytes      = 300
 )
@@ -22,6 +22,7 @@ type ElevatedCapabilityGrant struct {
 	Key               string                 `json:"key"`
 	DeclarationDigest string                 `json:"declaration_digest"`
 	ExpiresAt         time.Time              `json:"expires_at"`
+	RepositoryID      string                 `json:"repository_id,omitempty"`
 }
 
 type ElevatedCapabilityGrants struct {

@@ -12,6 +12,8 @@ import (
 	"github.com/example/app-runner/internal/supervisor"
 )
 
+const ContainerHome = "/home/runner"
+
 type Policy struct {
 	Mode                 string
 	User                 string
@@ -167,7 +169,7 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 		dockerArgs = append(dockerArgs, "-v", p.AgentPackDir+":"+p.AgentPackDir+":ro")
 	}
 	if p.JobHome != "" {
-		dockerArgs = append(dockerArgs, "-v", p.JobHome+":/home/runner:rw", "-e", "HOME=/home/runner")
+		dockerArgs = append(dockerArgs, "-v", p.JobHome+":"+ContainerHome+":rw", "-e", "HOME="+ContainerHome)
 	}
 	if p.NPMCacheDir != "" {
 		if err := validateNPMCacheDir(p.NPMCacheDir); err != nil {

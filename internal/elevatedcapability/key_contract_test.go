@@ -18,6 +18,27 @@ type keyContract struct {
 	NetworkAccess  keyContractCases `json:"networkAccess"`
 	RepositoryPath keyContractCases `json:"repositoryPath"`
 	Suffixes       []string         `json:"wildcardForbiddenSuffixes"`
+	StorageDomains []string         `json:"wildcardForbiddenStorageDomains"`
+}
+
+func TestWildcardForbiddenStorageDomainsMatchContract(t *testing.T) {
+	contract := loadKeyContract(t)
+	if len(contract.StorageDomains) == 0 || len(contract.StorageDomains) != len(wildcardForbiddenStorageDomains) {
+		t.Fatalf("contract lists %d storage domains, runner %d", len(contract.StorageDomains), len(wildcardForbiddenStorageDomains))
+	}
+	for _, domain := range contract.StorageDomains {
+		if !wildcardForbiddenStorageDomains[domain] {
+			t.Errorf("runner does not refuse wildcards under %q", domain)
+		}
+		for _, wildcard := range []string{"*." + domain, "*.tenant." + domain, "*.a.b." + domain} {
+			if _, ok := NormalizeHost(wildcard); ok {
+				t.Errorf("wildcard %q accepted", wildcard)
+			}
+		}
+		if _, ok := NormalizeHost("tenant." + domain); !ok {
+			t.Errorf("exact host under %q refused", domain)
+		}
+	}
 }
 
 func TestWildcardForbiddenSuffixesMatchContract(t *testing.T) {

@@ -32,7 +32,18 @@ const (
 	ReasonReferencedFileUnverifiable      Reason = "referenced_file_unverifiable"
 	ReasonProgramNotAbsolute              Reason = "program_not_absolute"
 	ReasonHookEventNotAllowed             Reason = "hook_event_not_allowed"
+	ReasonRepositoryNotBound              Reason = "repository_not_bound"
+	ReasonRepositoryNotInJob              Reason = "repository_not_in_job"
+	ReasonContainerProgramUnverifiable    Reason = "container_program_unverifiable"
 )
+
+var Reasons = []Reason{
+	ReasonApplied, ReasonExpired, ReasonAdapterUnsupported, ReasonReadOnlyJob, ReasonDeclarationUnreadable,
+	ReasonDigestMismatch, ReasonDeclarationInvalid, ReasonServerNameConflict, ReasonHostInvalid, ReasonHookScriptOnly,
+	ReasonRemoteHostNotApproved, ReasonCommandReferencesRepositoryFile, ReasonReferencedFileUnverifiable,
+	ReasonProgramNotAbsolute, ReasonHookEventNotAllowed, ReasonRepositoryNotBound, ReasonRepositoryNotInJob,
+	ReasonContainerProgramUnverifiable,
+}
 
 type Outcome struct {
 	RequestID string
@@ -64,12 +75,13 @@ func (grants Grants) MCPServerNames() []string {
 }
 
 type Input struct {
-	Grants        *v1.ElevatedCapabilityGrants
-	WorkDir       string
-	ProtectedDirs []string
-	Adapter       string
-	ReadOnly      bool
-	Now           time.Time
+	Grants             *v1.ElevatedCapabilityGrants
+	Repositories       map[string]string
+	ProtectedDirs      []string
+	Adapter            string
+	ReadOnly           bool
+	ContainerIsolation bool
+	Now                time.Time
 }
 
 type Resolution struct {
@@ -94,7 +106,11 @@ func Resolve(input Input) Resolution {
 	})
 	domains := map[string]bool{}
 	reasons := map[string]Reason{}
-	scope := newCommandScope(input.WorkDir, input.ProtectedDirs)
+	protectedDirs := append([]string(nil), input.ProtectedDirs...)
+	for _, checkout := range input.Repositories {
+		protectedDirs = append(protectedDirs, checkout)
+	}
+	sort.Strings(protectedDirs)
 	for _, grant := range grants {
 		if grant.Kind != v1.ElevatedCapabilityNetworkAccess {
 			continue
@@ -115,6 +131,11 @@ func Resolve(input Input) Resolution {
 		}
 		reason := eligibility(input, grant)
 		if reason == "" {
+			reason = repositoryReason(input, grant)
+		}
+		if reason == "" {
+			scope := newCommandScope(input.Repositories[grant.RepositoryID], protectedDirs)
+			scope.container = input.ContainerIsolation
 			reason = resolution.applyDeclaration(scope, grant, domains)
 		}
 		reasons[grant.RequestID] = reason
@@ -147,6 +168,16 @@ func eligibility(input Input, grant v1.ElevatedCapabilityGrant) Reason {
 	return ""
 }
 
+func repositoryReason(input Input, grant v1.ElevatedCapabilityGrant) Reason {
+	if grant.RepositoryID == "" {
+		return ReasonRepositoryNotBound
+	}
+	if input.Repositories[grant.RepositoryID] == "" {
+		return ReasonRepositoryNotInJob
+	}
+	return ""
+}
+
 func (resolution *Resolution) applyDeclaration(scope commandScope, grant v1.ElevatedCapabilityGrant, domains map[string]bool) Reason {
 	content, reason := readDeclaration(scope.workDir, grant)
 	if reason != "" {
@@ -174,6 +205,9 @@ func (resolution *Resolution) applyMCP(scope commandScope, content []byte, domai
 		}
 		if remote, ok := server["url"].(string); ok && !HostAllowed(remote, domains) {
 			return ReasonRemoteHostNotApproved
+		}
+		if _, stdio := server["command"]; stdio && scope.container {
+			return ReasonContainerProgramUnverifiable
 		}
 		if reason := scope.mcpCommandReason(server); reason != "" {
 			return reason
@@ -206,6 +240,9 @@ func (resolution *Resolution) applyHook(scope commandScope, key string, content 
 		if !grantableHookEvents[event] {
 			return ReasonHookEventNotAllowed
 		}
+	}
+	if scope.container {
+		return ReasonContainerProgramUnverifiable
 	}
 	if reason := scope.hookCommandsReason(hooks); reason != "" {
 		return reason
