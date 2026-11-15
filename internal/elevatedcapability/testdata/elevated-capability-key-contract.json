@@ -5,7 +5,9 @@
       "api.github.com",
       "*.example.com",
       "a-b.example.io",
-      "xn--bcher-kva.example"
+      "xn--bcher-kva.example",
+      "my-bucket.s3.amazonaws.com",
+      "account.blob.core.windows.net"
     ],
     "rejected": [
       "",
@@ -26,7 +28,22 @@
       "*.github.io",
       "*.amazonaws.com",
       "*.*.example.com",
-      "example.123"
+      "example.123",
+      "*.s3.amazonaws.com",
+      "*.s3.us-east-1.amazonaws.com",
+      "*.s3-us-west-2.amazonaws.com",
+      "*.s3.dualstack.eu-west-1.amazonaws.com",
+      "*.my-bucket.s3.amazonaws.com",
+      "*.s3.cn-north-1.amazonaws.com.cn",
+      "*.blob.core.windows.net",
+      "*.web.core.windows.net",
+      "*.r2.dev",
+      "*.r2.cloudflarestorage.com",
+      "*.storage.googleapis.com",
+      "*.digitaloceanspaces.com",
+      "*.nyc3.digitaloceanspaces.com",
+      "*.backblazeb2.com",
+      "*.s3.us-west-004.backblazeb2.com"
     ]
   },
   "repositoryPath": {
@@ -112,5 +129,15 @@
     "vercel.app",
     "web.app",
     "workers.dev"
+  ],
+  "wildcardForbiddenStorageDomains": [
+    "amazonaws.com",
+    "amazonaws.com.cn",
+    "backblazeb2.com",
+    "core.windows.net",
+    "digitaloceanspaces.com",
+    "r2.cloudflarestorage.com",
+    "r2.dev",
+    "storage.googleapis.com"
   ]
 }
