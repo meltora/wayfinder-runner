@@ -328,8 +328,12 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	}
 	if p.PackDir != "" {
 		args = append(args, "--add-dir", p.PackDir)
-		if _, err := os.Stat(filepath.Join(p.PackDir, ".claude-plugin", "plugin.json")); err == nil {
-			args = append(args, "--plugin-dir", p.PackDir)
+		view, err := writeClaudePluginView(p.PackDir, p.ConfigDir)
+		if err != nil {
+			return supervisor.Spec{}, err
+		}
+		if view != "" {
+			args = append(args, "--plugin-dir", view)
 		}
 	}
 	if p.ReadOnly {

@@ -19,6 +19,21 @@ Grants travel in `elevated_capabilities` with `schema_version` 2. A `hook` or `m
 
 A `hook` or `mcp_server` grant for a declaration shipped in the job's Agent Pack carries `agent_pack_digest` (64 lowercase hex) instead of `repository_id`. The runner reads the declaration only from the installed pack directory (`<job>/pack`) and only when the job's `agent_pack.digest` equals the grant's digest; otherwise it refuses the grant with `agent_pack_not_in_job`. The key follows the same contract as a repository grant, so a pack hook declaration lives under `.claude/hooks/` and ends in `.json`. A grant that carries both `repository_id` and `agent_pack_digest`, a malformed digest, or a `network_access` grant with a pack digest is refused with `declaration_invalid`. The pack directory is a refused directory for the command checks.
 
+## Ungranted declarations
+
+Claude Code gets only what the runner hands it, so an ungranted hook or MCP server in the pack or the checkout does not run.
+
+- MCP servers: the runner passes `--mcp-config <ConfigDir>/claude-mcp.json --strict-mcp-config`. That file holds the `platform` server and granted servers only. The Claude Code CLI reference says `--strict-mcp-config` skips servers from `.mcp.json`, `~/.claude.json` and plugins. A probe with Claude Code 2.1.325 confirmed that a checkout `.mcp.json` server did not start.
+- Checkout settings: the runner passes `--setting-sources user` (plan jobs: `--restricted --setting-sources ""`) and its own `--settings <ConfigDir>/claude-settings.json`. Settings and hooks in the checkout's `.claude/settings.json` and `.claude/settings.local.json` are not loaded. The probe confirmed that checkout `SessionStart` and `UserPromptSubmit` hooks did not run.
+- Agent Pack plugin: Claude Code registers a plugin's hooks as soon as it loads the plugin. Before this change the runner passed the installed pack directory as `--plugin-dir`, and the probe showed the pack's `hooks/hooks.json` running without a grant. The runner now builds a plugin view in `<ConfigDir>/claude-plugin` (`internal/provider/claude_plugin_view.go`) and passes that directory instead. The pack is still passed as `--add-dir`. The view is rebuilt every time the spec is built. It contains:
+  - `.claude-plugin/plugin.json` with only `name` (required, a non-empty string), `version`, `description` and `author`. A manifest that is not a JSON object, repeats a key or has a mistyped field fails the job start.
+  - regular files under `skills/`, `commands/` and `agents/`. Symbolic links are skipped, and executable bits are kept read-only.
+  - nothing else. `hooks/hooks.json`, manifest `hooks`, `mcpServers`, `lspServers`, `.lsp.json`, monitors, `bin/`, the plugin `settings.json`, `outputStyles` and custom component paths are left out.
+- A skill directory or command file is left out when any of its Markdown files has YAML front matter that declares `hooks` (in any letter case). It is also left out when the front matter cannot be parsed. Claude Code ignores `hooks` in plugin agent front matter, so agents are copied as they are.
+- Granted pack hooks still come only from `.claude/hooks/*.json` through `--settings`.
+
+Not covered: the host user's own `~/.claude/settings.json` and plugins still load through the `user` source; they are operator configuration. The Agent SDK documentation says the `project` source also carries the checkout `CLAUDE.md`, skills and subagents, so under `--setting-sources user` they are probably not loaded either. This has not been confirmed for the CLI.
+
 ## Rollout
 
 Deploy the control plane before the runner: the control plane's strict capability manifest schema must know `protocol_features` before a runner reports it, or the whole manifest is refused. Before deploying a runner that only reads `schema_version` 2 grants, drain `start_job` commands that were queued with `schema_version` 1 grants; a queued v1 command fails validation on the new runner.
