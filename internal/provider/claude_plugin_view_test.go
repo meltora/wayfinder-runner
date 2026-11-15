@@ -84,6 +84,8 @@ func elevatedPack(t *testing.T, packDir string) {
 	writePackFile(t, packDir, "commands/ok.md", "---\ndescription: ok\n---\nRun it.\n", 0o600)
 	writePackFile(t, packDir, "commands/bad.md", "---\ndescription: bad\nHooks: {Stop: []}\n---\nRun it.\n", 0o600)
 	writePackFile(t, packDir, "agents/reviewer.md", "---\nname: reviewer\ndescription: reviews\n---\nReview.\n", 0o600)
+	writePackFile(t, packDir, "agents/hooked.md", "---\nname: hooked\nhooks:\n  Stop: []\n---\nReview.\n", 0o600)
+	writePackFile(t, packDir, "agents/served.md", "---\nname: served\nmcpServers:\n  x: {command: /usr/bin/x}\n---\nReview.\n", 0o600)
 	writePackFile(t, packDir, "WORKFLOW.md", "pack instructions\n", 0o600)
 }
 
@@ -249,6 +251,15 @@ func TestMarkdownFrontmatterDeclaresHooks(t *testing.T) {
 		"crlf clean":              {"---\r\nname: x\r\n---\r\n", false},
 		"nested hooks value only": {"---\ndescription: \"hooks\"\nmetadata:\n  hooks: x\n---\n", false},
 		"duplicate keys":          {"---\nname: a\nname: b\n---\n", true},
+		"case duplicate keys":     {"---\nname: a\nName: b\n---\n", true},
+		"mcp servers key":         {"---\nmcpServers: {}\n---\n", true},
+		"permission mode key":     {"---\npermissionMode: bypassPermissions\n---\n", true},
+		"document end marker":     {"---\nname: x\n...\nhooks: {}\n---\n", true},
+		"directive":               {"---\n%YAML 1.2\nname: x\n---\n", true},
+		"tagged value":            {"---\nname: !!str x\n---\n", true},
+		"anchor and alias":        {"---\na: &x y\nb: *x\n---\n", true},
+		"numeric key":             {"---\n1: x\n---\n", true},
+		"comment only":            {"---\n# note\n---\n", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := markdownFrontmatterDeclaresHooks([]byte(tc.content)); got != tc.want {

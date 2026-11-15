@@ -161,7 +161,7 @@ func collectClaudePluginViewFiles(packDir string) ([]claudePluginViewFile, error
 		if total > claudePluginMaxTotalBytes {
 			return fmt.Errorf("plugin components exceed size limit")
 		}
-		if component != "agents" && strings.EqualFold(path.Ext(name), ".md") && markdownFrontmatterDeclaresHooks(data) {
+		if strings.EqualFold(path.Ext(name), ".md") && markdownFrontmatterDeclaresHooks(data) {
 			withheld[claudePluginViewUnit(name)] = true
 		}
 		files = append(files, claudePluginViewFile{name: name, data: data, perm: perm})
@@ -240,12 +240,59 @@ func markdownFrontmatterDeclaresHooks(data []byte) bool {
 	if closing < 0 {
 		return true
 	}
-	var frontmatter map[string]any
-	if err := yaml.Unmarshal([]byte(strings.Join(lines[1:closing], "\n")), &frontmatter); err != nil {
+	body := lines[1:closing]
+	for _, line := range body {
+		trimmed := strings.TrimRight(line, " \t\r")
+		if trimmed == "..." || strings.HasPrefix(trimmed, "%") {
+			return true
+		}
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(strings.Join(body, "\n")))
+	var document yaml.Node
+	if err := decoder.Decode(&document); err != nil {
+		return !errors.Is(err, io.EOF) || len(strings.TrimSpace(strings.Join(body, ""))) > 0
+	}
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return true
 	}
-	for key := range frontmatter {
-		if strings.EqualFold(strings.TrimSpace(key), "hooks") {
+	if document.Kind != yaml.DocumentNode || len(document.Content) != 1 {
+		return true
+	}
+	mapping := document.Content[0]
+	if mapping.Kind == yaml.ScalarNode && mapping.Tag == "!!null" {
+		return false
+	}
+	if mapping.Kind != yaml.MappingNode || yamlNodeIsIndirect(mapping) {
+		return true
+	}
+	seen := map[string]bool{}
+	for index := 0; index+1 < len(mapping.Content); index += 2 {
+		key := mapping.Content[index]
+		if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || key.Value == "<<" {
+			return true
+		}
+		normalized := strings.ToLower(strings.TrimSpace(key.Value))
+		if seen[normalized] || claudePluginWithheldFrontmatterKeys[normalized] {
+			return true
+		}
+		seen[normalized] = true
+	}
+	return false
+}
+
+var claudePluginWithheldFrontmatterKeys = map[string]bool{
+	"hooks":          true,
+	"mcpservers":     true,
+	"permissionmode": true,
+}
+
+func yamlNodeIsIndirect(node *yaml.Node) bool {
+	if node.Kind == yaml.AliasNode || node.Anchor != "" || node.Style&yaml.TaggedStyle != 0 {
+		return true
+	}
+	for _, child := range node.Content {
+		if yamlNodeIsIndirect(child) {
 			return true
 		}
 	}
