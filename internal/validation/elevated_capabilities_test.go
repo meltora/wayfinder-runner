@@ -23,17 +23,10 @@ func TestElevatedCapabilitiesValidation(t *testing.T) {
 		t.Fatalf("valid grants rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*v1.ElevatedCapabilityGrants){
-		"schema":         func(value *v1.ElevatedCapabilityGrants) { value.SchemaVersion = 2 },
-		"empty":          func(value *v1.ElevatedCapabilityGrants) { value.Grants = nil },
-		"duplicate id":   func(value *v1.ElevatedCapabilityGrants) { value.Grants[1].RequestID = value.Grants[0].RequestID },
-		"request id":     func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].RequestID = "../x" },
-		"kind":           func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].Kind = "plugin" },
-		"empty key":      func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].Key = "" },
-		"long key":       func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].Key = strings.Repeat("k", 301) },
-		"control key":    func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].Key = "a\tb" },
-		"padded key":     func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].Key = " .mcp.json" },
-		"digest":         func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].DeclarationDigest = strings.Repeat("A", 64) },
-		"missing expiry": func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].ExpiresAt = time.Time{} },
+		"schema":       func(value *v1.ElevatedCapabilityGrants) { value.SchemaVersion = 2 },
+		"empty":        func(value *v1.ElevatedCapabilityGrants) { value.Grants = nil },
+		"duplicate id": func(value *v1.ElevatedCapabilityGrants) { value.Grants[1].RequestID = value.Grants[0].RequestID },
+		"request id":   func(value *v1.ElevatedCapabilityGrants) { value.Grants[0].RequestID = "../x" },
 		"too many": func(value *v1.ElevatedCapabilityGrants) {
 			grants := make([]v1.ElevatedCapabilityGrant, v1.MaxElevatedCapabilityGrants+1)
 			for index := range grants {
@@ -61,9 +54,39 @@ func TestJobCarriesValidatedElevatedCapabilities(t *testing.T) {
 	if err := JobSpec(job); err != nil {
 		t.Fatalf("valid job rejected: %v", err)
 	}
-	grants.Grants[0].Kind = "plugin"
+	grants.Grants[1].RequestID = grants.Grants[0].RequestID
 	if err := JobSpec(job); err == nil {
 		t.Fatal("job with invalid elevated capabilities accepted")
+	}
+}
+
+func TestJobSpecKeepsInvalidGrantShapesForPerGrantRefusal(t *testing.T) {
+	job := validJob()
+	grants := validElevatedCapabilities()
+	grants.Grants[0].Kind = "plugin"
+	grants.Grants[1].Key = "../.mcp.json"
+	grants.Grants[2].DeclarationDigest = strings.Repeat("A", 64)
+	grants.Grants[2].ExpiresAt = time.Time{}
+	job.ElevatedCapabilities = &grants
+	if err := JobSpec(job); err != nil {
+		t.Fatalf("per-grant shape problems rejected the whole job: %v", err)
+	}
+}
+
+func TestJobSpecRefusesUnknownGrantField(t *testing.T) {
+	grant := `{"request_id":"ecr_1","kind":"mcp_server","key":".mcp.json","declaration_digest":"` + strings.Repeat("a", 64) + `","expires_at":"2027-01-01T00:00:00Z"}`
+	jobWith := func(envelope, grant string) []byte {
+		return []byte(`{"job_id":"j","attempt_id":"a","project_id":"p","kind":"build","lease_id":"l","manifest_id":"m","manifest_digest":"d","workflow_revision":1,"fencing_token":1,"lease_expires_at":"2027-01-01T00:00:00Z","repositories":[],"ticket":{"key":"K","summary":"s","description":"d"},"elevated_capabilities":{"schema_version":1,` + envelope + `"grants":[` + grant + `]}}`)
+	}
+	var job v1.JobSpec
+	if err := json.Unmarshal(jobWith("", grant), &job); err != nil {
+		t.Fatalf("valid grant refused: %v", err)
+	}
+	if err := json.Unmarshal(jobWith("", strings.Replace(grant, "}", `,"command":"evil"}`, 1)), &job); err == nil {
+		t.Fatal("unknown grant field decoded")
+	}
+	if err := json.Unmarshal(jobWith(`"extra":true,`, grant), &job); err == nil {
+		t.Fatal("unknown grants envelope field decoded")
 	}
 }
 

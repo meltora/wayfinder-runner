@@ -1,0 +1,49 @@
+{
+  "networkAccess": {
+    "accepted": [
+      "registry.npmjs.org",
+      "api.github.com",
+      "*.example.com",
+      "a-b.example.io",
+      "xn--bcher-kva.example"
+    ],
+    "rejected": [
+      "",
+      "localhost",
+      "Example.com",
+      "https://example.com",
+      "example.com:443",
+      "egress:api.github.com:443",
+      "10.0.0.1",
+      "*",
+      "*.com",
+      "*.com.",
+      "a..b.com",
+      "-a.com",
+      "a_b.com",
+      "example.com/path",
+      "*.co.uk",
+      "*.github.io",
+      "*.amazonaws.com",
+      "*.*.example.com",
+      "example.123"
+    ]
+  },
+  "repositoryPath": {
+    "accepted": [
+      ".mcp.json",
+      ".claude/hooks/format.json",
+      "tools/.mcp.json"
+    ],
+    "rejected": [
+      "",
+      "/etc/.mcp.json",
+      "../.mcp.json",
+      "a/../.mcp.json",
+      "./.mcp.json",
+      "a//b.json",
+      ".claude\\hooks\\format.json",
+      " .mcp.json"
+    ]
+  }
+}

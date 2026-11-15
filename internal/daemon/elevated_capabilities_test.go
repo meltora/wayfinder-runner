@@ -21,7 +21,7 @@ func elevatedTestDigest(content string) string {
 
 func TestJobRunnerResolvesOnlyGrantedElevatedCapabilities(t *testing.T) {
 	workDir := t.TempDir()
-	declaration := `{"mcpServers":{"docs":{"command":"node","args":["docs.js"]}}}`
+	declaration := `{"mcpServers":{"docs":{"command":"/usr/local/bin/docs-mcp","args":["--stdio"]}}}`
 	if err := os.WriteFile(filepath.Join(workDir, ".mcp.json"), []byte(declaration), 0o644); err != nil {
 		t.Fatal(err)
 	}

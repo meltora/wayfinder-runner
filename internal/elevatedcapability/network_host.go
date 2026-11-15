@@ -29,10 +29,25 @@ func NormalizeHost(key string) (string, bool) {
 		}
 	}
 	if wildcard {
+		if wildcardForbiddenSuffixes[host] {
+			return "", false
+		}
 		return "*." + host, true
 	}
 	return host, true
 }
+
+var wildcardForbiddenSuffixes = setOf(
+	"co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "sch.uk",
+	"com.au", "net.au", "org.au", "edu.au", "gov.au", "co.nz", "org.nz", "net.nz",
+	"co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp", "co.kr", "or.kr", "co.in", "net.in", "org.in",
+	"co.za", "org.za", "com.br", "net.br", "org.br", "com.cn", "net.cn", "org.cn", "com.hk",
+	"com.mx", "com.tr", "com.tw", "com.sg", "com.ar", "com.co", "co.id", "co.il", "com.pl",
+	"github.io", "githubusercontent.com", "gitlab.io", "herokuapp.com", "vercel.app", "netlify.app",
+	"pages.dev", "workers.dev", "appspot.com", "web.app", "firebaseapp.com", "cloudfront.net",
+	"amazonaws.com", "azurewebsites.net", "blogspot.com", "fly.dev", "onrender.com", "ngrok.io",
+	"ngrok-free.app", "trycloudflare.com", "glitch.me", "repl.co", "now.sh", "surge.sh",
+)
 
 func HostAllowed(rawURL string, domains map[string]bool) bool {
 	parsed, err := url.Parse(rawURL)

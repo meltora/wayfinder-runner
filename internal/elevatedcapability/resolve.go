@@ -27,6 +27,9 @@ const (
 	ReasonHostInvalid           Reason = "host_invalid"
 	ReasonHookScriptOnly        Reason = "hook_script_not_a_declaration"
 	ReasonRemoteHostNotApproved Reason = "remote_host_not_approved"
+
+	ReasonCommandReferencesRepositoryFile Reason = "command_references_repository_file"
+	ReasonReferencedFileUnverifiable      Reason = "referenced_file_unverifiable"
 )
 
 type Outcome struct {
@@ -113,9 +116,11 @@ func Resolve(input Input) Resolution {
 		reasons[grant.RequestID] = reason
 	}
 	for _, grant := range grants {
-		resolution.Outcomes = append(resolution.Outcomes, Outcome{
-			RequestID: grant.RequestID, Kind: grant.Kind, Key: grant.Key, Digest: grant.DeclarationDigest, Reason: reasons[grant.RequestID],
-		})
+		outcome := Outcome{RequestID: grant.RequestID, Kind: grant.Kind, Key: grant.Key, Digest: grant.DeclarationDigest, Reason: reasons[grant.RequestID]}
+		if !GrantShapeValid(grant) {
+			outcome = Outcome{RequestID: grant.RequestID, Reason: ReasonDeclarationInvalid}
+		}
+		resolution.Outcomes = append(resolution.Outcomes, outcome)
 	}
 	for domain := range domains {
 		resolution.Grants.AllowedDomains = append(resolution.Grants.AllowedDomains, domain)
@@ -126,6 +131,8 @@ func Resolve(input Input) Resolution {
 
 func eligibility(input Input, grant v1.ElevatedCapabilityGrant) Reason {
 	switch {
+	case !GrantShapeValid(grant):
+		return ReasonDeclarationInvalid
 	case !grant.ExpiresAt.After(input.Now):
 		return ReasonExpired
 	case input.Adapter != "claude":
@@ -143,25 +150,29 @@ func (resolution *Resolution) applyDeclaration(workDir string, grant v1.Elevated
 	}
 	switch grant.Kind {
 	case v1.ElevatedCapabilityMCPServer:
-		return resolution.applyMCP(content, domains)
+		return resolution.applyMCP(workDir, content, domains)
 	case v1.ElevatedCapabilityHook:
-		return resolution.applyHook(grant.Key, content)
+		return resolution.applyHook(workDir, grant.Key, content)
 	default:
 		return ReasonDeclarationInvalid
 	}
 }
 
-func (resolution *Resolution) applyMCP(content []byte, domains map[string]bool) Reason {
+func (resolution *Resolution) applyMCP(workDir string, content []byte, domains map[string]bool) Reason {
 	servers, err := ParseMCPDeclaration(content)
 	if err != nil {
 		return ReasonDeclarationInvalid
 	}
-	for name, server := range servers {
+	for _, name := range sortedServerNames(servers) {
+		server := servers[name]
 		if _, taken := resolution.Grants.MCPServers[name]; taken {
 			return ReasonServerNameConflict
 		}
 		if remote, ok := server["url"].(string); ok && !HostAllowed(remote, domains) {
 			return ReasonRemoteHostNotApproved
+		}
+		if reason := MCPCommandReason(server, workDir); reason != "" {
+			return reason
 		}
 	}
 	for name, server := range servers {
@@ -170,13 +181,25 @@ func (resolution *Resolution) applyMCP(content []byte, domains map[string]bool) 
 	return ReasonApplied
 }
 
-func (resolution *Resolution) applyHook(key string, content []byte) Reason {
+func sortedServerNames(servers map[string]map[string]any) []string {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (resolution *Resolution) applyHook(workDir, key string, content []byte) Reason {
 	if !IsHookDeclarationPath(key) {
 		return ReasonHookScriptOnly
 	}
 	hooks, err := ParseHookDeclaration(content)
 	if err != nil {
 		return ReasonDeclarationInvalid
+	}
+	if reason := hookCommandsReason(hooks, workDir); reason != "" {
+		return reason
 	}
 	for event, groups := range hooks {
 		resolution.Grants.Hooks[event] = append(resolution.Grants.Hooks[event], groups...)

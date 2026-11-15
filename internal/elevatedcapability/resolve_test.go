@@ -14,11 +14,11 @@ import (
 
 var testNow = time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
 
-const testMCP = `{"mcpServers":{"docs":{"command":"node","args":["docs-server.js"]}}}`
+const testMCP = `{"mcpServers":{"docs":{"command":"/usr/local/bin/docs-mcp","args":["--stdio"]}}}`
 
 const testRemoteMCP = `{"mcpServers":{"tickets":{"type":"http","url":"https://mcp.example.com/v1"}}}`
 
-const testHook = `{"hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"./scripts/format.sh","timeout":30}]}]}}`
+const testHook = `{"hooks":{"PostToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"/usr/local/bin/format-changed --quiet","timeout":30}]}]}}`
 
 func digestOf(content string) string {
 	sum := sha256.Sum256([]byte(content))
@@ -63,7 +63,7 @@ func TestResolveEnablesOnlyApprovedMCPServers(t *testing.T) {
 	if got := resolution.Grants.MCPServerNames(); !reflect.DeepEqual(got, []string{"docs"}) {
 		t.Fatalf("approved servers = %v", got)
 	}
-	want := map[string]any{"type": "stdio", "command": "node", "args": []string{"docs-server.js"}}
+	want := map[string]any{"type": "stdio", "command": "/usr/local/bin/docs-mcp", "args": []string{"--stdio"}}
 	if !reflect.DeepEqual(resolution.Grants.MCPServers["docs"], want) {
 		t.Fatalf("server entry = %#v", resolution.Grants.MCPServers["docs"])
 	}
@@ -93,7 +93,7 @@ func TestResolveRefusesChangedOrUnsafeDeclarations(t *testing.T) {
 	)
 	want := map[string]Reason{
 		"ecr_changed": ReasonDigestMismatch, "ecr_reserved": ReasonDeclarationInvalid, "ecr_extra": ReasonDeclarationInvalid,
-		"ecr_link": ReasonDeclarationUnreadable, "ecr_missing": ReasonDeclarationUnreadable, "ecr_escape": ReasonDeclarationUnreadable,
+		"ecr_link": ReasonDeclarationUnreadable, "ecr_missing": ReasonDeclarationUnreadable, "ecr_escape": ReasonDeclarationInvalid,
 	}
 	if got := reasonsByID(resolution); !reflect.DeepEqual(got, want) {
 		t.Fatalf("reasons = %v", got)
@@ -176,7 +176,7 @@ func TestResolveEnablesApprovedHookDeclarations(t *testing.T) {
 		t.Fatalf("hooks = %#v", resolution.Grants.Hooks)
 	}
 	commands := groups[0]["hooks"].([]map[string]any)
-	if commands[0]["command"] != "./scripts/format.sh" || commands[0]["timeout"] != 30 {
+	if commands[0]["command"] != "/usr/local/bin/format-changed --quiet" || commands[0]["timeout"] != 30 {
 		t.Fatalf("hook commands = %#v", commands)
 	}
 }
@@ -187,7 +187,7 @@ func TestNormalizeHost(t *testing.T) {
 			t.Fatalf("%q rejected", valid)
 		}
 	}
-	for _, invalid := range []string{"", "localhost", "Example.com", "https://example.com", "example.com:443", "10.0.0.1", "*", "*.com.", "a..b.com", "-a.com", "a_b.com", "example.com/path"} {
+	for _, invalid := range []string{"", "localhost", "Example.com", "https://example.com", "example.com:443", "10.0.0.1", "*", "*.com.", "a..b.com", "-a.com", "a_b.com", "example.com/path", "*.co.uk", "*.github.io", "*.amazonaws.com", "egress:api.github.com:443"} {
 		if _, ok := NormalizeHost(invalid); ok {
 			t.Fatalf("%q accepted", invalid)
 		}
