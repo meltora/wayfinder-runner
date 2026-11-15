@@ -9,6 +9,7 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/elevatedcapability"
 	"github.com/example/app-runner/internal/mcpbridge"
 	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/supervisor"
@@ -30,6 +31,7 @@ type StartParams struct {
 	HardenedRuntime bool
 	DockerIsolation bool
 	Environment     []string
+	Elevated        elevatedcapability.Grants
 }
 
 // PromptOnlyParams is intentionally disjoint from StartParams: consultation
@@ -236,7 +238,8 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if p.ConfigDir == "" || !filepath.IsAbs(p.ConfigDir) {
 		return supervisor.Spec{}, fmt.Errorf("Claude job config requires a runner-owned absolute directory")
 	}
-	mcpCfg := map[string]any{"mcpServers": map[string]any{"platform": mcpServerEntry(p.MCPSock, p.MCPTokenFile, p.mcpBin())}}
+	elevated := p.elevatedGrants()
+	mcpCfg := map[string]any{"mcpServers": claudeMCPServers(mcpServerEntry(p.MCPSock, p.MCPTokenFile, p.mcpBin()), elevated)}
 	raw, _ := json.MarshalIndent(mcpCfg, "", "  ")
 	mcpPath := filepath.Join(p.ConfigDir, "claude-mcp.json")
 	if err := safeio.AtomicWriteFile(p.ConfigDir, "claude-mcp.json", raw, 0o600); err != nil {
@@ -274,7 +277,7 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		"credentials": map[string]any{
 			"files": deniedCredentialFiles,
 		},
-		"network": map[string]any{"strictAllowlist": true, "allowedDomains": []string{}},
+		"network": map[string]any{"strictAllowlist": true, "allowedDomains": claudeAllowedDomains(elevated)},
 	}
 	if p.DockerIsolation {
 		sandbox["enableWeakerNestedSandbox"] = true
@@ -293,6 +296,9 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		if hooks, err = withPlanCommandGuard(p, hooks); err != nil {
 			return supervisor.Spec{}, err
 		}
+	}
+	if hooks, err = withApprovedHooks(hooks, elevated.Hooks); err != nil {
+		return supervisor.Spec{}, err
 	}
 	if len(hooks) > 0 {
 		settings["hooks"] = hooks
@@ -318,6 +324,7 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		args = append(args, claudePlanToolArgs()...)
 	} else {
 		args = append(args, "--allowedTools", "mcp__platform__*", "Bash")
+		args = append(args, claudeElevatedAllowedTools(elevated)...)
 	}
 	if p.PackDir != "" {
 		args = append(args, "--add-dir", p.PackDir)

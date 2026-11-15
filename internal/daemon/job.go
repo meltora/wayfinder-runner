@@ -17,6 +17,7 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/agentactivity"
+	"github.com/example/app-runner/internal/elevatedcapability"
 	"github.com/example/app-runner/internal/hookspool"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/lease"
@@ -85,6 +86,7 @@ type jobRunner struct {
 	configDir                string
 	composition              *compositionBody
 	compositionHook          func(context.Context) error
+	elevatedOutcomes         []elevatedcapability.Outcome
 	configuration            *hotConfiguration
 	agentPromptLimit         int
 }
@@ -485,6 +487,7 @@ func (jr *jobRunner) run() {
 	agentSockPath := mcpSrv.SocketPath
 
 	adapterName := d.cfg.Provider
+	elevated := jr.resolveElevatedCapabilities(adapterName, workDir, job.Kind == v1.JobKindPlan)
 	adapter, err := provider.For(adapterName)
 	if err != nil {
 		finish(
@@ -515,6 +518,7 @@ func (jr *jobRunner) run() {
 		ResumeSessionID: job.ResumeSessionID,
 		ReadOnly:        job.Kind == v1.JobKindPlan,
 		Environment:     append(d.agentEnvironment(adapterName), apiKey.entries()...),
+		Elevated:        elevated,
 	})
 	if err != nil {
 		finish(
@@ -585,6 +589,7 @@ func (jr *jobRunner) run() {
 			ReadOnly:        job.Kind == v1.JobKindPlan,
 			HardenedRuntime: true,
 			DockerIsolation: true,
+			Elevated:        elevated,
 		})
 		if err != nil {
 			finish(

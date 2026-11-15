@@ -34,19 +34,20 @@ type JobSpec struct {
 	PlanRevisionContext    *PlanRevisionContext      `json:"plan_revision_context,omitempty"`
 	AgentRunAuthority      *AgentRunAuthority        `json:"agent_run_authority,omitempty"`
 
-	ApprovedPlanRevision         int                  `json:"approved_plan_revision,omitempty"`
-	ApprovedPlan                 *ApprovedPlan        `json:"approved_plan,omitempty"`
-	RequiredChecks               []string             `json:"required_checks,omitempty"`
-	PushBranch                   bool                 `json:"push_branch,omitempty"`
-	PRTitle                      string               `json:"pr_title,omitempty"`
-	ReviewComment                string               `json:"review_comment,omitempty"`
-	ContinuationCount            int                  `json:"continuation_count,omitempty"`
-	ResumeSessionID              string               `json:"resume_session_id,omitempty"`
-	ProviderCapacityResumePolicy CapacityResumePolicy `json:"provider_capacity_resume_policy,omitempty"`
-	TokenBudget                  *TokenBudget         `json:"token_budget,omitempty"`
-	AgentActivity                *AgentActivityPolicy `json:"agent_activity,omitempty"`
-	AgentGuidance                *AgentGuidance       `json:"agent_guidance,omitempty"`
-	RunGuardrails                *RunGuardrailsPolicy `json:"run_guardrails,omitempty"`
+	ApprovedPlanRevision         int                       `json:"approved_plan_revision,omitempty"`
+	ApprovedPlan                 *ApprovedPlan             `json:"approved_plan,omitempty"`
+	RequiredChecks               []string                  `json:"required_checks,omitempty"`
+	PushBranch                   bool                      `json:"push_branch,omitempty"`
+	PRTitle                      string                    `json:"pr_title,omitempty"`
+	ReviewComment                string                    `json:"review_comment,omitempty"`
+	ContinuationCount            int                       `json:"continuation_count,omitempty"`
+	ResumeSessionID              string                    `json:"resume_session_id,omitempty"`
+	ProviderCapacityResumePolicy CapacityResumePolicy      `json:"provider_capacity_resume_policy,omitempty"`
+	TokenBudget                  *TokenBudget              `json:"token_budget,omitempty"`
+	AgentActivity                *AgentActivityPolicy      `json:"agent_activity,omitempty"`
+	AgentGuidance                *AgentGuidance            `json:"agent_guidance,omitempty"`
+	RunGuardrails                *RunGuardrailsPolicy      `json:"run_guardrails,omitempty"`
+	ElevatedCapabilities         *ElevatedCapabilityGrants `json:"elevated_capabilities,omitempty"`
 
 	reviewCommentPresent bool
 }
