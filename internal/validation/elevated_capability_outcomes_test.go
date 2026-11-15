@@ -24,6 +24,12 @@ func validElevatedCapabilityOutcomes() v1.ElevatedCapabilityOutcomesEvent {
 	return value
 }
 
+func TestElevatedCapabilityOutcomesDigestVector(t *testing.T) {
+	if got := validElevatedCapabilityOutcomes().ContentDigestSHA256; got != "5d304257b6e0700d33f56afa9cdb1b0133a4ff32e2fb166e7249be088d93efa4" {
+		t.Fatalf("digest = %s", got)
+	}
+}
+
 func TestElevatedCapabilityOutcomesEvent(t *testing.T) {
 	if err := ElevatedCapabilityOutcomesEvent(validElevatedCapabilityOutcomes()); err != nil {
 		t.Fatalf("valid event rejected: %v", err)
