@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const shellMetacharacters = "$`;&|<>(){}*?[]~!#'\"\\\n\r"
@@ -148,14 +150,25 @@ func HookCommandReason(command, workDir string) Reason {
 }
 
 func (scope commandScope) hookCommandReason(command string) Reason {
-	if strings.ContainsAny(command, shellMetacharacters) {
+	if strings.ContainsAny(command, shellMetacharacters) || hasUnsplittableCharacter(command) {
 		return ReasonReferencedFileUnverifiable
 	}
-	tokens := strings.Fields(command)
+	tokens := strings.FieldsFunc(command, func(character rune) bool {
+		return character == ' ' || character == '\t'
+	})
 	if len(tokens) == 0 || strings.Contains(tokens[0], "=") {
 		return ReasonReferencedFileUnverifiable
 	}
 	return scope.programReason(tokens[0], tokens[1:])
+}
+
+func hasUnsplittableCharacter(value string) bool {
+	for _, character := range value {
+		if character != '\t' && !unicode.IsPrint(character) {
+			return true
+		}
+	}
+	return !utf8.ValidString(value)
 }
 
 func (scope commandScope) hookCommandsReason(hooks map[string][]map[string]any) Reason {
@@ -193,8 +206,11 @@ func (scope commandScope) mcpCommandReason(server map[string]any) Reason {
 	for _, value := range env {
 		values = append(values, value)
 	}
+	for key := range env {
+		values = append(values, key)
+	}
 	for _, value := range values {
-		if strings.ContainsAny(value, "$`~") {
+		if strings.ContainsAny(value, "$`~") || hasUnsplittableCharacter(value) {
 			return ReasonReferencedFileUnverifiable
 		}
 	}

@@ -228,6 +228,37 @@ func TestMCPCommandReasonRefusesThirdReviewProbes(t *testing.T) {
 	}
 }
 
+func TestHookCommandReasonRefusesControlAndUnicodeWhitespace(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{
+		"/usr/local/bin/format-changed ./x",
+		"/usr/local/bin/format-changed --quiet",
+		"/usr/local/bin/format-changed​",
+		"/usr/local/bin/format-changed\v--quiet",
+		"/usr/local/bin/format-changed\f--quiet",
+		"/usr/local/bin/format-changed\x00",
+		"/usr/local/bin/format-changed\x1b[0m",
+		"/usr/local/bin/format-changed\u0085--quiet",
+	} {
+		if got := HookCommandReason(command, root); got != ReasonReferencedFileUnverifiable {
+			t.Errorf("HookCommandReason(%q) = %q", command, got)
+		}
+	}
+	if got := HookCommandReason("/usr/local/bin/format-changed\t--quiet", root); got != "" {
+		t.Errorf("tab separated command refused: %q", got)
+	}
+	for name, server := range map[string]map[string]any{
+		"command": {"command": "/usr/local/bin/docs-mcp "},
+		"arg":     {"command": "/usr/local/bin/docs-mcp", "args": []string{"--stdio "}},
+		"env":     {"command": "/usr/local/bin/docs-mcp", "env": map[string]string{"TOKEN": "abc\x00"}},
+		"env key": {"command": "/usr/local/bin/docs-mcp", "env": map[string]string{"TOKEN​": "abc"}},
+	} {
+		if got := MCPCommandReason(server, root); got != ReasonReferencedFileUnverifiable {
+			t.Errorf("%s: MCPCommandReason = %q", name, got)
+		}
+	}
+}
+
 func TestResolveRefusesHooksOnDecisionEvents(t *testing.T) {
 	for _, event := range []string{"PreToolUse", "UserPromptSubmit", "PermissionRequest", "PreCompact"} {
 		root := t.TempDir()
