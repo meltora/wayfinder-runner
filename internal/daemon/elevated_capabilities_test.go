@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/elevatedcapability"
 	"github.com/example/app-runner/internal/isolation"
+	"github.com/example/app-runner/internal/validation"
 )
 
 func elevatedTestDigest(content string) string {
@@ -107,6 +110,57 @@ func TestJobRunnerAppliesGrantsOnlyToTheirRepositoryCheckout(t *testing.T) {
 	}
 	if reason := elevatedOutcomeReasons(jr)["mcp"]; reason != elevatedcapability.ReasonDeclarationUnreadable {
 		t.Fatalf("reason = %s", reason)
+	}
+}
+
+func TestJobRunnerPublishesElevatedCapabilityOutcomesOnce(t *testing.T) {
+	jr, events := testJobRunner(t)
+	grantRunner, _ := elevatedTestRunner(t)
+	jr.workDir, jr.repositories = grantRunner.workDir, grantRunner.repositories
+	jr.job.ElevatedCapabilities = grantRunner.job.ElevatedCapabilities
+	jr.resolveElevatedCapabilities("claude", false, true)
+	jr.publishElevatedCapabilityOutcomes(context.Background())
+	jr.publishElevatedCapabilityOutcomes(context.Background())
+	published := events.byKind(v1.EventKindElevatedCapabilityOutcomes)
+	if len(published) != 1 {
+		t.Fatalf("published = %v", published)
+	}
+	raw, _ := json.Marshal(published[0])
+	var event v1.ElevatedCapabilityOutcomesEvent
+	if err := json.Unmarshal(raw, &event); err != nil {
+		t.Fatal(err)
+	}
+	if err := validation.ElevatedCapabilityOutcomesEvent(event); err != nil {
+		t.Fatalf("published invalid event: %v", err)
+	}
+	got := map[string]v1.ElevatedCapabilityOutcome{}
+	for _, outcome := range event.Outcomes {
+		got[outcome.RequestID] = outcome
+	}
+	if len(got) != 3 || !got["host"].Applied || got["mcp"].Reason != "container_program_unverifiable" || got["old"].Reason != "expired" {
+		t.Fatalf("outcomes = %+v", event.Outcomes)
+	}
+	if event.AgentRunAuthority != nil {
+		t.Fatalf("authority = %+v", event.AgentRunAuthority)
+	}
+}
+
+func TestJobRunnerSkipsOutcomesWithoutGrants(t *testing.T) {
+	jr, events := testJobRunner(t)
+	jr.resolveElevatedCapabilities("claude", false, false)
+	jr.publishElevatedCapabilityOutcomes(context.Background())
+	if published := events.byKind(v1.EventKindElevatedCapabilityOutcomes); len(published) != 0 {
+		t.Fatalf("published = %v", published)
+	}
+}
+
+func TestElevatedCapabilityReasonsMatchWireContract(t *testing.T) {
+	wire := make([]string, 0, len(elevatedcapability.Reasons))
+	for _, reason := range elevatedcapability.Reasons {
+		wire = append(wire, string(reason))
+	}
+	if !reflect.DeepEqual(wire, v1.ElevatedCapabilityOutcomeReasons) {
+		t.Fatalf("resolver reasons %v differ from wire reasons %v", wire, v1.ElevatedCapabilityOutcomeReasons)
 	}
 }
 

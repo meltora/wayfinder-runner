@@ -222,6 +222,14 @@ func SanitizedLogEvent(value v1.SanitizedLogEvent) error {
 
 func manifestBoundAgentEvent(kind v1.JobKind, leaseID, jobID, attemptID, manifestID, manifestDigest string,
 	fencingToken uint64, observedAt time.Time, authority v1.AgentRunAuthority) error {
+	if err := manifestBoundEvent(kind, leaseID, jobID, attemptID, manifestID, manifestDigest, fencingToken, observedAt); err != nil {
+		return err
+	}
+	return AgentRunAuthority(authority)
+}
+
+func manifestBoundEvent(kind v1.JobKind, leaseID, jobID, attemptID, manifestID, manifestDigest string,
+	fencingToken uint64, observedAt time.Time) error {
 	if kind != v1.JobKindPlan && kind != v1.JobKindBuild {
 		return fmt.Errorf("manifest kind is invalid")
 	}
@@ -236,5 +244,5 @@ func manifestBoundAgentEvent(kind v1.JobKind, leaseID, jobID, attemptID, manifes
 	if fencingToken == 0 || fencingToken > maxJSONSafeInteger || observedAt.IsZero() {
 		return fmt.Errorf("manifest event fence or observation time is invalid")
 	}
-	return AgentRunAuthority(authority)
+	return nil
 }

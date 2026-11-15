@@ -19,6 +19,10 @@ Grants travel in `elevated_capabilities` with `schema_version` 2. A `hook` or `m
 
 Under Docker isolation the agent runs in the job image, not on the host, so the runner cannot check that an absolute program path names the same file inside the container. It refuses every hook grant and every stdio MCP server (one with `command`) with `container_program_unverifiable`. Remote MCP servers (`url` only) and `network_access` grants still apply. The container home `/home/runner` is also a refused directory.
 
+## Outcome reporting
+
+After the job start evidence is recorded, the runner sends one `elevated_capability_outcomes` event (`schema_version` 1) for a job that carried grants. It is manifest bound like `run_network_policy`, carries `agent_run_authority` when the job has one, and lists every grant as `{request_id, applied, reason}`, where `applied` is true exactly when `reason` is `applied`. The reasons are pinned by `v1.ElevatedCapabilityOutcomeReasons`, which a daemon test keeps equal to the resolver's `elevatedcapability.Reasons`. `content_digest_sha256` is the command content digest of `{schema_version, outcomes}`. The event uses a stable id, `elevated-capability-outcomes-` plus the job start suffix, so a resend is deduplicated. Kinds and keys are not sent; the control plane already knows them from the request ids.
+
 ## Network hosts
 
 - A `network_access` key is a bare lowercase host or `*.` followed by one. A wildcard directly over a listed public suffix (`wildcardForbiddenSuffixes`, for example `co.uk`, `github.io`) is refused.

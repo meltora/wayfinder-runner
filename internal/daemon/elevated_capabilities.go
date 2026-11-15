@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"time"
 
+	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/elevatedcapability"
 	"github.com/example/app-runner/internal/isolation"
+	"github.com/example/app-runner/internal/validation"
 )
 
 func (jr *jobRunner) elevatedProtectedDirs(container bool) []string {
@@ -36,4 +39,30 @@ func (jr *jobRunner) resolveElevatedCapabilities(adapter string, readOnly, conta
 			"request_id", outcome.RequestID, "kind", string(outcome.Kind), "applied", outcome.Applied(), "reason", string(outcome.Reason))
 	}
 	return resolution.Grants
+}
+
+func (jr *jobRunner) publishElevatedCapabilityOutcomes(ctx context.Context) {
+	if jr.job.ElevatedCapabilities == nil || len(jr.elevatedOutcomes) == 0 || !jr.startEvidenceRecorded() {
+		return
+	}
+	event := v1.ElevatedCapabilityOutcomesEvent{
+		Kind: v1.EventKindElevatedCapabilityOutcomes, ManifestKind: jr.job.Kind, LeaseID: jr.job.LeaseID,
+		JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, ManifestID: jr.job.ManifestID,
+		ManifestDigest: jr.job.ManifestDigest, FencingToken: jr.job.FencingToken, ObservedAt: time.Now().UTC(),
+		AgentRunAuthority: jr.job.AgentRunAuthority, SchemaVersion: v1.ElevatedCapabilityOutcomesSchemaVersion,
+	}
+	for _, outcome := range jr.elevatedOutcomes {
+		event.Outcomes = append(event.Outcomes, v1.ElevatedCapabilityOutcome{
+			RequestID: outcome.RequestID, Applied: outcome.Applied(), Reason: string(outcome.Reason),
+		})
+	}
+	event.ContentDigestSHA256 = v1.ElevatedCapabilityOutcomesContentDigest(event)
+	if err := validation.ElevatedCapabilityOutcomesEvent(event); err != nil {
+		jr.logger.Warn("reject invalid elevated capability outcomes", "err", err)
+		return
+	}
+	eventID := "elevated-capability-outcomes-" + jobStartedEventID(jr.job)[len("job-started-"):]
+	if _, err := jr.d.sendEventWithStableID(ctx, eventID, event); err != nil {
+		jr.logger.Warn("publish elevated capability outcomes", "err", err)
+	}
 }

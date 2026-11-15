@@ -757,6 +757,7 @@ func (jr *jobRunner) run() {
 	}
 	jr.procMu.Unlock()
 	jr.publishRunNetworkPolicy(ctx)
+	jr.publishElevatedCapabilityOutcomes(ctx)
 
 	exitErr := proc.Wait()
 	removePromptFile()
