@@ -295,6 +295,22 @@ func TestNameReasonRefusesEditorsAndMacroProcessors(t *testing.T) {
 	}
 }
 
+func TestNameReasonRefusesMoreProjectRunners(t *testing.T) {
+	for _, program := range []string{
+		"zig", "mise", "direnv", "nix-shell", "nix", "nix-build", "devbox", "devenv", "asdf", "vagrant", "gulp",
+		"grunt", "invoke", "fab", "mage", "rebar3", "dune", "cdk", "serverless", "sls", "nodemon", "pm2", "forever",
+		"watchexec", "entr", "foreman", "honcho", "overmind", "concurrently", "npm-run-all", "run-s", "wireit",
+		"xmake", "premake5", "waf", "buck2", "sam", "wrangler", "karma", "nyc", "phpstan", "psalm", "robot",
+		"behave", "nose2", "jake", "brunch", "ember", "ng", "expo", "storybook", "opam", "esy", "elm", "flutter",
+		"tuist", "xcodebuild", "fastlane", "pod", "carthage", "bundler", "thor", "hanami", "artisan", "cake",
+		"nuke", "fake", "psake", "rush", "bit", "moon", "proto",
+	} {
+		if got := nameReason("/usr/local/bin/" + program); got != ReasonCommandReferencesRepositoryFile {
+			t.Errorf("nameReason(%q) = %q", program, got)
+		}
+	}
+}
+
 func TestResolveRefusesHooksOnDecisionEvents(t *testing.T) {
 	for _, event := range []string{"PreToolUse", "UserPromptSubmit", "PermissionRequest", "PreCompact"} {
 		root := t.TempDir()

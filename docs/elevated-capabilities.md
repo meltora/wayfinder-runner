@@ -1,0 +1,13 @@
+# Elevated capabilities on the runner
+
+An organization admin can approve a Claude Code hook declaration or a stdio MCP server declaration from a repository by its SHA-256 digest. The runner enables an approved declaration only when the file still matches the digest and `internal/elevatedcapability/command_reference.go` finds no command that could run repository-controlled code.
+
+## Command checks
+
+- The program must be an absolute path outside the checkout, its parent directory, the runner state and configuration directories, the home, cache and config directories, temporary directories and `/proc` or `/dev/fd` style device paths.
+- Shells, interpreters, editors, macro processors, wrappers that run another program, and project runners are refused by name. The name is matched on the path, on its resolved symlink target, and on the part before the first `.` or `-`.
+- Hook commands may not contain shell metacharacters, control characters, invalid UTF-8 or any whitespace other than space and tab.
+
+## Limitation
+
+The program name denylists (`unverifiablePrograms`, `wrapperPrograms`, `interpreterPrefixes` and `projectRunnerPrograms`) are not complete. Many tools can load configuration, plugins or scripts from the working directory, and new ones appear all the time. The checks catch common cases; they do not prove a command is safe. The admin's digest approval of the exact declaration remains the gate, and admins should approve only commands whose behaviour they know.

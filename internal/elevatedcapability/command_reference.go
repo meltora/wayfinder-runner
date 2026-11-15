@@ -46,6 +46,13 @@ var projectRunnerPrograms = setOf(
 	"pulumi", "ansible", "ansible-playbook", "cmake", "ctest", "ninja", "meson", "scons", "bazel", "bazelisk",
 	"buck", "please", "pants", "dotnet", "msbuild", "mix", "swift", "stack", "cabal", "golangci-lint",
 	"goreleaser", "air", "docker-compose", "skaffold", "tilt", "helm", "kustomize", "earthly", "dagger",
+	"zig", "mise", "direnv", "nix-shell", "nix", "nix-build", "devbox", "devenv", "asdf", "vagrant", "gulp",
+	"grunt", "invoke", "fab", "mage", "rebar", "dune", "cdk", "serverless", "sls", "nodemon", "pm2", "forever",
+	"watchexec", "entr", "foreman", "honcho", "overmind", "concurrently", "npm-run-all", "run-s", "run-p",
+	"wireit", "xmake", "premake", "waf", "sam", "wrangler", "karma", "nyc", "phpstan", "psalm", "robot",
+	"behave", "nose", "jake", "brunch", "ember", "ng", "expo", "storybook", "opam", "esy", "elm", "flutter",
+	"tuist", "xcodebuild", "fastlane", "pod", "carthage", "bundler", "thor", "hanami", "artisan", "cake",
+	"nuke", "fake", "psake", "rush", "bit", "moon", "proto",
 )
 
 var programSuffixes = []string{".exe", ".cmd", ".bat", ".ps1"}
