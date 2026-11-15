@@ -4,15 +4,31 @@ import (
 	"time"
 
 	"github.com/example/app-runner/internal/elevatedcapability"
+	"github.com/example/app-runner/internal/isolation"
 )
 
-func (jr *jobRunner) resolveElevatedCapabilities(adapter, workDir string, readOnly bool) elevatedcapability.Grants {
+func (jr *jobRunner) elevatedProtectedDirs(container bool) []string {
 	var protectedDirs []string
 	if jr.d != nil && jr.d.cfg.StateDir != "" {
-		protectedDirs = []string{jr.d.cfg.StateDir}
+		protectedDirs = append(protectedDirs, jr.d.cfg.StateDir)
+	}
+	if jr.workDir != "" {
+		protectedDirs = append(protectedDirs, jr.workDir)
+	}
+	if container {
+		protectedDirs = append(protectedDirs, isolation.ContainerHome)
+	}
+	return protectedDirs
+}
+
+func (jr *jobRunner) resolveElevatedCapabilities(adapter string, readOnly, container bool) elevatedcapability.Grants {
+	repositories := map[string]string{}
+	for _, repository := range jr.repositories {
+		repositories[repository.ID] = repository.WorkDir
 	}
 	resolution := elevatedcapability.Resolve(elevatedcapability.Input{
-		Grants: jr.job.ElevatedCapabilities, WorkDir: workDir, ProtectedDirs: protectedDirs, Adapter: adapter, ReadOnly: readOnly, Now: time.Now().UTC(),
+		Grants: jr.job.ElevatedCapabilities, Repositories: repositories, ProtectedDirs: jr.elevatedProtectedDirs(container),
+		Adapter: adapter, ReadOnly: readOnly, ContainerIsolation: container, Now: time.Now().UTC(),
 	})
 	jr.elevatedOutcomes = resolution.Outcomes
 	for _, outcome := range resolution.Outcomes {

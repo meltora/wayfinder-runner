@@ -121,8 +121,9 @@ func setOf(values ...string) map[string]bool {
 }
 
 type commandScope struct {
-	workDir string
-	roots   []string
+	workDir   string
+	roots     []string
+	container bool
 }
 
 func newCommandScope(workDir string, protectedDirs []string) commandScope {

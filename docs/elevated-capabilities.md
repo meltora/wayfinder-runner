@@ -11,6 +11,14 @@ An organization admin can approve a Claude Code hook declaration or a stdio MCP 
 - MCP server environment keys must be letters, digits and `_`, not starting with a digit. Keys that change how a program loads code or configuration are refused outright, compared case-insensitively: for example `LD_*`, `DYLD_*`, `BASH_ENV`, `ENV`, `BASH_FUNC_*`, `NODE_*`, `NPM_CONFIG_*`, `PYTHON*`, `PERL*`, `RUBY*`, `GIT_*`, `XDG_*`, `JAVA_*`, `HOME`, `ZDOTDIR`, `SHELL`, `EDITOR`, `TMPDIR` and `CLASSPATH`. Keys ending in `PATH` or `_DIRS`, including `PATH` itself, hold a colon-separated list in which every segment must be a non-empty absolute path outside the refused directories. Keys ending in `_DIR`, `_HOME`, `_FILE` or `_ROOT` must be one such absolute path. Other values may not name a path under the refused directories or a relative path.
 - Hook commands may not contain shell metacharacters, control characters, invalid UTF-8 or any whitespace other than space and tab.
 
+## Repository binding
+
+Grants travel in `elevated_capabilities` with `schema_version` 2. A `hook` or `mcp_server` grant carries the `repository_id` of the repository whose declaration the admin approved. The runner reads the declaration only from that repository's checkout, so the same path in another repository of the job is never enabled. A declaration grant without `repository_id` is refused with `repository_not_bound`, and one whose repository is not checked out in this job with `repository_not_in_job`. `network_access` grants are not tied to a repository. Every checkout of the job, the workspace root and the runner state directory count as refused directories for the command checks.
+
+## Docker isolation
+
+Under Docker isolation the agent runs in the job image, not on the host, so the runner cannot check that an absolute program path names the same file inside the container. It refuses every hook grant and every stdio MCP server (one with `command`) with `container_program_unverifiable`. Remote MCP servers (`url` only) and `network_access` grants still apply. The container home `/home/runner` is also a refused directory.
+
 ## Network hosts
 
 - A `network_access` key is a bare lowercase host or `*.` followed by one. A wildcard directly over a listed public suffix (`wildcardForbiddenSuffixes`, for example `co.uk`, `github.io`) is refused.

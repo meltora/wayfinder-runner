@@ -487,7 +487,7 @@ func (jr *jobRunner) run() {
 	agentSockPath := mcpSrv.SocketPath
 
 	adapterName := d.cfg.Provider
-	elevated := jr.resolveElevatedCapabilities(adapterName, workDir, job.Kind == v1.JobKindPlan)
+	elevated := jr.resolveElevatedCapabilities(adapterName, job.Kind == v1.JobKindPlan, isDocker)
 	adapter, err := provider.For(adapterName)
 	if err != nil {
 		finish(
