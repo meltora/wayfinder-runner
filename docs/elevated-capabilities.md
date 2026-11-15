@@ -6,6 +6,8 @@ An organization admin can approve a Claude Code hook declaration or a stdio MCP 
 
 - The program must be an absolute path outside the checkout, its parent directory, the runner state and configuration directories, the home, cache and config directories, temporary directories and `/proc` or `/dev/fd` style device paths.
 - Shells, interpreters, editors, macro processors, wrappers that run another program, and project runners are refused by name. The name is matched on the path, on its resolved symlink target, and on the part before the first `.` or `-`.
+- Every argument that is not an option flag must be an `http` or `https` URL or an absolute path outside those directories. A bare word such as `macros` is refused whether or not that file exists yet, because the agent can create it after the check. Arguments after `--` are treated the same way.
+- Option names may not contain `/`, `\` or `.`. An option value after `=` is split on every `=`, `,` and `:`, and each segment must meet the argument rule, so `--checkpoint-action=exec=make` and `--path=/usr/lib:` are refused. A value that is a URL is accepted whole.
 - Hook commands may not contain shell metacharacters, control characters, invalid UTF-8 or any whitespace other than space and tab.
 
 ## Limitation

@@ -311,6 +311,63 @@ func TestNameReasonRefusesMoreProjectRunners(t *testing.T) {
 	}
 }
 
+func TestHookCommandReasonRefusesRelativeArgumentsThatDoNotExistYet(t *testing.T) {
+	root := t.TempDir()
+	for _, command := range []string{
+		"/usr/local/bin/format-changed macros",
+		"/usr/local/bin/format-changed --config later.toml",
+		"/usr/local/bin/format-changed -- -payload",
+		"/usr/local/bin/format-changed -I.",
+		"/usr/local/bin/format-changed -Isrc/include",
+		"/usr/local/bin/format-changed 30",
+		"/usr/local/bin/format-changed KEY=value",
+	} {
+		if got := HookCommandReason(command, root); got != ReasonCommandReferencesRepositoryFile {
+			t.Errorf("HookCommandReason(%q) = %q", command, got)
+		}
+	}
+	for _, command := range []string{
+		"/usr/local/bin/format-changed --quiet -v -",
+		"/usr/local/bin/format-changed /usr/share/dict/words",
+		"/usr/local/bin/format-changed -o /usr/share/out https://hooks.example.com/a",
+	} {
+		if got := HookCommandReason(command, root); got != "" {
+			t.Errorf("HookCommandReason(%q) = %q", command, got)
+		}
+	}
+	for name, args := range map[string][]string{
+		"positional":      {"payload"},
+		"option value":    {"--root", "src2"},
+		"after separator": {"--", "-payload"},
+		"spaced value":    {"--header", "Authorization: Bearer x"},
+	} {
+		server := map[string]any{"command": "/usr/local/bin/docs-mcp", "args": args}
+		if got := MCPCommandReason(server, root); got != ReasonCommandReferencesRepositoryFile {
+			t.Errorf("%s: MCPCommandReason = %q", name, got)
+		}
+	}
+}
+
+func TestHookCommandReasonChecksEveryOptionValueSegment(t *testing.T) {
+	root := t.TempDir()
+	for command, want := range map[string]Reason{
+		"/usr/bin/tar --checkpoint-action=exec=make":           ReasonReferencedFileUnverifiable,
+		"/usr/bin/tar --checkpoint-action=run=/usr/bin/make":   ReasonCommandReferencesRepositoryFile,
+		"/usr/local/bin/fmt --checkpoint-action=exec=/bin/sh":  ReasonReferencedFileUnverifiable,
+		"/usr/local/bin/fmt --plugins=/usr/lib/a,./b":          ReasonCommandReferencesRepositoryFile,
+		"/usr/local/bin/fmt --path=/usr/lib:src":               ReasonCommandReferencesRepositoryFile,
+		"/usr/local/bin/fmt --path=/usr/lib:":                  ReasonCommandReferencesRepositoryFile,
+		"/usr/local/bin/fmt --run=/usr/x:python3":              ReasonReferencedFileUnverifiable,
+		"/usr/local/bin/fmt --out=" + root + "/x":              ReasonCommandReferencesRepositoryFile,
+		"/usr/local/bin/fmt --out=/usr/share/x,/usr/lib/y":     "",
+		"/usr/local/bin/fmt --url=https://hooks.example.com:8": "",
+	} {
+		if got := HookCommandReason(command, root); got != want {
+			t.Errorf("HookCommandReason(%q) = %q, want %q", command, got, want)
+		}
+	}
+}
+
 func TestResolveRefusesHooksOnDecisionEvents(t *testing.T) {
 	for _, event := range []string{"PreToolUse", "UserPromptSubmit", "PermissionRequest", "PreCompact"} {
 		root := t.TempDir()

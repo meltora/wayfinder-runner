@@ -283,29 +283,73 @@ func (scope commandScope) programReason(program string, args []string) Reason {
 	if scope.referencesRepository(program) {
 		return ReasonCommandReferencesRepositoryFile
 	}
+	return scope.argumentsReason(args)
+}
+
+func (scope commandScope) argumentsReason(args []string) Reason {
+	positionalOnly := false
 	for _, arg := range args {
-		if reason := scope.argumentReason(arg); reason != "" {
+		var reason Reason
+		switch {
+		case positionalOnly || !strings.HasPrefix(arg, "-"):
+			reason = scope.positionalReason(arg)
+		case arg == "--":
+			positionalOnly = true
+		case arg != "-":
+			reason = scope.optionReason(arg)
+		}
+		if reason != "" {
 			return reason
 		}
 	}
 	return ""
 }
 
-func (scope commandScope) argumentReason(arg string) Reason {
-	tokens := []string{arg}
-	if _, value, found := strings.Cut(arg, "="); found {
-		tokens = append(tokens, value)
+func (scope commandScope) optionReason(arg string) Reason {
+	name, value, found := strings.Cut(arg, "=")
+	if strings.ContainsAny(name, "/\\.") {
+		return ReasonCommandReferencesRepositoryFile
 	}
-	for _, token := range tokens {
-		if isURL(token) {
+	if !found || isURL(value) {
+		return ""
+	}
+	for _, piece := range splitKeepingEmpty(value, "=,") {
+		if isURL(piece) {
 			continue
 		}
-		if reason := nameReason(token); reason != "" {
-			return reason
+		for _, segment := range splitKeepingEmpty(piece, ":") {
+			if reason := scope.positionalReason(segment); reason != "" {
+				return reason
+			}
 		}
-		if scope.referencesRepository(token) {
-			return ReasonCommandReferencesRepositoryFile
+	}
+	return ""
+}
+
+func splitKeepingEmpty(value, separators string) []string {
+	parts := []string{""}
+	for _, character := range value {
+		if strings.ContainsRune(separators, character) {
+			parts = append(parts, "")
+			continue
 		}
+		parts[len(parts)-1] += string(character)
+	}
+	return parts
+}
+
+func (scope commandScope) positionalReason(token string) Reason {
+	if token == "" {
+		return ReasonCommandReferencesRepositoryFile
+	}
+	if isURL(token) {
+		return ""
+	}
+	if reason := nameReason(token); reason != "" {
+		return reason
+	}
+	if !filepath.IsAbs(token) || scope.referencesRepository(token) {
+		return ReasonCommandReferencesRepositoryFile
 	}
 	return ""
 }
