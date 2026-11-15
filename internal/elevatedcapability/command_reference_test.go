@@ -368,6 +368,60 @@ func TestHookCommandReasonChecksEveryOptionValueSegment(t *testing.T) {
 	}
 }
 
+func TestMCPCommandReasonRefusesDangerousEnvironment(t *testing.T) {
+	t.Setenv("HOME", "/home/runner-probe")
+	root := t.TempDir()
+	mcp := func(key, value string) map[string]any {
+		return map[string]any{"command": "/usr/local/bin/docs-mcp", "env": map[string]string{key: value}}
+	}
+	for name, server := range map[string]map[string]any{
+		"empty trailing library segment": mcp("LD_LIBRARY_PATH", "/usr/lib:"),
+		"empty leading path segment":     mcp("PATH", ":/usr/bin"),
+		"empty middle path segment":      mcp("PATH", "/usr/bin::/bin"),
+		"dot path segment":               mcp("PATH", "/usr/bin:."),
+		"relative path segment":          mcp("PATH", "/usr/bin:bin"),
+		"empty path":                     mcp("PATH", ""),
+		"relative manpath":               mcp("MANPATH", "man"),
+		"relative dir":                   mcp("DOCS_DIR", "docs"),
+		"relative home":                  mcp("JAVA_HOME", "jdk"),
+		"relative file":                  mcp("SETTINGS_FILE", "settings"),
+		"lowercase preload":              mcp("ld_preload", "/usr/lib/x.so"),
+		"invalid key":                    mcp("A-B", "1"),
+		"empty key":                      mcp("", "1"),
+	} {
+		if got := MCPCommandReason(server, root); got == "" {
+			t.Errorf("%s: MCPCommandReason accepted", name)
+		}
+	}
+	for _, key := range []string{
+		"LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "BASH_ENV", "ENV",
+		"BASH_FUNC_x%%", "NODE_OPTIONS", "NODE_PATH", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PERL5LIB",
+		"PERL5OPT", "RUBYOPT", "RUBYLIB", "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_COUNT", "GIT_EXEC_PATH",
+		"GIT_SSH_COMMAND", "HOME", "ZDOTDIR", "XDG_CONFIG_HOME", "XDG_DATA_DIRS", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS",
+		"JDK_JAVA_OPTIONS", "CLASSPATH", "LUA_INIT", "LUA_PATH", "GEM_PATH", "NPM_CONFIG_PREFIX", "PROMPT_COMMAND",
+		"PS4", "SHELLOPTS", "GLIBC_TUNABLES", "GCONV_PATH", "PHPRC", "PHP_INI_SCAN_DIR", "LESSOPEN", "EDITOR",
+		"SHELL", "TMPDIR",
+	} {
+		if got := MCPCommandReason(mcp(key, "/usr/share/x"), root); got != ReasonCommandReferencesRepositoryFile {
+			t.Errorf("env key %s = %q", key, got)
+		}
+	}
+	for name, server := range map[string]map[string]any{
+		"absolute path":  mcp("PATH", "/usr/local/bin:/usr/bin:/bin"),
+		"token":          mcp("API_TOKEN", "abc.def-ghi"),
+		"url":            mcp("DOCS_URL", "https://docs.example.com:8443/v1"),
+		"absolute dir":   mcp("DOCS_DIR", "/usr/share/docs"),
+		"host and port":  mcp("UPSTREAM", "localhost:8080"),
+		"log level":      mcp("LOG_LEVEL", "debug"),
+		"comma list":     mcp("SCOPES", "read,write"),
+		"empty optional": mcp("OPTIONAL_FLAG", ""),
+	} {
+		if got := MCPCommandReason(server, root); got != "" {
+			t.Errorf("%s: MCPCommandReason = %q", name, got)
+		}
+	}
+}
+
 func TestResolveRefusesHooksOnDecisionEvents(t *testing.T) {
 	for _, event := range []string{"PreToolUse", "UserPromptSubmit", "PermissionRequest", "PreCompact"} {
 		root := t.TempDir()

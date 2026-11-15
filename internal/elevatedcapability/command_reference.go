@@ -246,10 +246,101 @@ func (scope commandScope) mcpCommandReason(server map[string]any) Reason {
 	if reason := scope.programReason(command, args); reason != "" {
 		return reason
 	}
-	for _, value := range env {
-		if scope.envValueReferencesRefusedRoot(value) {
-			return ReasonCommandReferencesRepositoryFile
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if reason := scope.envReason(key, env[key]); reason != "" {
+			return reason
 		}
+	}
+	return ""
+}
+
+var dangerousEnvKeys = setOf(
+	"ENV", "BASH_ENV", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND", "IFS", "HOME", "ZDOTDIR", "SHELL",
+	"EDITOR", "VISUAL", "PAGER", "MANPAGER", "BROWSER", "LESSOPEN", "LESSCLOSE", "SSH_ASKPASS", "SUDO_ASKPASS",
+	"TMPDIR", "CLASSPATH", "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", "TCLLIBPATH", "PHPRC",
+	"PHP_INI_SCAN_DIR", "GLIBC_TUNABLES", "GCONV_PATH", "LOCPATH", "NLSPATH", "HOSTALIASES", "GOFLAGS", "GOPATH",
+	"GOROOT", "CARGO_HOME", "RUSTUP_HOME", "RUSTC_WRAPPER", "CC", "CXX", "LDFLAGS", "CFLAGS", "CPPFLAGS",
+)
+
+var dangerousEnvKeyPrefixes = []string{
+	"LD_", "DYLD_", "BASH_FUNC_", "NODE_", "NPM_CONFIG_", "YARN_", "PNPM_", "BUN_", "DENO_", "PYTHON", "PERL",
+	"RUBY", "GEM_", "BUNDLE_", "GIT_", "LUA_", "R_", "XDG_", "DOTNET_", "COMPOSER_", "JAVA_",
+}
+
+var envPathListSuffixes = []string{"PATH", "_DIRS"}
+
+var envPathSuffixes = []string{"_DIR", "_HOME", "_FILE", "_ROOT"}
+
+func dangerousEnvKey(key string) bool {
+	upper := strings.ToUpper(key)
+	if dangerousEnvKeys[upper] {
+		return true
+	}
+	for _, prefix := range dangerousEnvKeyPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func validEnvKey(key string) bool {
+	if key == "" || (key[0] >= '0' && key[0] <= '9') {
+		return false
+	}
+	for _, character := range key {
+		if character != '_' && (character > 127 || !unicode.IsLetter(character) && !unicode.IsDigit(character)) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasAnySuffix(value string, suffixes []string) bool {
+	for _, suffix := range suffixes {
+		if strings.HasSuffix(value, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (scope commandScope) envReason(key, value string) Reason {
+	if dangerousEnvKey(key) {
+		return ReasonCommandReferencesRepositoryFile
+	}
+	if !validEnvKey(key) {
+		return ReasonReferencedFileUnverifiable
+	}
+	upper := strings.ToUpper(key)
+	if hasAnySuffix(upper, envPathListSuffixes) {
+		for _, segment := range splitKeepingEmpty(value, ":") {
+			if reason := scope.envPathReason(segment); reason != "" {
+				return reason
+			}
+		}
+		return ""
+	}
+	if hasAnySuffix(upper, envPathSuffixes) {
+		return scope.envPathReason(value)
+	}
+	if isURL(value) {
+		return ""
+	}
+	if scope.envValueReferencesRefusedRoot(value) {
+		return ReasonCommandReferencesRepositoryFile
+	}
+	return ""
+}
+
+func (scope commandScope) envPathReason(segment string) Reason {
+	if !filepath.IsAbs(segment) || scope.referencesRepository(segment) {
+		return ReasonCommandReferencesRepositoryFile
 	}
 	return ""
 }
@@ -263,7 +354,8 @@ func (scope commandScope) envValueReferencesRefusedRoot(value string) bool {
 	for _, part := range strings.FieldsFunc(value, func(character rune) bool {
 		return character == ' ' || character == '\t' || character == ':' || character == '=' || character == ','
 	}) {
-		if scope.referencesRepository(part) {
+		pathLike := filepath.IsAbs(part) || strings.ContainsAny(part, "/\\") || strings.HasPrefix(part, ".")
+		if pathLike && scope.referencesRepository(part) {
 			return true
 		}
 	}
