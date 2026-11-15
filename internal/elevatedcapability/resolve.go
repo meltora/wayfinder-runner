@@ -35,6 +35,7 @@ const (
 	ReasonRepositoryNotBound              Reason = "repository_not_bound"
 	ReasonRepositoryNotInJob              Reason = "repository_not_in_job"
 	ReasonContainerProgramUnverifiable    Reason = "container_program_unverifiable"
+	ReasonAgentPackNotInJob               Reason = "agent_pack_not_in_job"
 )
 
 var Reasons = []Reason{
@@ -42,7 +43,7 @@ var Reasons = []Reason{
 	ReasonDigestMismatch, ReasonDeclarationInvalid, ReasonServerNameConflict, ReasonHostInvalid, ReasonHookScriptOnly,
 	ReasonRemoteHostNotApproved, ReasonCommandReferencesRepositoryFile, ReasonReferencedFileUnverifiable,
 	ReasonProgramNotAbsolute, ReasonHookEventNotAllowed, ReasonRepositoryNotBound, ReasonRepositoryNotInJob,
-	ReasonContainerProgramUnverifiable,
+	ReasonContainerProgramUnverifiable, ReasonAgentPackNotInJob,
 }
 
 type Outcome struct {
@@ -77,6 +78,8 @@ func (grants Grants) MCPServerNames() []string {
 type Input struct {
 	Grants             *v1.ElevatedCapabilityGrants
 	Repositories       map[string]string
+	AgentPackDigest    string
+	AgentPackDir       string
 	ProtectedDirs      []string
 	Adapter            string
 	ReadOnly           bool
@@ -110,6 +113,9 @@ func Resolve(input Input) Resolution {
 	for _, checkout := range input.Repositories {
 		protectedDirs = append(protectedDirs, checkout)
 	}
+	if input.AgentPackDir != "" {
+		protectedDirs = append(protectedDirs, input.AgentPackDir)
+	}
 	sort.Strings(protectedDirs)
 	for _, grant := range grants {
 		if grant.Kind != v1.ElevatedCapabilityNetworkAccess {
@@ -131,10 +137,10 @@ func Resolve(input Input) Resolution {
 		}
 		reason := eligibility(input, grant)
 		if reason == "" {
-			reason = repositoryReason(input, grant)
+			reason = declarationSourceReason(input, grant)
 		}
 		if reason == "" {
-			scope := newCommandScope(input.Repositories[grant.RepositoryID], protectedDirs)
+			scope := newCommandScope(declarationSourceDir(input, grant), protectedDirs)
 			scope.container = input.ContainerIsolation
 			reason = resolution.applyDeclaration(scope, grant, domains)
 		}
@@ -168,7 +174,13 @@ func eligibility(input Input, grant v1.ElevatedCapabilityGrant) Reason {
 	return ""
 }
 
-func repositoryReason(input Input, grant v1.ElevatedCapabilityGrant) Reason {
+func declarationSourceReason(input Input, grant v1.ElevatedCapabilityGrant) Reason {
+	if grant.AgentPackDigest != "" {
+		if input.AgentPackDir == "" || input.AgentPackDigest != grant.AgentPackDigest {
+			return ReasonAgentPackNotInJob
+		}
+		return ""
+	}
 	if grant.RepositoryID == "" {
 		return ReasonRepositoryNotBound
 	}
@@ -176,6 +188,13 @@ func repositoryReason(input Input, grant v1.ElevatedCapabilityGrant) Reason {
 		return ReasonRepositoryNotInJob
 	}
 	return ""
+}
+
+func declarationSourceDir(input Input, grant v1.ElevatedCapabilityGrant) string {
+	if grant.AgentPackDigest != "" {
+		return input.AgentPackDir
+	}
+	return input.Repositories[grant.RepositoryID]
 }
 
 func (resolution *Resolution) applyDeclaration(scope commandScope, grant v1.ElevatedCapabilityGrant, domains map[string]bool) Reason {

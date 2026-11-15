@@ -499,7 +499,7 @@ func (jr *jobRunner) run() {
 		)
 		return
 	}
-	apiKey, err := d.providerAPIKey(adapterName)
+	apiKey, err := d.jobProviderAPIKey(adapterName, job.ProviderAuthMode)
 	if err != nil {
 		jr.logger.Error("provider API key unavailable", "provider", adapterName, "err", redact.KnownSecretsError(err))
 		finish(jr.startupFailureOutcome(v1.JobFailureAgentStart, providerAPIKeyUnavailableMessage), nil)

@@ -200,6 +200,11 @@ func JobSpec(job v1.JobSpec) error {
 			return err
 		}
 	}
+	switch job.ProviderAuthMode {
+	case "", v1.ProviderAuthModeSubscription, v1.ProviderAuthModeAPIKey:
+	default:
+		return fmt.Errorf("provider_auth_mode %q is not supported", job.ProviderAuthMode)
+	}
 	if len(job.RequiredChecks) > MaxRequiredChecks {
 		return fmt.Errorf("job exceeds required-check limit")
 	}

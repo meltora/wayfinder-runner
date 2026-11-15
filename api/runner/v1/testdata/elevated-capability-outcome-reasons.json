@@ -1,0 +1,23 @@
+{
+  "reasons": [
+    "applied",
+    "expired",
+    "adapter_unsupported",
+    "read_only_job",
+    "declaration_unreadable",
+    "digest_mismatch",
+    "declaration_invalid",
+    "server_name_conflict",
+    "host_invalid",
+    "hook_script_not_a_declaration",
+    "remote_host_not_approved",
+    "command_references_repository_file",
+    "referenced_file_unverifiable",
+    "program_not_absolute",
+    "hook_event_not_allowed",
+    "repository_not_bound",
+    "repository_not_in_job",
+    "container_program_unverifiable",
+    "agent_pack_not_in_job"
+  ]
+}

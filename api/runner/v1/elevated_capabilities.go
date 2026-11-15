@@ -23,6 +23,7 @@ type ElevatedCapabilityGrant struct {
 	DeclarationDigest string                 `json:"declaration_digest"`
 	ExpiresAt         time.Time              `json:"expires_at"`
 	RepositoryID      string                 `json:"repository_id,omitempty"`
+	AgentPackDigest   string                 `json:"agent_pack_digest,omitempty"`
 }
 
 type ElevatedCapabilityGrants struct {

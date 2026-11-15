@@ -3,6 +3,7 @@ package daemon
 import (
 	"errors"
 
+	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/apikey"
 	"github.com/example/app-runner/internal/redact"
 )
@@ -34,6 +35,17 @@ func (d *Daemon) providerAPIKey(adapter string) (*providerAPIKeyEnvironment, err
 	}
 	redact.RememberSecret(value)
 	return &providerAPIKeyEnvironment{name: name, value: value}, nil
+}
+
+func (d *Daemon) jobProviderAPIKey(adapter, authMode string) (*providerAPIKeyEnvironment, error) {
+	key, err := d.providerAPIKey(adapter)
+	if err != nil {
+		return nil, err
+	}
+	if key == nil && authMode == v1.ProviderAuthModeAPIKey {
+		return nil, errors.New("project requires provider API-key mode but no provider API key is configured")
+	}
+	return key, nil
 }
 
 func (key *providerAPIKeyEnvironment) entries() []string {

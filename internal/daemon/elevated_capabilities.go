@@ -29,8 +29,13 @@ func (jr *jobRunner) resolveElevatedCapabilities(adapter string, readOnly, conta
 	for _, repository := range jr.repositories {
 		repositories[repository.ID] = repository.WorkDir
 	}
+	packDigest := ""
+	if jr.job.AgentPack != nil {
+		packDigest = jr.job.AgentPack.Digest
+	}
 	resolution := elevatedcapability.Resolve(elevatedcapability.Input{
-		Grants: jr.job.ElevatedCapabilities, Repositories: repositories, ProtectedDirs: jr.elevatedProtectedDirs(container),
+		Grants: jr.job.ElevatedCapabilities, Repositories: repositories,
+		AgentPackDigest: packDigest, AgentPackDir: jr.packDir, ProtectedDirs: jr.elevatedProtectedDirs(container),
 		Adapter: adapter, ReadOnly: readOnly, ContainerIsolation: container, Now: time.Now().UTC(),
 	})
 	jr.elevatedOutcomes = resolution.Outcomes

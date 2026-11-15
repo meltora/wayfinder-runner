@@ -15,9 +15,12 @@ func GrantShapeValid(grant v1.ElevatedCapabilityGrant) bool {
 	if grant.ExpiresAt.IsZero() || !declarationDigestPattern.MatchString(grant.DeclarationDigest) || !validKeyText(grant.Key) {
 		return false
 	}
+	if grant.AgentPackDigest != "" && (grant.RepositoryID != "" || !declarationDigestPattern.MatchString(grant.AgentPackDigest)) {
+		return false
+	}
 	switch grant.Kind {
 	case v1.ElevatedCapabilityNetworkAccess:
-		return true
+		return grant.AgentPackDigest == ""
 	case v1.ElevatedCapabilityHook, v1.ElevatedCapabilityMCPServer:
 		return ValidRepositoryKey(grant.Key)
 	default:

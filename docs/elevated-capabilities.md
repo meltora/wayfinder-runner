@@ -15,6 +15,14 @@ An organization admin can approve a Claude Code hook declaration or a stdio MCP 
 
 Grants travel in `elevated_capabilities` with `schema_version` 2. A `hook` or `mcp_server` grant carries the `repository_id` of the repository whose declaration the admin approved. The runner reads the declaration only from that repository's checkout, so the same path in another repository of the job is never enabled. A declaration grant without `repository_id` is refused with `repository_not_bound`, and one whose repository is not checked out in this job with `repository_not_in_job`. `network_access` grants are not tied to a repository. Every checkout of the job, the workspace root and the runner state directory count as refused directories for the command checks.
 
+## Agent Pack binding
+
+A `hook` or `mcp_server` grant for a declaration shipped in the job's Agent Pack carries `agent_pack_digest` (64 lowercase hex) instead of `repository_id`. The runner reads the declaration only from the installed pack directory (`<job>/pack`) and only when the job's `agent_pack.digest` equals the grant's digest; otherwise it refuses the grant with `agent_pack_not_in_job`. The key follows the same contract as a repository grant, so a pack hook declaration lives under `.claude/hooks/` and ends in `.json`. A grant that carries both `repository_id` and `agent_pack_digest`, a malformed digest, or a `network_access` grant with a pack digest is refused with `declaration_invalid`. The pack directory is a refused directory for the command checks.
+
+## Rollout
+
+Deploy the control plane before the runner: the control plane's strict capability manifest schema must know `protocol_features` before a runner reports it, or the whole manifest is refused. Before deploying a runner that only reads `schema_version` 2 grants, drain `start_job` commands that were queued with `schema_version` 1 grants; a queued v1 command fails validation on the new runner.
+
 ## Docker isolation
 
 Under Docker isolation the agent runs in the job image, not on the host, so the runner cannot check that an absolute program path names the same file inside the container. It refuses every hook grant and every stdio MCP server (one with `command`) with `container_program_unverifiable`. Remote MCP servers (`url` only) and `network_access` grants still apply. The container home `/home/runner` is also a refused directory.
