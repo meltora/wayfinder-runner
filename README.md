@@ -756,6 +756,33 @@ this lease contract and is provisioned at the configured socket.
 Kernel-authenticated verifier IPC is Linux-only; consultation must remain
 disabled on other operating systems.
 
+Every agent job on a restricted Docker network also asks the same verifier for
+job egress rules immediately before the provider starts. The request
+(`schema_version` 2, `kind` `acquire_job_rules`) names the attested network ID,
+network name, policy ID, the job container name and `approved_hosts`: the
+sorted, normalized hosts from approved network-access grants that apply to the
+job (possibly empty), with `approved_hosts_digest`, the lowercase hex SHA-256 of
+the compact JSON array of those hosts. The verifier must allow that container
+to reach exactly those hosts in addition to the policy's base rules, keep every
+other destination denied, and answer with `kind` `job_rules_held`, echoing the
+nonce, network ID, policy ID, container name and hosts digest, plus its
+`enforcement_id`, the `rules_digest` of the effective rule set including the
+job rules, a `lease_id`, `effective: true`,
+`unauthorized_reachability_blocked: true` and `observed_at`. The rules stay
+applied while the authenticated connection is open, with no fixed expiry; the
+verifier must remove them and close the connection if it can no longer hold
+them, and must acknowledge the runner's version 2 `release` with
+`held_through_release` before removing them. The runner kills the provider if
+the connection ends early and fails the job with "host egress rules were not
+held through the run" when the release is not acknowledged. When no verifier
+answers, or it rejects the request, the job still runs: approved hosts stay
+denied at host egress (they remain only in the agent CLI sandbox allowlist), and
+the run reports no verified rules. Control planes that announce run guardrails
+schema version 2 (offered only to runners that advertise the
+`run_network_egress_rules` protocol feature) receive the held enforcement ID,
+rules digest and approved hosts in the `egress_rules` field of the
+`run_network_policy` event.
+
 Start from [`config.example.yaml`](config.example.yaml). Configuration parsing
 rejects unknown fields, insecure service URLs, mutable image tags, invalid
 resource limits, unregistered checks/repositories, and unsafe file permissions.

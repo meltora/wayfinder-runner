@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "type": "event",
+  "id": "evt-run-network-policy-egress-rules-1",
+  "sent_at": "2030-08-14T12:00:01.000Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "kind": "run_network_policy",
+    "manifest_kind": "build",
+    "lease_id": "lease-1",
+    "job_id": "job-1",
+    "attempt_id": "attempt-1",
+    "manifest_id": "manifest-1",
+    "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "fencing_token": 7,
+    "observed_at": "2030-08-14T12:00:01.000Z",
+    "agent_run_authority": {
+      "schema_version": 1,
+      "agent_run_id": "agent-run-1",
+      "step_run_id": "step-run-1",
+      "step_sequence": 1
+    },
+    "isolation": "docker",
+    "job_network": "restricted",
+    "egress_policy_id": "egress-dev",
+    "agent_sandbox_network": "deny_all",
+    "egress_rules": {
+      "enforcement_id": "nft:runner-egress-7",
+      "rules_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "approved_hosts": ["*.npmjs.org", "registry.example.com"],
+      "approved_hosts_digest": "dbd139f5f14c615f81594820e2dd5e1226ea6352555ffbbb0c91fa345ab8ecd0"
+    },
+    "content_digest_sha256": "a46d220e24b08c24c85f60884048011eb7299754ebc748d0be044fab4bb9422e"
+  }
+}

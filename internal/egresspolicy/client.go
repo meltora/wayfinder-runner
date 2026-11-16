@@ -90,6 +90,7 @@ type Lease struct {
 	ExpiresAt time.Time
 
 	conn             net.Conn
+	schemaVersion    int
 	releaseNonce     string
 	observedAt       time.Time
 	now              func() time.Time
@@ -122,7 +123,7 @@ func (lease *Lease) Complete(ctx context.Context) error {
 			return
 		}
 		if err := encodeMessage(lease.conn, releaseRequest{
-			SchemaVersion: SchemaVersion, Kind: "release", Nonce: lease.releaseNonce, LeaseID: lease.ID,
+			SchemaVersion: lease.schemaVersion, Kind: "release", Nonce: lease.releaseNonce, LeaseID: lease.ID,
 		}); err != nil {
 			lease.completeErr = err
 			return
@@ -181,22 +182,12 @@ func (client *Client) Acquire(
 	if duration < time.Second || duration > maximumPolicyLease || duration%time.Millisecond != 0 {
 		return nil, fmt.Errorf("effective egress policy lease duration is invalid")
 	}
-	if !filepath.IsAbs(client.SocketPath) || filepath.Clean(client.SocketPath) != client.SocketPath || len(client.SocketPath) > 100 {
-		return nil, fmt.Errorf("egress policy verifier socket must be a clean bounded absolute path")
-	}
-	info, err := os.Lstat(client.SocketPath)
+	nonce, err := client.prepareExchange()
 	if err != nil {
-		return nil, fmt.Errorf("inspect egress policy verifier socket: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
-		return nil, fmt.Errorf("egress policy verifier path is not a Unix socket")
-	}
-	nonceBytes := make([]byte, 32)
-	if _, err := rand.Read(nonceBytes); err != nil {
-		return nil, fmt.Errorf("create egress policy attestation nonce: %w", err)
+		return nil, err
 	}
 	req := request{
-		SchemaVersion: SchemaVersion, Nonce: hex.EncodeToString(nonceBytes),
+		SchemaVersion: SchemaVersion, Nonce: nonce,
 		NetworkID: networkID, NetworkName: networkName, PolicyID: policyID,
 		LeaseDurationMS: duration.Milliseconds(), RequestedAt: client.currentTime().UTC(),
 	}
@@ -222,17 +213,47 @@ func (client *Client) Acquire(
 		_ = conn.Close()
 		return nil, err
 	}
+	return client.holdLease(conn, reader, SchemaVersion, binding, res.LeaseID, res.ObservedAt, res.LeaseExpiresAt), nil
+}
+
+func (client *Client) holdLease(
+	conn net.Conn,
+	reader *bufio.Reader,
+	schemaVersion int,
+	binding Binding,
+	leaseID string,
+	observedAt time.Time,
+	expiresAt time.Time,
+) *Lease {
 	lease := &Lease{
-		Binding: binding, ID: res.LeaseID, ExpiresAt: res.LeaseExpiresAt,
-		conn: conn, observedAt: res.ObservedAt, now: client.currentTime,
+		Binding: binding, ID: leaseID, ExpiresAt: expiresAt,
+		conn: conn, schemaVersion: schemaVersion, observedAt: observedAt, now: client.currentTime,
 		failures: make(chan error, 1), completion: make(chan error, 1),
 		releaseRequested: make(chan struct{}), closed: make(chan struct{}),
 	}
 	go lease.monitor(reader)
-	return lease, nil
+	return lease
 }
 
-func (client *Client) exchange(ctx context.Context, req request) (net.Conn, *bufio.Reader, error) {
+func (client *Client) prepareExchange() (string, error) {
+	if !filepath.IsAbs(client.SocketPath) || filepath.Clean(client.SocketPath) != client.SocketPath || len(client.SocketPath) > 100 {
+		return "", fmt.Errorf("egress policy verifier socket must be a clean bounded absolute path")
+	}
+	info, err := os.Lstat(client.SocketPath)
+	if err != nil {
+		return "", fmt.Errorf("inspect egress policy verifier socket: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 {
+		return "", fmt.Errorf("egress policy verifier path is not a Unix socket")
+	}
+	nonceBytes := make([]byte, 32)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return "", fmt.Errorf("create egress policy attestation nonce: %w", err)
+	}
+	return hex.EncodeToString(nonceBytes), nil
+}
+
+func (client *Client) exchange(ctx context.Context, req any) (net.Conn, *bufio.Reader, error) {
 	timeout := client.Timeout
 	if timeout <= 0 || timeout > 2*time.Second {
 		timeout = 2 * time.Second
@@ -306,9 +327,9 @@ func (lease *Lease) monitor(reader *bufio.Reader) {
 		lease.reportFailure(fmt.Errorf("egress policy verifier released the policy lease before request"))
 		return
 	}
-	if released.SchemaVersion != SchemaVersion || released.Kind != "held_through_release" ||
+	if released.SchemaVersion != lease.schemaVersion || released.Kind != "held_through_release" ||
 		released.Nonce != lease.releaseNonce || released.LeaseID != lease.ID || released.ReleasedAt.IsZero() ||
-		released.ReleasedAt.Before(lease.observedAt) || released.ReleasedAt.After(lease.ExpiresAt) ||
+		released.ReleasedAt.Before(lease.observedAt) || (!lease.ExpiresAt.IsZero() && released.ReleasedAt.After(lease.ExpiresAt)) ||
 		released.ReleasedAt.After(lease.now().UTC().Add(2*time.Second)) {
 		lease.reportFailure(fmt.Errorf("egress policy verifier returned an invalid policy lease release"))
 		return
