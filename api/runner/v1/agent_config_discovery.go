@@ -77,6 +77,8 @@ type AgentConfigDiscoveryItem struct {
 	RequestedPermissions []string                  `json:"requested_permissions"`
 	Conflicts            []string                  `json:"conflicts"`
 	Reason               string                    `json:"reason,omitempty"`
+	PackClass            AgentConfigPackClass      `json:"pack_class,omitempty"`
+	PackReasonCode       AgentConfigPackReasonCode `json:"pack_reason_code,omitempty"`
 }
 
 type AgentConfigDiscoveryEvent struct {

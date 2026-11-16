@@ -53,6 +53,54 @@ func TestAgentConfigDiscoveryEventRejectsInvalidAuthorityAndSnapshotFields(t *te
 	}
 }
 
+func TestAgentConfigDiscoveryEventAcceptsConsistentPackClassesAndLegacyItems(t *testing.T) {
+	event := validAgentConfigDiscoveryEvent()
+	event.Items[0].PackClass = v1.AgentConfigPackPortableGuidance
+	event.Items[0].PackReasonCode = v1.AgentConfigPackReasonInstructionsPortable
+	if err := AgentConfigDiscoveryEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	rejected := validAgentConfigDiscoveryEvent()
+	rejected.Items[0] = v1.AgentConfigDiscoveryItem{
+		Path: ".env", SourceType: v1.AgentConfigCredential, SizeBytes: 3,
+		Classification: v1.AgentConfigClassRejected, Risk: v1.AgentConfigRiskCritical,
+		Compatibility: v1.AgentConfigIncompatible, Decision: v1.AgentConfigDecisionRejected,
+		RequestedPermissions: []string{}, Conflicts: []string{},
+		PackClass: v1.AgentConfigPackRejected, PackReasonCode: v1.AgentConfigPackReasonSecretContent,
+	}
+	if err := AgentConfigDiscoveryEvent(rejected); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAgentConfigDiscoveryEventRejectsInconsistentPackClasses(t *testing.T) {
+	mutations := map[string]func(*v1.AgentConfigDiscoveryItem){
+		"class without reason": func(item *v1.AgentConfigDiscoveryItem) { item.PackReasonCode = "" },
+		"reason without class": func(item *v1.AgentConfigDiscoveryItem) { item.PackClass = "" },
+		"unknown reason":       func(item *v1.AgentConfigDiscoveryItem) { item.PackReasonCode = "scanner_said_so" },
+		"class mismatch":       func(item *v1.AgentConfigDiscoveryItem) { item.PackClass = v1.AgentConfigPackElevated },
+		"source type mismatch": func(item *v1.AgentConfigDiscoveryItem) {
+			item.PackClass = v1.AgentConfigPackElevated
+			item.PackReasonCode = v1.AgentConfigPackReasonMCPServer
+		},
+		"rejected reason on accepted item": func(item *v1.AgentConfigDiscoveryItem) {
+			item.PackClass = v1.AgentConfigPackUnsupported
+			item.PackReasonCode = v1.AgentConfigPackReasonExceedsScanSizeLimit
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			event := validAgentConfigDiscoveryEvent()
+			event.Items[0].PackClass = v1.AgentConfigPackPortableGuidance
+			event.Items[0].PackReasonCode = v1.AgentConfigPackReasonInstructionsPortable
+			mutate(&event.Items[0])
+			if err := AgentConfigDiscoveryEvent(event); err == nil {
+				t.Fatal("inconsistent pack class was accepted")
+			}
+		})
+	}
+}
+
 func TestAgentConfigDiscoveryEventRejectsUnsafeOrNonCanonicalItems(t *testing.T) {
 	mutations := map[string]func(*v1.AgentConfigDiscoveryEvent){
 		"path traversal": func(event *v1.AgentConfigDiscoveryEvent) { event.Items[0].Path = "../AGENTS.md" },
