@@ -35,6 +35,7 @@ type compositionInput struct {
 	HostHome      string
 	HostClaudeDir string
 	Repositories  []compositionRepository
+	Guidance      *v1.AgentGuidance
 }
 
 type compositionBody struct {
@@ -88,6 +89,7 @@ func buildAgentPackComposition(input compositionInput) (compositionBody, error) 
 		return compositionBody{}, err
 	}
 	packSkills := builder.agentPack(input)
+	builder.guidance(input.Guidance)
 	for _, repository := range input.Repositories {
 		inventory, err := scanner.Scan(repository.Root)
 		if err != nil {
@@ -176,6 +178,30 @@ func (builder *compositionBuilder) agentPack(input compositionInput) map[string]
 		})
 	}
 	return skills
+}
+
+var guidanceCompositionLayers = map[v1.AgentGuidanceLayerName]string{
+	v1.AgentGuidanceLayerOrganization: v1.AgentPackCompositionLayerOrganizationGuidance,
+	v1.AgentGuidanceLayerProject:      v1.AgentPackCompositionLayerProjectGuidance,
+}
+
+func (builder *compositionBuilder) guidance(guidance *v1.AgentGuidance) {
+	if guidance == nil {
+		return
+	}
+	for _, entry := range guidance.Layers {
+		name, known := guidanceCompositionLayers[entry.Layer]
+		if !known {
+			continue
+		}
+		layer := builder.layers[name]
+		layer.Status = v1.AgentPackCompositionApplied
+		layer.Sources = append(layer.Sources, v1.AgentPackCompositionSource{
+			Path:         fmt.Sprintf("%s/%s/revision-%d", v1.AgentPackCompositionGuidancePathPrefix, entry.Layer, entry.Revision),
+			SourceType:   v1.AgentConfigDevelopmentInstruction,
+			DigestSHA256: entry.DigestSHA256,
+		})
+	}
 }
 
 func packSourceType(parts []string) v1.AgentConfigSourceType {
@@ -391,6 +417,7 @@ func (jr *jobRunner) verifyCompositionBeforeStart(ctx context.Context, start com
 	input := compositionInput{
 		Adapter: start.adapter, Isolation: start.isolation, PluginLoaded: start.pluginLoaded,
 		ConfigDir: jr.configDir, HostHome: start.hostHome, HostClaudeDir: start.hostClaudeDir,
+		Guidance: jr.job.AgentGuidance,
 	}
 	if jr.packDir != "" {
 		input.Pack = jr.job.AgentPack

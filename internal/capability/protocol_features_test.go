@@ -12,7 +12,8 @@ import (
 
 func TestCollectAdvertisesProtocolFeaturesAndTheElevatedCapabilityTransport(t *testing.T) {
 	m := fakeDetector().Collect(context.Background())
-	if !reflect.DeepEqual(m.ProtocolFeatures, []string{v1.ProtocolFeatureJobSpecProviderAuthMode}) {
+	want := []string{v1.ProtocolFeatureJobSpecProviderAuthMode, v1.ProtocolFeatureProviderAuthPreferSubscription}
+	if !reflect.DeepEqual(m.ProtocolFeatures, want) {
 		t.Fatalf("protocol features = %v", m.ProtocolFeatures)
 	}
 	if m.ElevatedCapabilityTransportVersion != 2 {
@@ -22,7 +23,7 @@ func TestCollectAdvertisesProtocolFeaturesAndTheElevatedCapabilityTransport(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"elevated_capability_transport_version":2,"protocol_features":["job_spec_provider_auth_mode"]`) {
+	if !strings.Contains(string(encoded), `"elevated_capability_transport_version":2,"protocol_features":["job_spec_provider_auth_mode","provider_auth_prefer_subscription"]`) {
 		t.Fatalf("manifest JSON = %s", encoded)
 	}
 }

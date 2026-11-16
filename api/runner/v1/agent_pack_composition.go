@@ -4,7 +4,7 @@ import "time"
 
 const (
 	EventKindAgentPackComposition                 = "agent_pack_composition"
-	AgentPackCompositionSchemaVersion             = 1
+	AgentPackCompositionSchemaVersion             = 2
 	MaxAgentPackCompositionSourcesPerLayer        = 64
 	MaxAgentPackCompositionConflicts              = 64
 	AgentPackCompositionHostHomeLabel             = "host_home"
@@ -17,6 +17,9 @@ const (
 	AgentPackCompositionPackViewAbsent            = "absent"
 	AgentPackCompositionLayerPlatformSafety       = "platform_safety"
 	AgentPackCompositionLayerAgentPack            = "agent_pack"
+	AgentPackCompositionLayerOrganizationGuidance = "organization_guidance"
+	AgentPackCompositionLayerProjectGuidance      = "project_guidance"
+	AgentPackCompositionGuidancePathPrefix        = "agent_guidance"
 	AgentPackCompositionLayerRepository           = "repository_instructions"
 	AgentPackCompositionLayerNested               = "nested_instructions"
 	AgentPackCompositionLayerExecutionManifest    = "execution_manifest"
@@ -42,6 +45,8 @@ const (
 var AgentPackCompositionLayerOrder = []string{
 	AgentPackCompositionLayerPlatformSafety,
 	AgentPackCompositionLayerAgentPack,
+	AgentPackCompositionLayerOrganizationGuidance,
+	AgentPackCompositionLayerProjectGuidance,
 	AgentPackCompositionLayerRepository,
 	AgentPackCompositionLayerNested,
 	AgentPackCompositionLayerExecutionManifest,

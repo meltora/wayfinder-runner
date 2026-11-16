@@ -19,7 +19,7 @@ func validAgentPackComposition() v1.AgentPackCompositionEvent {
 		Kind: v1.EventKindAgentPackComposition, ManifestKind: v1.JobKindPlan,
 		LeaseID: "lease-1", JobID: "job-1", AttemptID: "attempt-1", ManifestID: "manifest-1",
 		ManifestDigest: strings.Repeat("c", 64), FencingToken: 7, ObservedAt: time.Unix(1, 0),
-		SchemaVersion: 1, Phase: v1.AgentPackCompositionPhaseBeforeStart, Adapter: "claude",
+		SchemaVersion: 2, Phase: v1.AgentPackCompositionPhaseBeforeStart, Adapter: "claude",
 		Isolation: v1.AgentPackCompositionIsolationDocker,
 		AgentPack: &v1.AgentPackCompositionPack{Version: "1.0.0", Digest: strings.Repeat("d", 64), KeyID: "key-1", PluginLoaded: true},
 		PackView:  v1.AgentPackCompositionPackViewVerified, Layers: layers,
@@ -43,7 +43,7 @@ func TestAgentPackCompositionEventAcceptsBoundedReport(t *testing.T) {
 func TestAgentPackCompositionEventRejectsMalformedReports(t *testing.T) {
 	cases := map[string]func(*v1.AgentPackCompositionEvent){
 		"kind":            func(e *v1.AgentPackCompositionEvent) { e.Kind = "progress" },
-		"schema version":  func(e *v1.AgentPackCompositionEvent) { e.SchemaVersion = 2 },
+		"schema version":  func(e *v1.AgentPackCompositionEvent) { e.SchemaVersion = 1 },
 		"phase":           func(e *v1.AgentPackCompositionEvent) { e.Phase = "during" },
 		"adapter":         func(e *v1.AgentPackCompositionEvent) { e.Adapter = "cursor" },
 		"isolation":       func(e *v1.AgentPackCompositionEvent) { e.Isolation = "vm" },
