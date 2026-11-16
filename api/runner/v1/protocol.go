@@ -48,6 +48,7 @@ type HeartbeatPayload struct {
 	State        string `json:"state"`
 	ActiveJobs   int    `json:"active_jobs"`
 	UnackedCount int    `json:"unacked_count"`
+	JobSlots     int    `json:"job_slots,omitempty"`
 }
 
 type ErrorPayload struct {
