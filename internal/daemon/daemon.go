@@ -69,6 +69,9 @@ type Daemon struct {
 	removeJobContainer   containerRemover
 	verifiedProviderCLIs map[providerCLIKey]string
 
+	jobNetworkAttestation isolation.DockerNetworkAttestation
+	acquireJobEgressRules jobEgressRulesAcquirer
+
 	jobMu                                                 sync.Mutex
 	activeJob                                             *jobRunner
 	workIntakeProposalActive                              bool
@@ -352,6 +355,10 @@ func NewWithExternalOperationDependencies(
 		providerReviewFeedbackContentReader:  feedbackContentReader,
 		providerPullRequestRunner:            pullRequestRunner,
 		agentPackTrust:                       trust,
+	}
+	if workIntakeNetworkAttestation.ID != "" {
+		d.jobNetworkAttestation = workIntakeNetworkAttestation
+		d.acquireJobEgressRules = newJobEgressRulesAcquirer(cfg, workIntakeNetworkAttestation)
 	}
 	d.applyConfiguredAgentPackTrust(context.Background(), cfg.AgentPackTrustedKeySet)
 	d.collectors.SetMaxSpoolBytes(int64(cfg.ArtifactSpoolMB) << 20)

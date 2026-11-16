@@ -73,6 +73,7 @@ func (jr *jobRunner) runNetworkPolicyEvent(observedAt time.Time) v1.RunNetworkPo
 	case jr.d.cfg.JobNetwork == "restricted":
 		policyID := jr.d.cfg.EgressPolicyID
 		event.Isolation, event.JobNetwork, event.EgressPolicyID = v1.RunIsolationDocker, v1.RunJobNetworkRestricted, &policyID
+		event.EgressRules = jr.reportedEgressRules()
 	default:
 		event.Isolation, event.JobNetwork = v1.RunIsolationDocker, v1.RunJobNetworkNone
 	}

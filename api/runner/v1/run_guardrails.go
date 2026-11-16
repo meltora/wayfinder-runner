@@ -88,6 +88,7 @@ type RunNetworkPolicyEvent struct {
 	JobNetwork          RunJobNetwork       `json:"job_network"`
 	EgressPolicyID      *string             `json:"egress_policy_id"`
 	AgentSandboxNetwork AgentSandboxNetwork `json:"agent_sandbox_network"`
+	EgressRules         *RunEgressRules     `json:"egress_rules,omitempty"`
 	ContentDigestSHA256 string              `json:"content_digest_sha256"`
 }
 
@@ -111,12 +112,16 @@ func RunNetworkPolicyContentDigest(value RunNetworkPolicyEvent) string {
 	if value.EgressPolicyID != nil {
 		egressPolicyID = *value.EgressPolicyID
 	}
-	digest, err := CommandContentDigest(map[string]any{
+	content := map[string]any{
 		"isolation":             value.Isolation,
 		"job_network":           value.JobNetwork,
 		"egress_policy_id":      egressPolicyID,
 		"agent_sandbox_network": value.AgentSandboxNetwork,
-	})
+	}
+	if value.EgressRules != nil {
+		content["egress_rules"] = value.EgressRules
+	}
+	digest, err := CommandContentDigest(content)
 	if err != nil {
 		return ""
 	}

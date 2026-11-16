@@ -8,7 +8,7 @@ import (
 )
 
 func RunGuardrailsPolicy(value v1.RunGuardrailsPolicy) error {
-	if value.SchemaVersion != v1.RunGuardrailsSchemaVersion {
+	if value.SchemaVersion != v1.RunGuardrailsSchemaVersion && value.SchemaVersion != v1.RunGuardrailsEgressRulesSchemaVersion {
 		return fmt.Errorf("run_guardrails schema_version is invalid")
 	}
 	if value.MaxRefusedRequests < 1 || value.MaxRefusedRequests > v1.MaxRefusedRequests {
@@ -61,6 +61,14 @@ func RunNetworkPolicyEvent(value v1.RunNetworkPolicyEvent) error {
 	}
 	if err := runNetworkPolicyShape(value); err != nil {
 		return err
+	}
+	if value.EgressRules != nil {
+		if value.JobNetwork != v1.RunJobNetworkRestricted {
+			return fmt.Errorf("egress_rules require the restricted job network")
+		}
+		if err := RunEgressRules(*value.EgressRules); err != nil {
+			return err
+		}
 	}
 	if err := SHA256Digest("content_digest_sha256", value.ContentDigestSHA256); err != nil {
 		return err

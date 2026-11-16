@@ -88,6 +88,7 @@ type jobRunner struct {
 	composition              *compositionBody
 	compositionHook          func(context.Context) error
 	elevatedOutcomes         []elevatedcapability.Outcome
+	egressRules              *jobEgressRulesState
 	configuration            *hotConfiguration
 	agentPromptLimit         int
 }
@@ -705,6 +706,9 @@ func (jr *jobRunner) run() {
 	}
 	defer removePromptFile()
 
+	jr.acquireJobEgressRules(ctx, elevated.AllowedDomains)
+	defer jr.closeJobEgressRules()
+
 	jr.procMu.Lock()
 	if jr.cancelled {
 		jr.procMu.Unlock()
@@ -730,6 +734,9 @@ func (jr *jobRunner) run() {
 		return
 	}
 	jr.proc = proc
+	if jr.jobEgressRulesFailedLocked() {
+		_ = proc.Kill()
+	}
 	outputConsumed := make(chan struct{})
 	go func() {
 		defer close(outputConsumed)
@@ -766,6 +773,10 @@ func (jr *jobRunner) run() {
 	<-outputConsumed
 	if ownership.Release() != nil {
 		finish(jobOutputReclaimFailure(), nil)
+		return
+	}
+	if jr.releaseJobEgressRules(ctx) != nil {
+		finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureRunnerInternal, FailureMessage: jobEgressRulesNotHeldMessage}, nil)
 		return
 	}
 	jr.publishAfterExitComposition(ctx)

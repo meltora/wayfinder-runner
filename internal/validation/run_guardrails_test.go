@@ -9,13 +9,16 @@ import (
 )
 
 func TestRunGuardrailsPolicyBounds(t *testing.T) {
-	if err := RunGuardrailsPolicy(v1.RunGuardrailsPolicy{SchemaVersion: 1, MaxRefusedRequests: 50}); err != nil {
-		t.Fatalf("valid policy rejected: %v", err)
+	for _, version := range []int{1, 2} {
+		if err := RunGuardrailsPolicy(v1.RunGuardrailsPolicy{SchemaVersion: version, MaxRefusedRequests: 50}); err != nil {
+			t.Fatalf("valid policy version %d rejected: %v", version, err)
+		}
 	}
 	for name, value := range map[string]v1.RunGuardrailsPolicy{
-		"schema":   {SchemaVersion: 2, MaxRefusedRequests: 50},
-		"zero":     {SchemaVersion: 1, MaxRefusedRequests: 0},
-		"too many": {SchemaVersion: 1, MaxRefusedRequests: 101},
+		"schema zero": {SchemaVersion: 0, MaxRefusedRequests: 50},
+		"schema":      {SchemaVersion: 3, MaxRefusedRequests: 50},
+		"zero":        {SchemaVersion: 1, MaxRefusedRequests: 0},
+		"too many":    {SchemaVersion: 1, MaxRefusedRequests: 101},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := RunGuardrailsPolicy(value); err == nil {
