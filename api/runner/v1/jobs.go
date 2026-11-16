@@ -49,6 +49,7 @@ type JobSpec struct {
 	RunGuardrails                *RunGuardrailsPolicy      `json:"run_guardrails,omitempty"`
 	ElevatedCapabilities         *ElevatedCapabilityGrants `json:"elevated_capabilities,omitempty"`
 	ProviderAuthMode             string                    `json:"provider_auth_mode,omitempty"`
+	WorkAttachments              []JobWorkAttachment       `json:"work_attachments,omitempty"`
 
 	reviewCommentPresent bool
 }

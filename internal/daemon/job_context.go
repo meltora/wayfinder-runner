@@ -33,6 +33,9 @@ func (jr *jobRunner) jobContext() map[string]any {
 	if jr.job.AgentGuidance != nil {
 		result["agent_guidance"] = *jr.job.AgentGuidance
 	}
+	if len(jr.workAttachments) > 0 {
+		result["work_attachments"] = append([]materializedWorkAttachment(nil), jr.workAttachments...)
+	}
 	if checks := jr.runnableChecks(); checks != nil {
 		result["runnable_checks"] = checks
 	}
