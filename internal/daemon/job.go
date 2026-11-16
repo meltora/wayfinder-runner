@@ -83,6 +83,7 @@ type jobRunner struct {
 	verifiedPlanRepositories []v1.JobRepository
 	packDir                  string
 	packFiles                map[string]string
+	workAttachments          []materializedWorkAttachment
 	configDir                string
 	composition              *compositionBody
 	compositionHook          func(context.Context) error
@@ -1042,6 +1043,7 @@ func (jr *jobRunner) prepareWorkspace(ctx context.Context) (string, func(), erro
 		}
 		jr.packDir = packDir
 	}
+	jr.materializeWorkAttachments(ctx)
 	return primaryDir, cleanup, nil
 }
 
@@ -1116,6 +1118,7 @@ func (jr *jobRunner) buildPrompt() string {
 		}
 	}
 	b.WriteString(agentGuidancePrompt(jr.job.AgentGuidance))
+	b.WriteString(workAttachmentsPrompt(jr.workAttachments))
 	switch jr.job.Kind {
 	case v1.JobKindPlan:
 		if context := jr.job.PlanRevisionContext; context != nil {

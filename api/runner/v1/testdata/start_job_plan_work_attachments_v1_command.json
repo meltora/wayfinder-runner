@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "type": "command",
+  "id": "cmd-0001",
+  "sent_at": "2026-08-07T12:05:00Z",
+  "runner_id": "runner-1",
+  "payload": {
+    "command": "start_job",
+    "job": {
+      "job_id": "job-0001",
+      "attempt_id": "attempt-0001",
+      "project_id": "project-1",
+      "kind": "plan",
+      "lease_id": "lease-0001",
+      "manifest_id": "manifest-0001",
+      "manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "workflow_revision": 2,
+      "fencing_token": 7,
+      "lease_expires_at": "2026-08-07T12:35:00Z",
+      "agent_run_authority": {
+        "schema_version": 1,
+        "agent_run_id": "agent-run-0001",
+        "step_run_id": "step-run-0001",
+        "step_sequence": 1
+      },
+      "repositories": [
+        {
+          "repository_id": "web-app",
+          "repository_head_observation_id": "head-observation-1",
+          "base_branch": "main",
+          "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "primary": true
+        }
+      ],
+      "ticket": {
+        "key": "ABC-123",
+        "summary": "Add plan-review dashboard",
+        "description": "Render immutable plan revisions.",
+        "acceptance_criteria": "Approval binds an exact plan digest."
+      },
+      "agent_pack": {
+        "version": "1.4.0",
+        "digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "url": "https://packs.example.com/agent-pack-1.4.0.tgz",
+        "key_id": "pack-signing-2026-07"
+      },
+      "agent_pack_authority": {
+        "schema_version": 1,
+        "registry_version_id": "agent-pack-version-1",
+        "scope": {
+          "kind": "organization",
+          "organization_id": "organization-1"
+        },
+        "pack_key": "default-pack",
+        "pack_name": "Default Agent Pack",
+        "provider": "claude-code",
+        "protocol_version": 1,
+        "minimum_runner_version": "1.0.0",
+        "agent_pack": {
+          "version": "1.4.0",
+          "digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "url": "https://packs.example.com/agent-pack-1.4.0.tgz",
+          "key_id": "pack-signing-2026-07"
+        },
+        "attestation_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "signature_base64": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw=="
+      },
+      "work_attachments": [
+        {
+          "attachment_id": "00000000-0000-4000-8000-000000000001",
+          "name": "design-notes.md",
+          "media_type": "text/markdown",
+          "size_bytes": 42,
+          "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "trust": "untrusted_user_attachment",
+          "usage": "context_only"
+        },
+        {
+          "attachment_id": "00000000-0000-4000-8000-000000000002",
+          "name": "mockup.png",
+          "media_type": "image/png",
+          "size_bytes": 2048,
+          "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "trust": "untrusted_user_attachment",
+          "usage": "context_only"
+        }
+      ]
+    }
+  }
+}

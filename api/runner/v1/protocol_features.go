@@ -12,6 +12,7 @@ const (
 
 var supportedProtocolFeatures = []string{
 	ProtocolFeatureJobSpecProviderAuthMode,
+	ProtocolFeatureJobSpecWorkAttachments,
 	ProtocolFeatureProviderAuthPreferSubscription,
 }
 
