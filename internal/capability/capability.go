@@ -260,12 +260,11 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 			if out, err := d.cachedProviderVersion(ctx, name, binary, resolved); err == nil {
 				ac.Version = providerVersion(name, out, append([]string{binary, resolved}, d.providerEnvironmentValues(name)...)...)
 			}
+			ac.SubscriptionConfigured = d.subscriptionConfigured(name)
 			if source, ok := d.providerAPIKeys[name]; ok {
 				ac.AuthReady = apiKeyResolvable(source)
-			} else if d.AuthReady != nil {
-				ac.AuthReady = d.AuthReady(name)
 			} else {
-				ac.AuthReady = d.authReady(name)
+				ac.AuthReady = ac.SubscriptionConfigured
 			}
 		}
 		ac.AuthMode = d.authMode(name)

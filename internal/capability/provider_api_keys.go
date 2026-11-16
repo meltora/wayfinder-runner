@@ -25,6 +25,18 @@ func (d *Detector) authMode(provider string) string {
 	return AuthModeSubscription
 }
 
+func SubscriptionConfigured(provider string, environment map[string]string) bool {
+	detector := (&Detector{}).WithProviderEnvironment(map[string]map[string]string{provider: environment})
+	return detector.authReady(provider)
+}
+
+func (d *Detector) subscriptionConfigured(provider string) bool {
+	if d.AuthReady != nil {
+		return d.AuthReady(provider)
+	}
+	return d.authReady(provider)
+}
+
 func apiKeyResolvable(source apikey.Source) bool {
 	_, err := apikey.Resolve(source)
 	return err == nil

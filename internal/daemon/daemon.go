@@ -56,6 +56,8 @@ type Daemon struct {
 	logger               *slog.Logger
 	providerVersionCache *capability.ProviderVersionCache
 
+	subscriptionConfigured func(string) bool
+
 	leases         *lease.Manager
 	recoveredLease atomic.Bool
 	collectors     *collector.Store

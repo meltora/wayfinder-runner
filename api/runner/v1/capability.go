@@ -110,12 +110,13 @@ type ProviderReviewFeedbackContentInstallationCapability struct {
 }
 
 type AgentCapability struct {
-	Provider              string   `json:"provider"`
-	Version               string   `json:"version,omitempty"`
-	AuthReady             bool     `json:"auth_ready"`
-	AuthMode              string   `json:"auth_mode,omitempty"`
-	Available             bool     `json:"available"`
-	ManagedHooksSupported bool     `json:"managed_hooks_supported"`
-	ManagedHooksVersion   string   `json:"managed_hooks_version,omitempty"`
-	ManagedHookEvents     []string `json:"managed_hook_events,omitempty"`
+	Provider               string   `json:"provider"`
+	Version                string   `json:"version,omitempty"`
+	AuthReady              bool     `json:"auth_ready"`
+	AuthMode               string   `json:"auth_mode,omitempty"`
+	Available              bool     `json:"available"`
+	ManagedHooksSupported  bool     `json:"managed_hooks_supported"`
+	ManagedHooksVersion    string   `json:"managed_hooks_version,omitempty"`
+	ManagedHookEvents      []string `json:"managed_hook_events,omitempty"`
+	SubscriptionConfigured bool     `json:"subscription_configured"`
 }

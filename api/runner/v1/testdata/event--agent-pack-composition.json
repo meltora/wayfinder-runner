@@ -14,7 +14,7 @@
     "manifest_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "fencing_token": 7,
     "observed_at": "2026-10-01T12:00:00Z",
-    "schema_version": 1,
+    "schema_version": 2,
     "phase": "after_exit",
     "adapter": "claude",
     "isolation": "direct",
@@ -57,6 +57,22 @@
             "digest_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
           }
         ]
+      },
+      {
+        "layer": "organization_guidance",
+        "status": "applied",
+        "sources": [
+          {
+            "path": "agent_guidance/organization/revision-3",
+            "source_type": "development_instruction",
+            "digest_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+          }
+        ]
+      },
+      {
+        "layer": "project_guidance",
+        "status": "absent",
+        "sources": []
       },
       {
         "layer": "repository_instructions",
