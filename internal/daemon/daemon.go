@@ -44,6 +44,8 @@ var Version = "0.3.0"
 
 const capabilityRefreshInterval = 5 * time.Minute
 
+const daemonJobSlots = 1
+
 type Daemon struct {
 	agentConfigScanState
 	cfg                  config.Config
@@ -802,7 +804,7 @@ func (d *Daemon) heartbeatPayload(ctx context.Context) v1.HeartbeatPayload {
 	if err != nil {
 		d.logger.Debug("heartbeat journal count", "err", err)
 	}
-	return v1.HeartbeatPayload{State: state, ActiveJobs: activeJobs, UnackedCount: unacked}
+	return v1.HeartbeatPayload{State: state, ActiveJobs: activeJobs, UnackedCount: unacked, JobSlots: daemonJobSlots}
 }
 
 func (d *Daemon) setControlTLS(tlsConfig *tls.Config) {

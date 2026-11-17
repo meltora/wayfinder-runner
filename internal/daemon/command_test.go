@@ -190,7 +190,7 @@ func TestHeartbeatAndConnectionLifecycleStates(t *testing.T) {
 	if _, err := d.store.EnsureKey(); err != nil {
 		t.Fatal(err)
 	}
-	if got := d.heartbeatPayload(context.Background()); got.State != "idle" || got.ActiveJobs != 0 {
+	if got := d.heartbeatPayload(context.Background()); got.State != "idle" || got.ActiveJobs != 0 || got.JobSlots != 1 {
 		t.Fatalf("idle heartbeat=%+v", got)
 	}
 	d.paused.Store(true)
@@ -200,7 +200,7 @@ func TestHeartbeatAndConnectionLifecycleStates(t *testing.T) {
 	d.jobMu.Lock()
 	d.activeJob = &jobRunner{}
 	d.jobMu.Unlock()
-	if got := d.heartbeatPayload(context.Background()); got.State != "busy" || got.ActiveJobs != 1 {
+	if got := d.heartbeatPayload(context.Background()); got.State != "busy" || got.ActiveJobs != 1 || got.JobSlots != 1 {
 		t.Fatalf("busy heartbeat=%+v", got)
 	}
 	d.jobMu.Lock()
