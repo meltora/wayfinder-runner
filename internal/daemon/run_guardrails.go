@@ -16,21 +16,59 @@ func (jr *jobRunner) publishRefusedRequests(providerEvent map[string]any) {
 		return
 	}
 	items := refusedrequest.Extract(jr.d.cfg.Provider, providerEvent)
-	if len(items) == 0 {
+	blocks := jr.observeNetworkBlocks(policy, providerEvent)
+	if len(items) == 0 && len(blocks) == 0 {
 		return
 	}
 	secrets := jr.knownActivitySecrets()
 	for _, item := range items {
-		jr.procMu.Lock()
-		if jr.refusedRequests == nil {
-			jr.refusedRequests = refusedrequest.NewRecorder(policy.MaxRefusedRequests)
-		}
-		admitted, ok := jr.refusedRequests.Admit(item, secrets...)
-		jr.procMu.Unlock()
-		if !ok {
-			continue
-		}
+		jr.admitRefusal(policy, func(recorder *refusedrequest.Recorder) (refusedrequest.Admitted, bool) {
+			return recorder.Admit(item, secrets...)
+		})
+	}
+	for _, block := range blocks {
+		jr.admitRefusal(policy, func(recorder *refusedrequest.Recorder) (refusedrequest.Admitted, bool) {
+			return recorder.AdmitNetworkBlock(block, secrets...)
+		})
+	}
+}
+
+func (jr *jobRunner) admitRefusal(
+	policy *v1.RunGuardrailsPolicy,
+	admit func(*refusedrequest.Recorder) (refusedrequest.Admitted, bool),
+) {
+	jr.procMu.Lock()
+	if jr.refusedRequests == nil {
+		jr.refusedRequests = refusedrequest.NewRecorder(policy.MaxRefusedRequests)
+	}
+	admitted, ok := admit(jr.refusedRequests)
+	jr.procMu.Unlock()
+	if ok {
 		jr.publishRefusedRequest(admitted)
+	}
+}
+
+func (jr *jobRunner) observeNetworkBlocks(policy *v1.RunGuardrailsPolicy, providerEvent map[string]any) []refusedrequest.NetworkBlock {
+	if !policy.ReportsNetworkLayerRefusals() {
+		return nil
+	}
+	jr.procMu.Lock()
+	defer jr.procMu.Unlock()
+	if jr.networkBlocks == nil {
+		jr.networkBlocks = refusedrequest.NewNetworkBlockDetector(jr.d.cfg.Provider, jr.networkLayersLocked())
+	}
+	return jr.networkBlocks.Observe(providerEvent)
+}
+
+func (jr *jobRunner) networkLayersLocked() refusedrequest.NetworkLayers {
+	docker := jr.d.cfg.Isolation == "docker"
+	verified := docker && jr.d.cfg.JobNetwork == "restricted" &&
+		jr.egressRules != nil && jr.egressRules.rules != nil && jr.egressRules.failure == nil
+	return refusedrequest.NetworkLayers{
+		AgentSandbox:        docker && jr.d.cfg.Provider == "claude",
+		JobEgress:           docker,
+		EgressRulesVerified: verified,
+		ApprovedHosts:       append([]string{}, jr.approvedNetworkHosts...),
 	}
 }
 
@@ -40,7 +78,7 @@ func (jr *jobRunner) publishRefusedRequest(admitted refusedrequest.Admitted) {
 		JobID: jr.job.JobID, AttemptID: jr.job.AttemptID, ManifestID: jr.job.ManifestID,
 		ManifestDigest: jr.job.ManifestDigest, FencingToken: jr.job.FencingToken, ObservedAt: time.Now().UTC(),
 		AgentRunAuthority: *jr.job.AgentRunAuthority, Sequence: admitted.Sequence, RefusalKind: admitted.Kind,
-		Enforcer: v1.RefusalEnforcerAgentRuntimePermissions, Subject: admitted.Sanitized.Message,
+		Enforcer: admitted.Enforcer, Subject: admitted.Sanitized.Message,
 		Truncated: admitted.Sanitized.Truncated,
 		Redaction: v1.SanitizedLogRedaction{
 			SchemaVersion: v1.RefusedRequestRedactionSchemaVersion, PolicyVersion: v1.RefusedRequestRedactionPolicyVersion,

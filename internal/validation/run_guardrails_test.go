@@ -9,14 +9,14 @@ import (
 )
 
 func TestRunGuardrailsPolicyBounds(t *testing.T) {
-	for _, version := range []int{1, 2} {
+	for _, version := range []int{1, 2, 3} {
 		if err := RunGuardrailsPolicy(v1.RunGuardrailsPolicy{SchemaVersion: version, MaxRefusedRequests: 50}); err != nil {
 			t.Fatalf("valid policy version %d rejected: %v", version, err)
 		}
 	}
 	for name, value := range map[string]v1.RunGuardrailsPolicy{
 		"schema zero": {SchemaVersion: 0, MaxRefusedRequests: 50},
-		"schema":      {SchemaVersion: 3, MaxRefusedRequests: 50},
+		"schema":      {SchemaVersion: 4, MaxRefusedRequests: 50},
 		"zero":        {SchemaVersion: 1, MaxRefusedRequests: 0},
 		"too many":    {SchemaVersion: 1, MaxRefusedRequests: 101},
 	} {
@@ -58,7 +58,21 @@ func TestRefusedRequestEvent(t *testing.T) {
 	if err := RefusedRequestEvent(validRefusedRequest()); err != nil {
 		t.Fatalf("valid event rejected: %v", err)
 	}
+	for _, enforcer := range []v1.RefusalEnforcer{v1.RefusalEnforcerAgentSandbox, v1.RefusalEnforcerJobEgressRules} {
+		candidate := validRefusedRequest()
+		candidate.Enforcer = enforcer
+		candidate.ContentDigestSHA256 = v1.RefusedRequestContentDigest(candidate)
+		if err := RefusedRequestEvent(candidate); err != nil {
+			t.Fatalf("valid %s event rejected: %v", enforcer, err)
+		}
+	}
 	for name, mutate := range map[string]func(*v1.RefusedRequestEvent){
+		"sandbox command": func(value *v1.RefusedRequestEvent) {
+			value.Enforcer, value.RefusalKind, value.Subject = v1.RefusalEnforcerAgentSandbox, v1.RefusalCommand, "curl"
+		},
+		"egress tool": func(value *v1.RefusedRequestEvent) {
+			value.Enforcer, value.RefusalKind, value.Subject = v1.RefusalEnforcerJobEgressRules, v1.RefusalTool, "Write"
+		},
 		"kind":          func(value *v1.RefusedRequestEvent) { value.Kind = "agent_activity" },
 		"sequence zero": func(value *v1.RefusedRequestEvent) { value.Sequence = 0 },
 		"sequence high": func(value *v1.RefusedRequestEvent) { value.Sequence = 101 },

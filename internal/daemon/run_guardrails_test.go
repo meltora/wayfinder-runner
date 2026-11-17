@@ -110,6 +110,55 @@ func TestRefusedRequestsRequirePolicyAuthorityAndLease(t *testing.T) {
 	}
 }
 
+const sandboxBlockedBashLines = `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"curl -sS https://registry.example.com/pkg"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"curl: (56) CONNECT tunnel failed, response 403\nConnection blocked by network allowlist"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"git fetch https://approved.example.com/repo"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2","is_error":true,"content":"fatal: Could not resolve host: approved.example.com"}]}}
+`
+
+func TestNetworkLayerBlocksPublishedAsRefusedRequests(t *testing.T) {
+	jr, events := guardrailsJobRunner(t, &v1.RunGuardrailsPolicy{SchemaVersion: v1.RunGuardrailsNetworkLayerRefusalsSchemaVersion, MaxRefusedRequests: 50})
+	jr.approvedNetworkHosts = []string{"approved.example.com"}
+	jr.consumeOutput(bytes.NewBufferString(sandboxBlockedBashLines + claudeDenialLine + "\n"))
+	refused := decodeRefusedRequests(t, events)
+	if len(refused) != 4 {
+		t.Fatalf("refused=%#v", refused)
+	}
+	want := []struct {
+		enforcer v1.RefusalEnforcer
+		subject  string
+	}{
+		{v1.RefusalEnforcerAgentSandbox, "registry.example.com"},
+		{v1.RefusalEnforcerJobEgressRules, "approved.example.com"},
+		{v1.RefusalEnforcerAgentRuntimePermissions, "registry.example.com"},
+		{v1.RefusalEnforcerAgentRuntimePermissions, "curl"},
+	}
+	for index, event := range refused {
+		if event.Sequence != index+1 || event.Enforcer != want[index].enforcer || event.Subject != want[index].subject {
+			t.Fatalf("event %d=%#v", index, event)
+		}
+		if err := validation.RefusedRequestEvent(event); err != nil {
+			t.Fatalf("published invalid event: %v", err)
+		}
+	}
+}
+
+func TestNetworkLayerBlocksRequireTheNegotiatedSchemaAndAnEnforcingLayer(t *testing.T) {
+	for _, version := range []int{v1.RunGuardrailsSchemaVersion, v1.RunGuardrailsEgressRulesSchemaVersion} {
+		jr, events := guardrailsJobRunner(t, &v1.RunGuardrailsPolicy{SchemaVersion: version, MaxRefusedRequests: 50})
+		jr.consumeOutput(bytes.NewBufferString(sandboxBlockedBashLines))
+		if got := events.byKind(v1.EventKindRefusedRequest); len(got) != 0 {
+			t.Fatalf("schema %d published network blocks: %v", version, got)
+		}
+	}
+	jr, events := guardrailsJobRunner(t, &v1.RunGuardrailsPolicy{SchemaVersion: v1.RunGuardrailsNetworkLayerRefusalsSchemaVersion, MaxRefusedRequests: 50})
+	jr.d.cfg.Isolation, jr.d.cfg.JobNetwork = "direct", ""
+	jr.consumeOutput(bytes.NewBufferString(sandboxBlockedBashLines))
+	if got := events.byKind(v1.EventKindRefusedRequest); len(got) != 0 {
+		t.Fatalf("direct isolation published network blocks: %v", got)
+	}
+}
+
 func TestRunNetworkPolicyReflectsRunnerConfiguration(t *testing.T) {
 	for name, tc := range map[string]struct {
 		isolation, network, egress, provider string

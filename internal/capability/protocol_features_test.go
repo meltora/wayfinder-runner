@@ -12,7 +12,7 @@ import (
 
 func TestCollectAdvertisesProtocolFeaturesAndTheElevatedCapabilityTransport(t *testing.T) {
 	m := fakeDetector().Collect(context.Background())
-	want := []string{v1.ProtocolFeatureJobSpecProviderAuthMode, v1.ProtocolFeatureJobSpecWorkAttachments, v1.ProtocolFeatureProviderAuthPreferSubscription, v1.ProtocolFeatureRunNetworkEgressRules}
+	want := []string{v1.ProtocolFeatureJobSpecProviderAuthMode, v1.ProtocolFeatureJobSpecWorkAttachments, v1.ProtocolFeatureProviderAuthPreferSubscription, v1.ProtocolFeatureRunNetworkEgressRules, v1.ProtocolFeatureRunNetworkLayerRefusals}
 	if !reflect.DeepEqual(m.ProtocolFeatures, want) {
 		t.Fatalf("protocol features = %v", m.ProtocolFeatures)
 	}
@@ -23,7 +23,7 @@ func TestCollectAdvertisesProtocolFeaturesAndTheElevatedCapabilityTransport(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"elevated_capability_transport_version":2,"protocol_features":["job_spec_provider_auth_mode","job_spec_work_attachments","provider_auth_prefer_subscription","run_network_egress_rules"]`) {
+	if !strings.Contains(string(encoded), `"elevated_capability_transport_version":2,"protocol_features":["job_spec_provider_auth_mode","job_spec_work_attachments","provider_auth_prefer_subscription","run_network_egress_rules","run_network_layer_refusals"]`) {
 		t.Fatalf("manifest JSON = %s", encoded)
 	}
 }

@@ -15,6 +15,7 @@ var supportedProtocolFeatures = []string{
 	ProtocolFeatureJobSpecWorkAttachments,
 	ProtocolFeatureProviderAuthPreferSubscription,
 	ProtocolFeatureRunNetworkEgressRules,
+	ProtocolFeatureRunNetworkLayerRefusals,
 }
 
 func SupportedProtocolFeatures() []string {

@@ -39,25 +39,27 @@ type jobRunner struct {
 	proc     supervisor.Process
 	logger   *slog.Logger
 
-	ctx                context.Context
-	cancel             context.CancelFunc
-	controlMu          sync.Mutex
-	procMu             sync.Mutex
-	cancelled          bool
-	leaseLost          bool
-	completionStarted  bool
-	sessionID          string
-	providerError      string
-	outputTail         *providerOutputTail
-	capacityFailure    *provider.CapacityFailure
-	providerUsage      *provider.UsageAccumulator
-	tokenBudgetFailure *tokenBudgetFailure
-	controlAction      v1.JobControlAction
-	controlResultDone  chan struct{}
-	sanitizedLogs      int
-	toolTracker        *toolsummary.Tracker
-	activityLimiter    *agentactivity.Limiter
-	refusedRequests    *refusedrequest.Recorder
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	controlMu            sync.Mutex
+	procMu               sync.Mutex
+	cancelled            bool
+	leaseLost            bool
+	completionStarted    bool
+	sessionID            string
+	providerError        string
+	outputTail           *providerOutputTail
+	capacityFailure      *provider.CapacityFailure
+	providerUsage        *provider.UsageAccumulator
+	tokenBudgetFailure   *tokenBudgetFailure
+	controlAction        v1.JobControlAction
+	controlResultDone    chan struct{}
+	sanitizedLogs        int
+	toolTracker          *toolsummary.Tracker
+	activityLimiter      *agentactivity.Limiter
+	refusedRequests      *refusedrequest.Recorder
+	networkBlocks        *refusedrequest.NetworkBlockDetector
+	approvedNetworkHosts []string
 
 	reviewFeedbackContinuation *v1.ReviewFeedbackContinuationAuthority
 	providerCredential         *v1.ProviderCredential
@@ -706,6 +708,9 @@ func (jr *jobRunner) run() {
 	}
 	defer removePromptFile()
 
+	jr.procMu.Lock()
+	jr.approvedNetworkHosts = append([]string{}, elevated.AllowedDomains...)
+	jr.procMu.Unlock()
 	jr.acquireJobEgressRules(ctx, elevated.AllowedDomains)
 	defer jr.closeJobEgressRules()
 
