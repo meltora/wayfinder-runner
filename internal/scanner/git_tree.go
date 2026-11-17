@@ -146,14 +146,14 @@ func skipGitPath(path string) bool {
 
 func scanGitEntry(ctx context.Context, entry gitTreeEntry, match catalogMatch, remaining int64, readBlob func(context.Context, string) ([]byte, error)) (v1.AgentConfigDiscoveryItem, int64, error) {
 	if entry.mode == "120000" {
-		return rejectedItem(entry.path, v1.AgentConfigSymlink, 0, match.provider, "symlinks are never imported"), 0, nil
+		return rejectedItem(entry.path, v1.AgentConfigSymlink, 0, match.provider, v1.AgentConfigPackReasonSymlink), 0, nil
 	}
 	item := classifiedItem(entry.path, match, entry.size)
 	if item.Classification == v1.AgentConfigClassRejected {
 		return item, 0, nil
 	}
 	if entry.size > MaxFileSize {
-		return rejectedItem(entry.path, match.sourceType, entry.size, match.provider, "file exceeds the metadata scan size limit"), 0, nil
+		return rejectedItem(entry.path, match.sourceType, entry.size, match.provider, v1.AgentConfigPackReasonExceedsScanSizeLimit), 0, nil
 	}
 	if entry.mode == "100755" && match.sourceType != v1.AgentConfigHook && match.sourceType != v1.AgentConfigExecutableExtension {
 		match.sourceType = v1.AgentConfigExecutableExtension
@@ -179,10 +179,10 @@ func scanGitEntry(ctx context.Context, entry gitTreeEntry, match catalogMatch, r
 		return item, 0, ErrIncompleteScan
 	}
 	if isBinary(data) {
-		return rejectedItem(entry.path, v1.AgentConfigBinary, entry.size, match.provider, "binary content is never imported"), entry.size, nil
+		return rejectedItem(entry.path, v1.AgentConfigBinary, entry.size, match.provider, v1.AgentConfigPackReasonBinaryContent), entry.size, nil
 	}
 	if containsSecret(data) {
-		return rejectedItem(entry.path, v1.AgentConfigCredential, entry.size, match.provider, "secret-like content is never imported"), entry.size, nil
+		return rejectedItem(entry.path, v1.AgentConfigCredential, entry.size, match.provider, v1.AgentConfigPackReasonSecretContent), entry.size, nil
 	}
 	digest := sha256.Sum256(data)
 	item.DigestSHA256 = hex.EncodeToString(digest[:])

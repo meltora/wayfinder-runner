@@ -75,11 +75,14 @@ func scanDiscoveryWireFields(raw []byte) error {
 		return err
 	}
 	for _, item := range items {
-		fields, err := scanWireObject(item, []string{"path", "source_type", "size_bytes", "classification", "risk", "compatibility", "decision", "requested_permissions", "conflicts"}, []string{"digest_sha256", "provider", "reason"})
+		fields, err := scanWireObject(item, []string{"path", "source_type", "size_bytes", "classification", "risk", "compatibility", "decision", "requested_permissions", "conflicts"}, []string{"digest_sha256", "provider", "reason", "pack_class", "pack_reason_code"})
 		if err != nil {
 			return err
 		}
-		for _, key := range []string{"digest_sha256", "provider", "reason"} {
+		if (fields["pack_class"] == nil) != (fields["pack_reason_code"] == nil) {
+			return fmt.Errorf("pack_class and pack_reason_code must be sent together")
+		}
+		for _, key := range []string{"digest_sha256", "provider", "reason", "pack_class", "pack_reason_code"} {
 			if value, present := fields[key]; present {
 				var text string
 				if json.Unmarshal(value, &text) != nil || text == "" {

@@ -87,17 +87,17 @@ func scanEntry(root *os.Root, relativePath string, entry fs.DirEntry, match cata
 		return v1.AgentConfigDiscoveryItem{}, fmt.Errorf("inspect catalog entry %q: %w", relativePath, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return rejectedItem(relativePath, v1.AgentConfigSymlink, 0, match.provider, "symlinks are never imported"), nil
+		return rejectedItem(relativePath, v1.AgentConfigSymlink, 0, match.provider, v1.AgentConfigPackReasonSymlink), nil
 	}
 	if !info.Mode().IsRegular() {
-		return rejectedItem(relativePath, v1.AgentConfigBinary, info.Size(), match.provider, "special files are never imported"), nil
+		return rejectedItem(relativePath, v1.AgentConfigBinary, info.Size(), match.provider, v1.AgentConfigPackReasonSpecialFile), nil
 	}
 	item := classifiedItem(relativePath, match, info.Size())
 	if item.Classification == v1.AgentConfigClassRejected {
 		return item, nil
 	}
 	if info.Size() > MaxFileSize {
-		return rejectedItem(relativePath, match.sourceType, info.Size(), match.provider, "file exceeds the metadata scan size limit"), nil
+		return rejectedItem(relativePath, match.sourceType, info.Size(), match.provider, v1.AgentConfigPackReasonExceedsScanSizeLimit), nil
 	}
 	if info.Mode()&0o111 != 0 && match.sourceType != v1.AgentConfigHook && match.sourceType != v1.AgentConfigExecutableExtension {
 		match.sourceType = v1.AgentConfigExecutableExtension
@@ -105,7 +105,7 @@ func scanEntry(root *os.Root, relativePath string, entry fs.DirEntry, match cata
 	}
 	file, err := root.Open(relativePath)
 	if err != nil {
-		return rejectedItem(relativePath, match.sourceType, info.Size(), match.provider, "file could not be opened safely"), nil
+		return rejectedItem(relativePath, match.sourceType, info.Size(), match.provider, v1.AgentConfigPackReasonUnreadableDuringScan), nil
 	}
 	openedInfo, statErr := file.Stat()
 	data, readErr := io.ReadAll(io.LimitReader(file, MaxFileSize+1))
@@ -116,13 +116,13 @@ func scanEntry(root *os.Root, relativePath string, entry fs.DirEntry, match cata
 		!openedInfo.Mode().IsRegular() || !finalInfo.Mode().IsRegular() || !pathInfo.Mode().IsRegular() ||
 		!os.SameFile(info, openedInfo) || !os.SameFile(openedInfo, finalInfo) || !os.SameFile(finalInfo, pathInfo) ||
 		openedInfo.Size() != finalInfo.Size() || openedInfo.ModTime() != finalInfo.ModTime() || len(data) > MaxFileSize {
-		return rejectedItem(relativePath, match.sourceType, info.Size(), match.provider, "file changed or could not be read safely"), nil
+		return rejectedItem(relativePath, match.sourceType, info.Size(), match.provider, v1.AgentConfigPackReasonUnreadableDuringScan), nil
 	}
 	if isBinary(data) {
-		return rejectedItem(relativePath, v1.AgentConfigBinary, info.Size(), match.provider, "binary content is never imported"), nil
+		return rejectedItem(relativePath, v1.AgentConfigBinary, info.Size(), match.provider, v1.AgentConfigPackReasonBinaryContent), nil
 	}
 	if containsSecret(data) {
-		return rejectedItem(relativePath, v1.AgentConfigCredential, info.Size(), match.provider, "secret-like content is never imported"), nil
+		return rejectedItem(relativePath, v1.AgentConfigCredential, info.Size(), match.provider, v1.AgentConfigPackReasonSecretContent), nil
 	}
 	digest := sha256.Sum256(data)
 	item.DigestSHA256 = hex.EncodeToString(digest[:])

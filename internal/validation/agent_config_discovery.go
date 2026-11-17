@@ -141,7 +141,26 @@ func validateAgentConfigItem(index int, item v1.AgentConfigDiscoveryItem) error 
 			len(item.Conflicts) != 0 || reviewedAgentConfigSourceTypes[item.SourceType]) {
 		return fmt.Errorf("%s cannot bypass review", prefix)
 	}
-	return nil
+	return validateAgentConfigPackClass(prefix, item)
+}
+
+func validateAgentConfigPackClass(prefix string, item v1.AgentConfigDiscoveryItem) error {
+	if item.PackClass == "" && item.PackReasonCode == "" {
+		return nil
+	}
+	rule, known := v1.AgentConfigPackReasonRules[item.PackReasonCode]
+	if !known || rule.Class != item.PackClass {
+		return fmt.Errorf("%s pack class and reason code are inconsistent", prefix)
+	}
+	if rule.Rejected != (item.Classification == v1.AgentConfigClassRejected) {
+		return fmt.Errorf("%s pack reason code does not match the rejection state", prefix)
+	}
+	for _, sourceType := range rule.SourceTypes {
+		if sourceType == item.SourceType {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s pack reason code does not apply to the source type", prefix)
 }
 
 func repositoryPath(field, value string) error {
