@@ -112,6 +112,7 @@ type AgentPackRef struct {
 
 type CommandPayload struct {
 	AgentConfigScan                          *AgentConfigScanAuthority                          `json:"agent_config_scan,omitempty"`
+	ContentCapture                           *AgentConfigContentCapture                         `json:"content_capture,omitempty"`
 	Command                                  string                                             `json:"command"`
 	Job                                      *JobSpec                                           `json:"job,omitempty"`
 	JobID                                    string                                             `json:"job_id,omitempty"`

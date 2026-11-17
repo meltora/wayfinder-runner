@@ -24,7 +24,8 @@ var skippedDirectories = map[string]bool{
 }
 
 type Inventory struct {
-	Items []v1.AgentConfigDiscoveryItem `json:"items"`
+	Items    []v1.AgentConfigDiscoveryItem `json:"items"`
+	Contents map[string]string             `json:"-"`
 }
 
 func Scan(root string) (Inventory, error) {

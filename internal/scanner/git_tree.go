@@ -35,14 +35,29 @@ type gitTreeEntry struct {
 // commit. readBlob must return raw object bytes, never filtered working files.
 // All traversal or read failures discard the entire inventory.
 func ScanGitTree(ctx context.Context, tree []byte, readBlob func(context.Context, string) ([]byte, error)) (Inventory, error) {
-	inventory, err := scanGitTree(ctx, tree, readBlob)
+	return ScanGitTreeWithContents(ctx, tree, readBlob, 0)
+}
+
+func ScanGitTreeWithContents(ctx context.Context, tree []byte, readBlob func(context.Context, string) ([]byte, error), maxContentBytes int) (Inventory, error) {
+	var contents map[string]string
+	var keep func(string, []byte)
+	if maxContentBytes > 0 {
+		contents = map[string]string{}
+		keep = func(path string, data []byte) {
+			if len(data) <= maxContentBytes && utf8.Valid(data) {
+				contents[path] = string(data)
+			}
+		}
+	}
+	inventory, err := scanGitTree(ctx, tree, readBlob, keep)
 	if err != nil {
 		return Inventory{Items: []v1.AgentConfigDiscoveryItem{}}, err
 	}
+	inventory.Contents = contents
 	return inventory, nil
 }
 
-func scanGitTree(ctx context.Context, tree []byte, readBlob func(context.Context, string) ([]byte, error)) (Inventory, error) {
+func scanGitTree(ctx context.Context, tree []byte, readBlob func(context.Context, string) ([]byte, error), keep func(string, []byte)) (Inventory, error) {
 	inventory := Inventory{Items: []v1.AgentConfigDiscoveryItem{}}
 	if err := ctx.Err(); err != nil {
 		return inventory, err
@@ -86,7 +101,7 @@ func scanGitTree(ctx context.Context, tree []byte, readBlob func(context.Context
 		if len(inventory.Items) == MaxItems {
 			return inventory, ErrScanLimit
 		}
-		item, readBytes, err := scanGitEntry(ctx, entry, match, MaxGitBlobBytes-totalBytes, readBlob)
+		item, readBytes, err := scanGitEntry(ctx, entry, match, MaxGitBlobBytes-totalBytes, readBlob, keep)
 		if err != nil {
 			return inventory, err
 		}
@@ -144,7 +159,7 @@ func skipGitPath(path string) bool {
 	return false
 }
 
-func scanGitEntry(ctx context.Context, entry gitTreeEntry, match catalogMatch, remaining int64, readBlob func(context.Context, string) ([]byte, error)) (v1.AgentConfigDiscoveryItem, int64, error) {
+func scanGitEntry(ctx context.Context, entry gitTreeEntry, match catalogMatch, remaining int64, readBlob func(context.Context, string) ([]byte, error), keep func(string, []byte)) (v1.AgentConfigDiscoveryItem, int64, error) {
 	if entry.mode == "120000" {
 		return rejectedItem(entry.path, v1.AgentConfigSymlink, 0, match.provider, v1.AgentConfigPackReasonSymlink), 0, nil
 	}
@@ -186,5 +201,8 @@ func scanGitEntry(ctx context.Context, entry gitTreeEntry, match catalogMatch, r
 	}
 	digest := sha256.Sum256(data)
 	item.DigestSHA256 = hex.EncodeToString(digest[:])
+	if keep != nil {
+		keep(entry.path, data)
+	}
 	return item, entry.size, nil
 }

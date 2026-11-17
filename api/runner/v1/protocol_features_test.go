@@ -36,7 +36,7 @@ func TestCapabilityManifestPlacesProtocolFeaturesAfterTheElevatedCapabilityVersi
 	}
 	text := string(encoded)
 	elevated := strings.Index(text, `"elevated_capability_transport_version":2`)
-	features := strings.Index(text, `"protocol_features":["job_spec_provider_auth_mode","job_spec_work_attachments","provider_auth_prefer_subscription","run_network_egress_rules","run_network_layer_refusals"]`)
+	features := strings.Index(text, `"protocol_features":["agent_config_content_capture_v1","job_spec_provider_auth_mode","job_spec_work_attachments","provider_auth_prefer_subscription","run_network_egress_rules","run_network_layer_refusals"]`)
 	digest := strings.Index(text, `"runner_configuration_digest"`)
 	if elevated < 0 || features < elevated || digest < features {
 		t.Fatalf("manifest field order = %s", text)
@@ -45,11 +45,11 @@ func TestCapabilityManifestPlacesProtocolFeaturesAfterTheElevatedCapabilityVersi
 
 func TestSupportedProtocolFeaturesAreSortedAndCopied(t *testing.T) {
 	features := SupportedProtocolFeatures()
-	if !reflect.DeepEqual(features, []string{ProtocolFeatureJobSpecProviderAuthMode, ProtocolFeatureJobSpecWorkAttachments, ProtocolFeatureProviderAuthPreferSubscription, ProtocolFeatureRunNetworkEgressRules, ProtocolFeatureRunNetworkLayerRefusals}) {
+	if !reflect.DeepEqual(features, []string{ProtocolFeatureAgentConfigContentCapture, ProtocolFeatureJobSpecProviderAuthMode, ProtocolFeatureJobSpecWorkAttachments, ProtocolFeatureProviderAuthPreferSubscription, ProtocolFeatureRunNetworkEgressRules, ProtocolFeatureRunNetworkLayerRefusals}) {
 		t.Fatalf("features = %v", features)
 	}
 	features[0] = "changed"
-	if SupportedProtocolFeatures()[0] != ProtocolFeatureJobSpecProviderAuthMode {
+	if SupportedProtocolFeatures()[0] != ProtocolFeatureAgentConfigContentCapture {
 		t.Fatal("SupportedProtocolFeatures returned shared storage")
 	}
 }

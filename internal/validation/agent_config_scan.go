@@ -76,8 +76,11 @@ func AgentConfigScanResultEvent(e v1.AgentConfigScanResultEvent) error {
 		if scan.ProjectID != e.ProjectID || scan.RepositoryID != e.RepositoryID || scan.BranchRef != e.BranchRef || scan.ObservedAt.After(observed) {
 			return fmt.Errorf("scan result scope or time mismatch")
 		}
+		if err := AgentConfigItemContents(scan.Items, e.Outcome.ItemContents); err != nil {
+			return err
+		}
 	case "failed":
-		if e.Outcome.Scan != nil {
+		if e.Outcome.Scan != nil || e.Outcome.ItemContents != nil {
 			return fmt.Errorf("failed scan cannot carry inventory")
 		}
 		switch e.Outcome.Code {
