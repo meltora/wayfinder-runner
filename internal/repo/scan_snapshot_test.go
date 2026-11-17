@@ -135,10 +135,10 @@ func TestScanAgentConfigOriginMismatchAndMissingStorage(t *testing.T) {
 	m := NewManager(t.TempDir())
 	m.AllowLocal = true
 	scanFixtureGit(t, dir, "remote", "add", "origin", "https://example.invalid/unregistered")
-	if got, inventory, err := m.scanPinnedOrigin(context.Background(), dir, "https://example.invalid/registered", "refs/heads/main", scanNetwork{}); !errors.Is(err, ErrScanUnavailable) || got != "" || len(inventory.Items) != 0 {
+	if got, inventory, err := m.scanPinnedOrigin(context.Background(), dir, "https://example.invalid/registered", "refs/heads/main", scanNetwork{}, AgentConfigScanOptions{}); !errors.Is(err, ErrScanUnavailable) || got != "" || len(inventory.Items) != 0 {
 		t.Fatalf("origin mismatch accepted: %s %#v %v", got, inventory, err)
 	}
-	if _, _, err := m.scanPinnedOrigin(context.Background(), t.TempDir(), dir, "refs/heads/main", scanNetwork{}); !errors.Is(err, ErrScanUnavailable) {
+	if _, _, err := m.scanPinnedOrigin(context.Background(), t.TempDir(), dir, "refs/heads/main", scanNetwork{}, AgentConfigScanOptions{}); !errors.Is(err, ErrScanUnavailable) {
 		t.Fatalf("invalid mirror: %v", err)
 	}
 	file := filepath.Join(t.TempDir(), "not-directory")

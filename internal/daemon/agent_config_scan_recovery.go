@@ -41,7 +41,7 @@ func (d *Daemon) completeAgentConfigScanCommand(ctx context.Context, env v1.Enve
 			d.finishAgentConfigScanReceipt(ctx, env.ID, owner, startErr)
 			return
 		}
-		outcome = d.scanAgentConfiguration(scanCtx, a, env.ProviderCredential)
+		outcome = d.scanAgentConfiguration(scanCtx, a, env.ProviderCredential, command.ContentCapture)
 		outcome = d.finalizeAgentConfigScan(scanCtx, outcome)
 		finish()
 	}

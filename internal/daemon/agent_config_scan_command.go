@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,7 +32,7 @@ type agentConfigScanState struct {
 
 func validateAgentConfigScanCommandBoundary(command v1.CommandPayload) error {
 	if command.Command != v1.CmdAgentConfigScan {
-		if command.AgentConfigScan != nil {
+		if command.AgentConfigScan != nil || command.ContentCapture != nil {
 			return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
 		}
 		return nil
@@ -43,12 +44,17 @@ func validateAgentConfigScanCommandBoundary(command v1.CommandPayload) error {
 	schema := fields.Type()
 	for i := 0; i < fields.NumField(); i++ {
 		name := schema.Field(i).Name
-		if name != "Command" && name != "AgentConfigScan" && !fields.Field(i).IsZero() {
+		if name != "Command" && name != "AgentConfigScan" && name != "ContentCapture" && !fields.Field(i).IsZero() {
 			return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
 		}
 	}
 	if err := validation.AgentConfigScanAuthority(*command.AgentConfigScan); err != nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
+	}
+	if command.ContentCapture != nil {
+		if err := validation.AgentConfigContentCapture(*command.ContentCapture); err != nil {
+			return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
+		}
 	}
 	return nil
 }
@@ -120,7 +126,7 @@ func (d *Daemon) beginAgentConfigScan(ctx context.Context, a v1.AgentConfigScanA
 	}
 	return scanCtx, finish, nil
 }
-func (d *Daemon) scanAgentConfiguration(ctx context.Context, a v1.AgentConfigScanAuthority, providerCredential *v1.ProviderCredential) v1.AgentConfigScanOutcome {
+func (d *Daemon) scanAgentConfiguration(ctx context.Context, a v1.AgentConfigScanAuthority, providerCredential *v1.ProviderCredential, capture *v1.AgentConfigContentCapture) v1.AgentConfigScanOutcome {
 	configuration := d.hotConfiguration()
 	repository, ok := configuration.repositories[a.RepositoryID]
 	if !ok {
@@ -133,7 +139,13 @@ func (d *Daemon) scanAgentConfiguration(ctx context.Context, a v1.AgentConfigSca
 	read := d.agentConfigScanReader
 	if read == nil {
 		manager := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
-		read = manager.ScanAgentConfigWithCredential
+		options := repo.AgentConfigScanOptions{}
+		if capture != nil {
+			options.ContentMaxItemBytes = v1.AgentConfigContentMaxItemBytes
+		}
+		read = func(ctx context.Context, url, branch string, credential *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
+			return manager.ScanAgentConfigWithOptions(ctx, url, branch, credential, options)
+		}
 	}
 	sha, inventory, err := read(ctx, repository.URL, a.BranchRef, credential)
 	switch {
@@ -161,7 +173,30 @@ func (d *Daemon) scanAgentConfiguration(ctx context.Context, a v1.AgentConfigSca
 	if err != nil || validation.AgentConfigDiscoveryEvent(scan) != nil {
 		return scanFailure("scan_failed")
 	}
-	return v1.AgentConfigScanOutcome{Kind: "discovered", Scan: &scan}
+	return withItemContents(v1.AgentConfigScanOutcome{Kind: "discovered", Scan: &scan}, inventory, capture)
+}
+
+const (
+	maxScanResultEnvelopeBytes = 2 << 20
+	scanResultEnvelopeReserve  = 16 << 10
+)
+
+func withItemContents(outcome v1.AgentConfigScanOutcome, inventory scanner.Inventory, capture *v1.AgentConfigContentCapture) v1.AgentConfigScanOutcome {
+	if capture == nil || outcome.Scan == nil || len(inventory.Contents) == 0 {
+		return outcome
+	}
+	metadata, err := json.Marshal(outcome)
+	if err != nil {
+		return outcome
+	}
+	limits := scanner.ContentLimits{
+		MaxItemBytes:    v1.AgentConfigContentMaxItemBytes,
+		MaxTotalBytes:   v1.AgentConfigContentMaxTotalBytes,
+		MaxItems:        v1.AgentConfigContentMaxItems,
+		MaxEncodedBytes: maxScanResultEnvelopeBytes - scanResultEnvelopeReserve - len(metadata),
+	}
+	outcome.ItemContents = scanner.ItemContents(outcome.Scan.Items, inventory.Contents, limits)
+	return outcome
 }
 func scanFailure(code string) v1.AgentConfigScanOutcome {
 	return v1.AgentConfigScanOutcome{Kind: "failed", Code: code}
@@ -202,7 +237,14 @@ func validateAgentConfigScanWireFields(raw []byte) error {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
 	}
-	if len(fields) != 2 || fields["command"] == nil || fields["agent_config_scan"] == nil {
+	expected := 2
+	if capture, present := fields["content_capture"]; present {
+		if bytes.Equal(capture, []byte("null")) {
+			return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
+		}
+		expected = 3
+	}
+	if len(fields) != expected || fields["command"] == nil || fields["agent_config_scan"] == nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
 	}
 	return nil

@@ -35,7 +35,15 @@ func (m *Manager) ScanAgentConfig(ctx context.Context, registeredURL, branchRef 
 	return m.ScanAgentConfigWithCredential(ctx, registeredURL, branchRef, nil)
 }
 
+type AgentConfigScanOptions struct {
+	ContentMaxItemBytes int
+}
+
 func (m *Manager) ScanAgentConfigWithCredential(ctx context.Context, registeredURL, branchRef string, credential *GitHTTPSCredential) (string, scanner.Inventory, error) {
+	return m.ScanAgentConfigWithOptions(ctx, registeredURL, branchRef, credential, AgentConfigScanOptions{})
+}
+
+func (m *Manager) ScanAgentConfigWithOptions(ctx context.Context, registeredURL, branchRef string, credential *GitHTTPSCredential, options AgentConfigScanOptions) (string, scanner.Inventory, error) {
 	empty := scanner.Inventory{}
 	if !AgentConfigScanSupportedOS(runtime.GOOS) {
 		return "", empty, ErrScanUnavailable
@@ -69,10 +77,10 @@ func (m *Manager) ScanAgentConfigWithCredential(ctx context.Context, registeredU
 	if _, err := m.scanRemoteGit(ctx, dir, transport, "clone", "--bare", "--no-local", "--depth=1", "--single-branch", "--no-tags", "--template=", "--branch", branch, "--", registeredURL, bare); err != nil {
 		return "", empty, err
 	}
-	return m.scanPinnedOrigin(ctx, bare, registeredURL, branchRef, transport)
+	return m.scanPinnedOrigin(ctx, bare, registeredURL, branchRef, transport, options)
 }
 
-func (m *Manager) scanPinnedOrigin(ctx context.Context, bare, registeredURL, branchRef string, transport scanNetwork) (string, scanner.Inventory, error) {
+func (m *Manager) scanPinnedOrigin(ctx context.Context, bare, registeredURL, branchRef string, transport scanNetwork, options AgentConfigScanOptions) (string, scanner.Inventory, error) {
 	empty := scanner.Inventory{}
 	origin, err := m.scanGit(ctx, bare, 4096, "remote", "get-url", "origin")
 	if err != nil {
@@ -98,12 +106,12 @@ func (m *Manager) scanPinnedOrigin(ctx context.Context, bare, registeredURL, bra
 	if err != nil {
 		return "", empty, err
 	}
-	inventory, err := scanner.ScanGitTree(ctx, tree, func(ctx context.Context, oid string) ([]byte, error) {
+	inventory, err := scanner.ScanGitTreeWithContents(ctx, tree, func(ctx context.Context, oid string) ([]byte, error) {
 		if !validObjectID(oid) {
 			return nil, scanner.ErrIncompleteScan
 		}
 		return m.scanGit(ctx, bare, scanner.MaxFileSize, "cat-file", "blob", oid)
-	})
+	}, options.ContentMaxItemBytes)
 	if err != nil {
 		return "", empty, err
 	}

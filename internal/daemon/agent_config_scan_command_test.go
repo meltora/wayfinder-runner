@@ -276,7 +276,7 @@ func TestAgentConfigScanCancellationAndLateSuccess(t *testing.T) {
 			d.agentConfigScanReader = func(context.Context, string, string, *repo.GitHTTPSCredential) (string, scanner.Inventory, error) {
 				return strings.Repeat("a", 40), scanner.Inventory{}, nil
 			}
-			if got := d.scanAgentConfiguration(ctx, *validScanCommand().AgentConfigScan, nil); got.Code != code || got.Scan != nil {
+			if got := d.scanAgentConfiguration(ctx, *validScanCommand().AgentConfigScan, nil, nil); got.Code != code || got.Scan != nil {
 				t.Fatalf("late success=%+v", got)
 			}
 		})
@@ -419,7 +419,7 @@ func TestAgentConfigScanDefaultReaderNeverAllowsLocalRepository(t *testing.T) {
 	d := scanDaemon(t)
 	d.cfg.AllowUnsafeDirect = true
 	d.cfg.Repositories["repository-1"] = config.RepositoryConfig{URL: t.TempDir()}
-	outcome := d.scanAgentConfiguration(context.Background(), *validScanCommand().AgentConfigScan, nil)
+	outcome := d.scanAgentConfiguration(context.Background(), *validScanCommand().AgentConfigScan, nil, nil)
 	if outcome.Code != "repository_unavailable" {
 		t.Fatalf("unsafe local registration=%+v", outcome)
 	}

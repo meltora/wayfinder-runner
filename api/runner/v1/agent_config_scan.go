@@ -29,9 +29,10 @@ type AgentConfigScanAuthority struct {
 	CommandDigest    string `json:"command_digest"`
 }
 type AgentConfigScanOutcome struct {
-	Kind string                     `json:"kind"`
-	Scan *AgentConfigDiscoveryEvent `json:"scan,omitempty"`
-	Code string                     `json:"code,omitempty"`
+	Kind         string                     `json:"kind"`
+	Scan         *AgentConfigDiscoveryEvent `json:"scan,omitempty"`
+	Code         string                     `json:"code,omitempty"`
+	ItemContents []AgentConfigItemContent   `json:"item_contents,omitempty"`
 }
 type AgentConfigScanResultEvent struct {
 	Kind string `json:"kind"`
@@ -65,8 +66,18 @@ func (outcome *AgentConfigScanOutcome) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(fields["kind"], &kind); err != nil {
 		return err
 	}
-	if len(fields) != 2 {
-		return fmt.Errorf("scan outcome must have exactly two fields")
+	expected := 2
+	if contents, present := fields["item_contents"]; present {
+		if kind != "discovered" {
+			return fmt.Errorf("only a discovered outcome can carry item contents")
+		}
+		if err := scanItemContentsWireField(contents); err != nil {
+			return err
+		}
+		expected = 3
+	}
+	if len(fields) != expected {
+		return fmt.Errorf("scan outcome has unexpected fields")
 	}
 	switch kind {
 	case "discovered":

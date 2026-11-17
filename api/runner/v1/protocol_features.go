@@ -11,6 +11,7 @@ const (
 )
 
 var supportedProtocolFeatures = []string{
+	ProtocolFeatureAgentConfigContentCapture,
 	ProtocolFeatureJobSpecProviderAuthMode,
 	ProtocolFeatureJobSpecWorkAttachments,
 	ProtocolFeatureProviderAuthPreferSubscription,

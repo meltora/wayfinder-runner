@@ -1286,6 +1286,17 @@ required to scan again. Command and result digests bind the request, attempt,
 project, repository, branch, lease, fence, and deadline. Repository diagnostics,
 credentials, and file contents are excluded from failure results.
 
+The runner advertises the `agent_config_content_capture_v1` protocol feature.
+When an Organization has turned on content sync, the control plane adds an
+unsigned `content_capture` object (`agent-config-content-v1`, 64 KiB per item,
+512 KiB total) to the scan command. Only then does a discovered result carry
+`item_contents`: `{path, text}` entries for accepted items, sorted by UTF-16
+code units. Each text is the exact raw blob, so its SHA-256 equals the item's
+reported digest. Items over the limits, items that are not UTF-8, and items
+whose text changes under the runner's known-secret redaction are skipped, never
+truncated. Entries are also dropped when they would push the result envelope
+past 2 MiB. Without `content_capture`, results are unchanged.
+
 ## Updates and release integrity
 
 Automatic updates use a separate root-owned, socket-activated service. The
