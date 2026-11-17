@@ -24,7 +24,11 @@ const (
 
 type RefusalEnforcer string
 
-const RefusalEnforcerAgentRuntimePermissions RefusalEnforcer = "agent_runtime_permissions"
+const (
+	RefusalEnforcerAgentRuntimePermissions RefusalEnforcer = "agent_runtime_permissions"
+	RefusalEnforcerAgentSandbox            RefusalEnforcer = "agent_sandbox"
+	RefusalEnforcerJobEgressRules          RefusalEnforcer = "job_egress_rules"
+)
 
 type RunIsolation string
 

@@ -7,9 +7,11 @@ import (
 )
 
 const (
-	ProtocolFeatureRunNetworkEgressRules  = "run_network_egress_rules"
-	RunGuardrailsEgressRulesSchemaVersion = 2
-	MaxEgressApprovedHosts                = 64
+	ProtocolFeatureRunNetworkEgressRules           = "run_network_egress_rules"
+	ProtocolFeatureRunNetworkLayerRefusals         = "run_network_layer_refusals"
+	RunGuardrailsEgressRulesSchemaVersion          = 2
+	RunGuardrailsNetworkLayerRefusalsSchemaVersion = 3
+	MaxEgressApprovedHosts                         = 64
 )
 
 type RunEgressRules struct {
@@ -33,4 +35,8 @@ func EgressApprovedHostsDigest(hosts []string) string {
 
 func (policy *RunGuardrailsPolicy) ReportsEgressRules() bool {
 	return policy != nil && policy.SchemaVersion >= RunGuardrailsEgressRulesSchemaVersion
+}
+
+func (policy *RunGuardrailsPolicy) ReportsNetworkLayerRefusals() bool {
+	return policy != nil && policy.SchemaVersion >= RunGuardrailsNetworkLayerRefusalsSchemaVersion
 }

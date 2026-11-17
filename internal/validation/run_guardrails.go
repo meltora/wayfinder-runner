@@ -8,7 +8,7 @@ import (
 )
 
 func RunGuardrailsPolicy(value v1.RunGuardrailsPolicy) error {
-	if value.SchemaVersion != v1.RunGuardrailsSchemaVersion && value.SchemaVersion != v1.RunGuardrailsEgressRulesSchemaVersion {
+	if value.SchemaVersion < v1.RunGuardrailsSchemaVersion || value.SchemaVersion > v1.RunGuardrailsNetworkLayerRefusalsSchemaVersion {
 		return fmt.Errorf("run_guardrails schema_version is invalid")
 	}
 	if value.MaxRefusedRequests < 1 || value.MaxRefusedRequests > v1.MaxRefusedRequests {
@@ -33,7 +33,13 @@ func RefusedRequestEvent(value v1.RefusedRequestEvent) error {
 	default:
 		return fmt.Errorf("refused request kind is invalid")
 	}
-	if value.Enforcer != v1.RefusalEnforcerAgentRuntimePermissions {
+	switch value.Enforcer {
+	case v1.RefusalEnforcerAgentRuntimePermissions:
+	case v1.RefusalEnforcerAgentSandbox, v1.RefusalEnforcerJobEgressRules:
+		if value.RefusalKind != v1.RefusalNetworkDestination {
+			return fmt.Errorf("network layer refusals must name a network destination")
+		}
+	default:
 		return fmt.Errorf("refused request enforcer is invalid")
 	}
 	if err := boundedText("subject", value.Subject, v1.MaxRefusedRequestSubjectBytes, true); err != nil || strings.TrimSpace(value.Subject) == "" {
