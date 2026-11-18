@@ -13,6 +13,7 @@ const (
 
 type AgentConfigPackReasonCode string
 
+// #nosec G101 -- reason code names, not credentials.
 const (
 	AgentConfigPackReasonInstructionsPortable            AgentConfigPackReasonCode = "instructions_portable"
 	AgentConfigPackReasonSkillPortable                   AgentConfigPackReasonCode = "skill_portable"
