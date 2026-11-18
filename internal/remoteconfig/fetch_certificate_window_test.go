@@ -69,7 +69,12 @@ func startGatewayClosingWithoutAlert(t *testing.T, authority testAuthority, clos
 					_, _ = io.Copy(io.Discard, raw)
 				}
 				peers := conn.ConnectionState().PeerCertificates
-				if closeEveryConnection || len(peers) == 0 {
+				if closeEveryConnection {
+					_, _ = http.ReadRequest(bufio.NewReader(conn))
+					closeWithoutAlert()
+					return
+				}
+				if len(peers) == 0 {
 					closeWithoutAlert()
 					return
 				}

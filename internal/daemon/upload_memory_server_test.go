@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -42,8 +44,35 @@ func (l *memoryListener) Close() error {
 
 func (l *memoryListener) Addr() net.Addr { return memoryAddr{} }
 
+func bufferedConnPair() (net.Conn, net.Conn, error) {
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	client, err := fileConn(fds[0], "upload-client")
+	if err != nil {
+		_ = syscall.Close(fds[1])
+		return nil, nil, err
+	}
+	server, err := fileConn(fds[1], "upload-server")
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	return client, server, nil
+}
+
+func fileConn(fd int, name string) (net.Conn, error) {
+	file := os.NewFile(uintptr(fd), name)
+	defer func() { _ = file.Close() }()
+	return net.FileConn(file)
+}
+
 func (l *memoryListener) dial(ctx context.Context, _, _ string) (net.Conn, error) {
-	client, server := net.Pipe()
+	client, server, err := bufferedConnPair()
+	if err != nil {
+		return nil, err
+	}
 	select {
 	case l.conns <- server:
 		return client, nil
