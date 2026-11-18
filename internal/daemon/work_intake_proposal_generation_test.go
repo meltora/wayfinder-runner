@@ -191,6 +191,14 @@ func TestProviderGenerationFailsClosedOnEffectivePolicyDriftBeforeAndAfterStart(
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir)
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".codex", "auth.json"), []byte(`{"token":"test"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
 	attestation := isolation.DockerNetworkAttestation{
 		ID: strings.Repeat("a", 64), Name: "provider-egress", PolicyID: "consultation-v1",
 		Driver: "bridge", Scope: "local",
