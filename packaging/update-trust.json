@@ -1,5 +1,12 @@
 {
   "schema_version": 1,
   "signature_threshold": 1,
-  "keys": []
+  "keys": [
+    {
+      "key_id": "meltora-update-2026",
+      "public_key_b64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEFNLHNpQ52fhsE3i/Rl8FwFcgdpsPUv8mSECPbai5s8ZXqzz61YNk8m6Tui9xAIEt55rQH77pUmVCllIA46qVEg==",
+      "not_before": "2026-11-19T02:31:13Z",
+      "not_after": "2028-11-19T02:31:13Z"
+    }
+  ]
 }
