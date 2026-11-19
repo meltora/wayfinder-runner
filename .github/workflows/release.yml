@@ -119,8 +119,9 @@ jobs:
           [[ "$JOB_IMAGE_REPOSITORY" =~ ^ghcr\.io/[a-z0-9._/-]+$ ]] || { echo "the job image repository was not checked" >&2; exit 1; }
           image="$JOB_IMAGE_REPOSITORY:$TAG"
           printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
-          sh packaging/job-image/build.sh "$image" --push | tee job-image.log
-          pinned=$(sed -n 's/^pinned: //p' job-image.log)
+          log="$RUNNER_TEMP/job-image.log"
+          sh packaging/job-image/build.sh "$image" --push | tee "$log"
+          pinned=$(sed -n 's/^pinned: //p' "$log")
           [[ "$pinned" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$ ]] || { echo "the job image has no pinned digest" >&2; exit 1; }
           cosign sign --yes "$pinned"
           cosign verify "$pinned" \
