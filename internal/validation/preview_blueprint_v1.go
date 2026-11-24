@@ -35,10 +35,12 @@ var (
 		regexp.MustCompile(`whsec_`),
 		regexp.MustCompile(`xox[abeprs]-`),
 		regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
-		regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^` + previewBlueprintECMAWhitespace + `/?#@:]+:[^` + previewBlueprintECMAWhitespace + `/?#@]+@`),
+		regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^` + previewBlueprintECMAWhitespace + `/?#@:]*:[^` + previewBlueprintECMAWhitespace + `/?#@]+@`),
+		regexp.MustCompile(`(?i)[?&;](?:password|passwd|pwd|pass)=[^` + previewBlueprintECMAWhitespace + `&#;$][^` + previewBlueprintECMAWhitespace + `&#;]*`),
+		regexp.MustCompile(`(?i)(?:password|passwd)=['"]?[^` + previewBlueprintECMAWhitespace + `'"$][^` + previewBlueprintECMAWhitespace + `'"]*`),
 	}
 	previewBlueprintTokenSeparator       = regexp.MustCompile(`[^A-Za-z0-9+/=_-]+`)
-	previewBlueprintInternalRegistry     = regexp.MustCompile(`(?:^|\.)(?:localhost|local|localdomain|internal|intranet|lan|home\.arpa|nip\.io|sslip\.io)$`)
+	previewBlueprintInternalHost         = regexp.MustCompile(`(?:^|\.)(?:localhost|local|localdomain|internal|intranet|lan|home\.arpa|svc|corp|test|invalid|onion|example|nip\.io|sslip\.io|localtest\.me|lvh\.me)$`)
 	previewBlueprintEncodedSeparator     = regexp.MustCompile(`(?i)%(?:2e|2f|5c)`)
 	previewBlueprintHealthPathForbidden  = regexp.MustCompile(`[?#\\` + previewBlueprintECMAWhitespace + `]`)
 	previewBlueprintGeneratorRequiredFor = map[string]string{
@@ -105,7 +107,7 @@ func previewBlueprintShannonEntropy(value string) float64 {
 }
 
 func previewBlueprintTextLength(value string) int {
-	return utf8.RuneCountInString(value)
+	return len(v1.PreviewBlueprintTextCodePoints(value))
 }
 
 type previewBlueprintChecker struct {
@@ -274,8 +276,8 @@ func (checker *previewBlueprintChecker) egress(path []string, egress v1.PreviewB
 		return
 	}
 	for index, host := range egress.Hosts {
-		if !previewBlueprintIsHostname(host) {
-			checker.add(previewBlueprintPath(hostsPath, strconv.Itoa(index)), "Invalid hostname")
+		if !previewBlueprintIsPublicHost(host) {
+			checker.add(previewBlueprintPath(hostsPath, strconv.Itoa(index)), "Egress host must be a public DNS name, not localhost, an IP address or an internal suffix")
 		}
 	}
 	checker.atLeast(hostsPath, len(egress.Hosts), 1)
@@ -355,6 +357,9 @@ func (checker *previewBlueprintChecker) checkedText(path []string, value string,
 	if previewBlueprintControlCharacter.MatchString(value) {
 		checker.add(path, "Control characters are not allowed")
 	}
+	if !utf8.ValidString(value) {
+		checker.add(path, "Text must be valid Unicode")
+	}
 	if LooksLikePreviewBlueprintLiveCredential(value) {
 		checker.add(path, previewBlueprintCredentialText)
 	}
@@ -390,6 +395,7 @@ func (checker *previewBlueprintChecker) healthPath(path []string, value string) 
 	if !strings.HasPrefix(value, "/") ||
 		strings.Contains(value, "//") ||
 		previewBlueprintControlCharacter.MatchString(value) ||
+		!utf8.ValidString(value) ||
 		previewBlueprintHealthPathForbidden.MatchString(value) ||
 		previewBlueprintEncodedSeparator.MatchString(value) ||
 		slices.Contains(strings.Split(value, "/"), "..") {
@@ -421,5 +427,9 @@ func previewBlueprintIsPrivateRegistry(image string) bool {
 	if !ok {
 		return false
 	}
-	return !previewBlueprintIsHostname(host) || previewBlueprintInternalRegistry.MatchString(host)
+	return !previewBlueprintIsPublicHost(host)
+}
+
+func previewBlueprintIsPublicHost(host string) bool {
+	return previewBlueprintIsHostname(host) && !previewBlueprintInternalHost.MatchString(host)
 }

@@ -160,13 +160,11 @@ func decodePreviewBlueprintJSON(raw []byte) (any, error) {
 	if !utf8.Valid(raw) {
 		return nil, errors.New("preview blueprint content is not valid UTF-8")
 	}
-	if err := refuseLoneSurrogateEscapes(raw); err != nil {
-		return nil, err
-	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
+	reader := &previewBlueprintTokenReader{raw: raw, decoder: decoder}
+	value, err := reader.value(0)
+	if err != nil {
 		return nil, fmt.Errorf("preview blueprint content is not valid JSON: %w", err)
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
@@ -178,47 +176,175 @@ func decodePreviewBlueprintJSON(raw []byte) (any, error) {
 	return value, nil
 }
 
-func refuseLoneSurrogateEscapes(raw []byte) error {
-	inString := false
-	for index := 0; index < len(raw); index++ {
-		switch {
-		case !inString:
-			if raw[index] == '"' {
-				inString = true
-			}
-		case raw[index] == '"':
-			inString = false
-		case raw[index] == '\\' && index+1 < len(raw):
-			index++
-			if raw[index] != 'u' {
-				continue
-			}
-			unit, ok := surrogateEscapeAt(raw, index-1)
-			if !ok {
-				continue
-			}
-			if unit >= 0xDC00 {
-				return errors.New("preview blueprint content has a lone surrogate escape")
-			}
-			low, ok := surrogateEscapeAt(raw, index+5)
-			if !ok || low < 0xDC00 {
-				return errors.New("preview blueprint content has a lone surrogate escape")
-			}
-			index += 10
-		}
-	}
-	return nil
+const previewBlueprintMaxDepth = 10000
+
+type previewBlueprintTokenReader struct {
+	raw     []byte
+	decoder *json.Decoder
 }
 
-func surrogateEscapeAt(raw []byte, start int) (uint64, bool) {
-	if start+6 > len(raw) || raw[start] != '\\' || raw[start+1] != 'u' {
+func (reader *previewBlueprintTokenReader) token() (json.Token, error) {
+	start := reader.decoder.InputOffset()
+	token, err := reader.decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := token.(string); ok {
+		span := reader.raw[start:reader.decoder.InputOffset()]
+		quote := bytes.IndexByte(span, '"')
+		if quote < 0 || len(span)-quote < 2 || span[len(span)-1] != '"' {
+			return nil, errors.New("string token is not a JSON string literal")
+		}
+		return decodePreviewBlueprintStringLiteral(span[quote+1 : len(span)-1]), nil
+	}
+	return token, nil
+}
+
+func (reader *previewBlueprintTokenReader) value(depth int) (any, error) {
+	if depth > previewBlueprintMaxDepth {
+		return nil, errors.New("exceeded max depth")
+	}
+	token, err := reader.token()
+	if err != nil {
+		return nil, err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return token, nil
+	}
+	switch delim {
+	case '[':
+		items := []any{}
+		for reader.decoder.More() {
+			item, err := reader.value(depth + 1)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
+		}
+		if _, err := reader.decoder.Token(); err != nil {
+			return nil, err
+		}
+		return items, nil
+	case '{':
+		object := map[string]any{}
+		for reader.decoder.More() {
+			keyToken, err := reader.token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return nil, errors.New("object key is not a string")
+			}
+			item, err := reader.value(depth + 1)
+			if err != nil {
+				return nil, err
+			}
+			object[key] = item
+		}
+		if _, err := reader.decoder.Token(); err != nil {
+			return nil, err
+		}
+		return object, nil
+	}
+	return nil, fmt.Errorf("unexpected delimiter %v", delim)
+}
+
+func decodePreviewBlueprintStringLiteral(body []byte) string {
+	out := make([]byte, 0, len(body))
+	for index := 0; index < len(body); {
+		if body[index] != '\\' || index+1 >= len(body) {
+			out = append(out, body[index])
+			index++
+			continue
+		}
+		escape := body[index+1]
+		index += 2
+		switch escape {
+		case 'b':
+			out = append(out, '\b')
+		case 'f':
+			out = append(out, '\f')
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case 't':
+			out = append(out, '\t')
+		case 'u':
+			unit, ok := previewBlueprintHexUnit(body, index)
+			if !ok {
+				out = append(out, '\\', 'u')
+				continue
+			}
+			index += 4
+			if unit >= 0xD800 && unit < 0xDC00 && index+1 < len(body) && body[index] == '\\' && body[index+1] == 'u' {
+				if low, ok := previewBlueprintHexUnit(body, index+2); ok && low >= 0xDC00 && low <= 0xDFFF {
+					out = utf8.AppendRune(out, utf16.DecodeRune(unit, low))
+					index += 6
+					continue
+				}
+			}
+			out = appendPreviewBlueprintCodePoint(out, unit)
+		default:
+			out = append(out, escape)
+		}
+	}
+	return string(out)
+}
+
+func previewBlueprintHexUnit(body []byte, start int) (rune, bool) {
+	if start+4 > len(body) {
 		return 0, false
 	}
-	unit, err := strconv.ParseUint(string(raw[start+2:start+6]), 16, 16)
-	if err != nil || unit < 0xD800 || unit > 0xDFFF {
+	unit, err := strconv.ParseUint(string(body[start:start+4]), 16, 16)
+	if err != nil {
 		return 0, false
 	}
-	return unit, true
+	return rune(unit), true
+}
+
+func appendPreviewBlueprintCodePoint(out []byte, codePoint rune) []byte {
+	if codePoint >= 0xD800 && codePoint <= 0xDFFF {
+		return append(out, byte(0xE0|codePoint>>12), byte(0x80|(codePoint>>6)&0x3F), byte(0x80|codePoint&0x3F))
+	}
+	return utf8.AppendRune(out, codePoint)
+}
+
+func PreviewBlueprintTextCodePoints(value string) []rune {
+	codePoints := make([]rune, 0, len(value))
+	for index := 0; index < len(value); {
+		if surrogate, ok := previewBlueprintSurrogateAt(value, index); ok {
+			codePoints = append(codePoints, surrogate)
+			index += 3
+			continue
+		}
+		character, size := utf8.DecodeRuneInString(value[index:])
+		codePoints = append(codePoints, character)
+		index += size
+	}
+	return codePoints
+}
+
+func previewBlueprintSurrogateAt(value string, index int) (rune, bool) {
+	if index+3 > len(value) || value[index] != 0xED || value[index+1] < 0xA0 || value[index+1] > 0xBF || value[index+2] < 0x80 || value[index+2] > 0xBF {
+		return 0, false
+	}
+	return 0xD000 | rune(value[index+1]&0x3F)<<6 | rune(value[index+2]&0x3F), true
+}
+
+func previewBlueprintUTF16(value string) []uint16 {
+	var units []uint16
+	for _, codePoint := range PreviewBlueprintTextCodePoints(value) {
+		if codePoint >= 0x10000 {
+			high, low := utf16.EncodeRune(codePoint)
+			units = append(units, uint16(high), uint16(low))
+			continue
+		}
+		units = append(units, uint16(codePoint))
+	}
+	return units
 }
 
 func refuseNonFiniteNumbers(value any) error {
@@ -310,14 +436,14 @@ func writePreviewBlueprintCanonicalJSON(out io.StringWriter, value any) error {
 }
 
 func compareUTF16CodeUnits(left, right string) int {
-	return slices.Compare(utf16.Encode([]rune(left)), utf16.Encode([]rune(right)))
+	return slices.Compare(previewBlueprintUTF16(left), previewBlueprintUTF16(right))
 }
 
 func ecmaScriptJSONString(value string) string {
 	var out strings.Builder
 	out.Grow(len(value) + 2)
 	out.WriteByte('"')
-	for _, character := range value {
+	for _, character := range PreviewBlueprintTextCodePoints(value) {
 		switch character {
 		case '"':
 			out.WriteString(`\"`)
@@ -334,7 +460,7 @@ func ecmaScriptJSONString(value string) string {
 		case '\t':
 			out.WriteString(`\t`)
 		default:
-			if character < 0x20 {
+			if character < 0x20 || (character >= 0xD800 && character <= 0xDFFF) {
 				fmt.Fprintf(&out, `\u%04x`, character)
 				continue
 			}
@@ -562,6 +688,12 @@ func (structure *previewBlueprintStructure) env(path []string, value any) map[st
 	if !ok {
 		structure.add(path, "Expected an object")
 		return nil
+	}
+	for _, reserved := range []string{"__proto__", "constructor", "prototype"} {
+		if _, present := object[reserved]; present {
+			structure.add(path, "Invalid environment key")
+			return nil
+		}
 	}
 	env := make(map[string]PreviewBlueprintEnvEntryV1, len(object))
 	for key, item := range object {

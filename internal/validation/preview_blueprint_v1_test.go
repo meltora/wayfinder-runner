@@ -94,7 +94,7 @@ func TestPreviewBlueprintV1AcceptsEveryValidVector(t *testing.T) {
 
 func TestPreviewBlueprintV1RefusesEveryInvalidVectorAtTheAppIssuePaths(t *testing.T) {
 	vectors := readPreviewBlueprintV1TestVectors(t).Invalid
-	if len(vectors) != 64 {
+	if len(vectors) != 80 {
 		t.Fatalf("invalid vectors = %d", len(vectors))
 	}
 	for _, vector := range vectors {
@@ -141,6 +141,16 @@ func TestPreviewBlueprintV1RefusesEveryLiveCredentialPrefix(t *testing.T) {
 		"HTTPS://User:Pw@example.com",
 		"git+ssh://u:p@host/repo",
 		"1http://user:pw@example.com",
+		"redis://:secret@cache:6379",
+		"https://api.example.com/?password=hunter2",
+		"https://api.example.com/?a=1&PWD=x",
+		"db;pass=x",
+		"DB_PASSWORD=hunter2",
+		"export db_passwd=x",
+		"PASSWORD=x$",
+		`PGPASSWORD="hunter2"`,
+		"PGPASSWORD='hunter2'",
+		"ſecret_PASSWORD=x",
 	} {
 		t.Run(value, func(t *testing.T) {
 			raw := strings.Replace(base, `"value":"enabled"`, `"value":`+jsonText(value), 1)
@@ -161,6 +171,17 @@ func TestPreviewBlueprintV1AcceptsTextThatOnlyResemblesACredential(t *testing.T)
 		"xoxz-1",
 		"https://user@example.com",
 		"https://user:@example.com",
+		"https://:@example.com",
+		"https://api.example.com/?password=$PASSWORD",
+		"https://api.example.com/?password=",
+		"https://api.example.com/?passwords=x",
+		"DB_PASSWORD=$DB_PASSWORD",
+		`PGPASSWORD="$PGPASSWORD"`,
+		"PGPASSWORD='$PGPASSWORD'",
+		"PASSWORD=",
+		`PASSWORD=""`,
+		"PASSWORD= x",
+		"PASSWORDS=x",
 		"https://us er:pw@example.com",
 		"https://user:p w@example.com",
 		"https://user:pw @example.com",
@@ -275,7 +296,19 @@ func TestPreviewBlueprintV1RegistryHostRules(t *testing.T) {
 		"internal/node":                  true,
 		"a.internal/node":                false,
 		"example.internalx/node":         true,
-		"registry.example/node":          true,
+		"registry.example/node":          false,
+		"registry.example.com/node":      true,
+		"postgres.default.svc/node":      false,
+		"registry.corp/node":             false,
+		"registry.test/node":             false,
+		"registry.invalid/node":          false,
+		"registry.onion/node":            false,
+		"localtest.me/node":              false,
+		"registry.localtest.me/node":     false,
+		"lvh.me/node":                    false,
+		"a.lvh.me:5000/node":             false,
+		"notlvh.me/node":                 true,
+		"svc.io/node":                    true,
 		"registry.example1/node":         true,
 		"registry.1example/node":         false,
 		"registry:5000/node":             false,
@@ -298,6 +331,8 @@ func TestPreviewBlueprintV1EnvKeysAndProtoKeyAreRefused(t *testing.T) {
 		"1A":                           false,
 		"A-B":                          false,
 		"__proto__":                    false,
+		"constructor":                  false,
+		"prototype":                    false,
 		"":                             false,
 	} {
 		raw := strings.Replace(base, `"SENTRY_DSN"`, jsonText(key), 1)
@@ -305,6 +340,43 @@ func TestPreviewBlueprintV1EnvKeysAndProtoKeyAreRefused(t *testing.T) {
 		if (err == nil) != ok {
 			t.Errorf("key %q: err = %v, want ok %v", key, err, ok)
 		}
+	}
+	for _, key := range []string{"__proto__", "constructor", "prototype"} {
+		raw := strings.Replace(base, `"SENTRY_DSN":{"kind":"disabled"}`, jsonText(key)+`:{"kind":"disabled"}`, 1)
+		if got := previewBlueprintIssuePaths(t, raw); !reflect.DeepEqual(got, []string{`["app","env"]`}) {
+			t.Errorf("key %q: paths = %v", key, got)
+		}
+	}
+}
+
+func TestPreviewBlueprintV1RefusesLoneSurrogatesInTextAtTheFieldPath(t *testing.T) {
+	base := previewBlueprintBaseJSON(t)
+	escape := func(hex string) string { return "\\" + "u" + hex }
+	for name, test := range map[string]struct {
+		old, new string
+		path     string
+	}{
+		"fake high":     {`"value":"enabled"`, `"value":"a` + escape("d800") + `b"`, `["app","env","FEATURE_FLAG","value"]`},
+		"note low":      {`"note":"Test mode key"`, `"note":"` + escape("dc00") + `"`, `["app","env","STRIPE_SECRET_KEY","note"]`},
+		"start reverse": {`"pnpm start"`, `"pnpm ` + escape("de00") + escape("d83d") + `"`, `["app","start"]`},
+		"health path":   {`"path":"/"`, `"path":"/` + escape("dc00") + `"`, `["app","health_checks","0","path"]`},
+		"working dir":   {`"working_directory":"."`, `"working_directory":"` + escape("d800") + `"`, `["app","working_directory"]`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := strings.Replace(base, test.old, test.new, 1)
+			if raw == base {
+				t.Fatal("replacement did not apply")
+			}
+			if got := previewBlueprintIssuePaths(t, raw); !reflect.DeepEqual(got, []string{test.path}) {
+				t.Fatalf("paths = %v, want %s", got, test.path)
+			}
+		})
+	}
+	note := strings.Replace(base, `"note":"Test mode key"`, `"note":"`+strings.Repeat(escape("d800"), 280)+`"`, 1)
+	_, err := ParsePreviewBlueprintContentV1([]byte(note))
+	var contentErr *v1.PreviewBlueprintContentErrorV1
+	if !errors.As(err, &contentErr) || len(contentErr.Issues) != 1 || contentErr.Issues[0].Message != "Text must be valid Unicode" {
+		t.Fatalf("280 lone surrogates count as 280 code points: %v", err)
 	}
 }
 
@@ -407,9 +479,22 @@ func TestPreviewBlueprintV1EgressHostsAreUniqueValidDNSNames(t *testing.T) {
 	if _, err := ParsePreviewBlueprintContentV1([]byte(egress(long + "a"))); err == nil {
 		t.Fatal("254 characters accepted")
 	}
-	for _, host := range []string{"A.example.com", "example.com.", "-a.example.com", "a.1com", "a_b.example.com"} {
-		if _, err := ParsePreviewBlueprintContentV1([]byte(egress(host))); err == nil {
-			t.Errorf("host %q accepted", host)
+	for _, host := range []string{
+		"A.example.com", "example.com.", "-a.example.com", "a.1com", "a_b.example.com",
+		"localhost", "api", "10.0.0.1", "api.localhost", "printer.local", "db.internal", "nas.lan", "router.home.arpa",
+		"redis.default.svc", "git.corp", "a.test", "a.invalid", "a.onion", "a.example", "10.0.0.1.nip.io", "a.sslip.io",
+		"localtest.me", "app.localtest.me", "lvh.me", "app.lvh.me", "a.localdomain", "a.intranet",
+	} {
+		_, err := ParsePreviewBlueprintContentV1([]byte(egress(host)))
+		var contentErr *v1.PreviewBlueprintContentErrorV1
+		if !errors.As(err, &contentErr) || len(contentErr.Issues) != 1 || !reflect.DeepEqual(contentErr.Issues[0].Path, []string{"egress", "hosts", "0"}) ||
+			contentErr.Issues[0].Message != "Egress host must be a public DNS name, not localhost, an IP address or an internal suffix" {
+			t.Errorf("host %q: err = %v", host, err)
+		}
+	}
+	for _, host := range []string{"svc.io", "notlvh.me", "corp.example.com", "test.dev", "a.example.org"} {
+		if _, err := ParsePreviewBlueprintContentV1([]byte(egress(host))); err != nil {
+			t.Errorf("host %q: %v", host, err)
 		}
 	}
 	hosts := make([]string, 33)

@@ -166,7 +166,7 @@
     },
     {
       "name": "image_link_local_registry",
-      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa nip.io sslip.io suffix",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"169.254.169.254/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -177,7 +177,7 @@
     },
     {
       "name": "image_localhost_registry",
-      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa nip.io sslip.io suffix",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"localhost:5000/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -189,7 +189,7 @@
     },
     {
       "name": "image_internal_suffix_registry",
-      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa nip.io sslip.io suffix",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"metadata.google.internal/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -200,8 +200,30 @@
     },
     {
       "name": "image_wildcard_dns_registry",
-      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa nip.io sslip.io suffix",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"127.0.0.1.nip.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "image"
+        ]
+      ]
+    },
+    {
+      "name": "image_cluster_service_registry",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"registry.kube-system.svc/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "image"
+        ]
+      ]
+    },
+    {
+      "name": "image_loopback_alias_registry",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"registry.lvh.me/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
           "app",
@@ -218,6 +240,29 @@
           "app",
           "env",
           "lower_key"
+        ]
+      ]
+    },
+    {
+      "name": "env_key_proto",
+      "rule": "env keys __proto__, constructor and prototype are refused even though JSON parsers may drop or special-case them",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"__proto__\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env"
+        ]
+      ]
+    },
+    {
+      "name": "service_env_key_proto",
+      "rule": "env keys __proto__, constructor and prototype are refused even though JSON parsers may drop or special-case them",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"__proto__\":{\"kind\":\"disabled\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services",
+          "0",
+          "env"
         ]
       ]
     },
@@ -273,7 +318,7 @@
     },
     {
       "name": "fake_live_credential_prefix",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"sk_live_abc\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -286,7 +331,7 @@
     },
     {
       "name": "fake_high_entropy_token",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"Zx9Qm2Lp7Rt4Vw8Ny3Kb6Hd1Fg5Js0Ac\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -311,8 +356,34 @@
       ]
     },
     {
+      "name": "fake_lone_surrogate",
+      "rule": "text fields and health paths contain no lone UTF-16 surrogate",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"a\\ud800b\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "FEATURE_FLAG",
+          "value"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_lone_surrogate",
+      "rule": "text fields and health paths contain no lone UTF-16 surrogate",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\\udc00\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
       "name": "fake_value_too_long",
-      "rule": "fake value at most 1024 UTF-16 code units",
+      "rule": "fake value at most 1024 Unicode code points",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -325,7 +396,7 @@
     },
     {
       "name": "note_too_long",
-      "rule": "note at most 280 UTF-16 code units",
+      "rule": "note at most 280 Unicode code points",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -350,7 +421,7 @@
     },
     {
       "name": "command_too_many_bytes",
-      "rule": "a command is at most 2048 UTF-8 bytes and 2048 UTF-16 code units",
+      "rule": "a command is at most 2048 UTF-8 bytes and 2048 Unicode code points",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -383,7 +454,7 @@
     },
     {
       "name": "command_live_credential_prefix",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"STRIPE_KEY=sk_live_abc pnpm install\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -395,7 +466,7 @@
     },
     {
       "name": "command_url_userinfo",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"psql postgres://admin:hunter2@db.internal/app\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -406,8 +477,56 @@
       ]
     },
     {
+      "name": "command_url_empty_user_password",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"redis-cli -u redis://:hunter2@cache:6379 ping\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "migrate",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "command_url_password_query",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"psql postgres://admin@db/app?password=hunter2\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "migrate",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "command_password_assignment",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"PGPASSWORD=hunter2 psql -h db -f seed.sql\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "seed",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "command_quoted_password_assignment",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"PGPASSWORD='hunter2' psql -h db -f seed.sql\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "seed",
+          "0"
+        ]
+      ]
+    },
+    {
       "name": "start_live_credential_prefix",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"TOKEN=glpat-abc123 pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -418,7 +537,7 @@
     },
     {
       "name": "secret_note_credential",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"whsec_abc\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -431,7 +550,7 @@
     },
     {
       "name": "disabled_note_credential",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\",\"note\":\"xoxe-123\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -444,7 +563,7 @@
     },
     {
       "name": "service_health_command_credential",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}},\"health\":{\"command\":[\"pg_isready\",\"--dbname=postgres://u:p@localhost/db\"],\"interval_seconds\":5}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -458,7 +577,7 @@
     },
     {
       "name": "working_directory_credential",
-      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password (the user may be empty), a password, passwd, pwd or pass query parameter, a *PASSWORD= or *PASSWD= assignment (case-insensitive) whose value does not start with $, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\"apps/sk_live_abc\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
       "paths": [
         [
@@ -769,7 +888,7 @@
     },
     {
       "name": "egress_host_pattern",
-      "rule": "egress host is a lowercase DNS name with at least two labels",
+      "rule": "an egress host is a lowercase public DNS name with at least two labels: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"localhost\"]}}",
       "paths": [
         [
@@ -781,8 +900,80 @@
     },
     {
       "name": "egress_host_ip_literal",
-      "rule": "egress host is a lowercase DNS name with at least two labels",
+      "rule": "an egress host is a lowercase public DNS name with at least two labels: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"169.254.169.254\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "egress_host_internal_suffix",
+      "rule": "an egress host is a lowercase public DNS name with at least two labels: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"metadata.google.internal\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "egress_host_local_suffix",
+      "rule": "an egress host is a lowercase public DNS name with at least two labels: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"printer.local\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "egress_host_wildcard_dns",
+      "rule": "an egress host is a lowercase public DNS name with at least two labels: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"10.0.0.1.nip.io\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "egress_host_uppercase",
+      "rule": "an egress host is a lowercase public DNS name with at least two labels: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"API.example.com\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "egress_host_reserved_tld",
+      "rule": "an egress host is a lowercase public DNS name with at least two labels: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"api.example\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "egress_host_corporate_suffix",
+      "rule": "an egress host is a lowercase public DNS name with at least two labels: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa .svc .corp .test .invalid .onion .example nip.io sslip.io localtest.me lvh.me suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"git.corp\"]}}",
       "paths": [
         [
           "egress",

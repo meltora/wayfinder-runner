@@ -11,9 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
-const previewBlueprintV1VectorsSHA256 = "2ba59ebd6e7b8cb0ea9dc7bd945f4e37f88ce4d0cce1b86cd1a22e8390dcc534"
+const previewBlueprintV1VectorsSHA256 = "e7f66c041826a2d7953d6e15da1495dfcfdd612e48948c89c20a656063e4df7f"
 
 type previewBlueprintV1VectorFile struct {
 	Valid []struct {
@@ -53,7 +54,7 @@ func TestPreviewBlueprintV1VectorsAreAByteForByteCopyOfTheAppVectorFile(t *testi
 		t.Fatalf("vector file sha256 = %s, want %s; the app file changed, which is a contract change", got, previewBlueprintV1VectorsSHA256)
 	}
 	vectors := readPreviewBlueprintV1Vectors(t)
-	if len(vectors.Valid) != 9 || len(vectors.Invalid) != 64 {
+	if len(vectors.Valid) != 9 || len(vectors.Invalid) != 80 {
 		t.Fatalf("vector counts = %d valid, %d invalid", len(vectors.Valid), len(vectors.Invalid))
 	}
 	if vectors.Valid[0].Digest != "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563" {
@@ -168,9 +169,6 @@ func TestPreviewBlueprintV1ParseRefusesMalformedJSONBeforeStructure(t *testing.T
 	base := readPreviewBlueprintV1Vectors(t).Valid[0].ContentJSON
 	for name, raw := range map[string][]byte{
 		"invalid utf-8":         []byte(strings.Replace(base, "pnpm start", "pnpm \xff", 1)),
-		"lone high surrogate":   []byte(strings.Replace(base, "pnpm start", `pnpm \ud800`, 1)),
-		"lone low surrogate":    []byte(strings.Replace(base, "pnpm start", `pnpm \udc00x`, 1)),
-		"reversed surrogates":   []byte(strings.Replace(base, "pnpm start", `pnpm \ude00\ud83d`, 1)),
 		"trailing value":        []byte(base + " {}"),
 		"trailing garbage":      []byte(base + "x"),
 		"byte order mark":       append([]byte("\xef\xbb\xbf"), base...),
@@ -197,7 +195,7 @@ func TestPreviewBlueprintV1ParseRefusesMalformedJSONBeforeStructure(t *testing.T
 
 func TestPreviewBlueprintV1PairedSurrogateEscapesDecodeToTheCodePoint(t *testing.T) {
 	base := readPreviewBlueprintV1Vectors(t).Valid[0].ContentJSON
-	escaped, err := PreviewBlueprintCanonicalJSONV1([]byte(strings.Replace(base, "pnpm start", `pnpm 😀`, 1)))
+	escaped, err := PreviewBlueprintCanonicalJSONV1([]byte(strings.Replace(base, "pnpm start", "pnpm "+jsonUnicodeEscape("d83d")+jsonUnicodeEscape("de00"), 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +205,67 @@ func TestPreviewBlueprintV1PairedSurrogateEscapesDecodeToTheCodePoint(t *testing
 	}
 	if string(escaped) != string(literal) || !strings.Contains(string(literal), `"start":"pnpm 😀"`) {
 		t.Fatalf("escaped = %s\nliteral = %s", escaped, literal)
+	}
+}
+
+func jsonUnicodeEscape(hex string) string {
+	return "\\" + "u" + hex
+}
+
+func TestPreviewBlueprintV1LoneSurrogateEscapesSurviveDecodingLikeJSONParse(t *testing.T) {
+	base := readPreviewBlueprintV1Vectors(t).Valid[0].ContentJSON
+	for input, want := range map[string]string{
+		jsonUnicodeEscape("d800"):                                                         jsonUnicodeEscape("d800"),
+		jsonUnicodeEscape("DC00") + "x":                                                   jsonUnicodeEscape("dc00") + "x",
+		jsonUnicodeEscape("de00") + jsonUnicodeEscape("d83d"):                             jsonUnicodeEscape("de00") + jsonUnicodeEscape("d83d"),
+		jsonUnicodeEscape("d83d") + jsonUnicodeEscape("d83d") + jsonUnicodeEscape("de00"): jsonUnicodeEscape("d83d") + "😀",
+	} {
+		t.Run(input, func(t *testing.T) {
+			raw := []byte(strings.Replace(base, "pnpm start", "pnpm "+input, 1))
+			content, err := ParsePreviewBlueprintContentV1(raw)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if utf8.ValidString(content.App.Start) || strings.Contains(content.App.Start, string(utf8.RuneError)) {
+				t.Fatalf("start = %q, want the lone surrogate kept as an invalid sequence", content.App.Start)
+			}
+			canonical, err := PreviewBlueprintCanonicalJSONV1(raw)
+			if err != nil {
+				t.Fatalf("canonical: %v", err)
+			}
+			if !strings.Contains(string(canonical), `"start":"pnpm `+want+`"`) {
+				t.Fatalf("canonical = %s, want start %s", canonical, want)
+			}
+		})
+	}
+	content, err := ParsePreviewBlueprintContentV1([]byte(strings.Replace(base, "pnpm start", "pnpm "+jsonUnicodeEscape("fffd"), 1)))
+	if err != nil || content.App.Start != "pnpm �" {
+		t.Fatalf("start = %q, %v", content.App.Start, err)
+	}
+}
+
+func TestPreviewBlueprintV1ParseRefusesReservedEnvKeysAtTheEnvMap(t *testing.T) {
+	base := readPreviewBlueprintV1Vectors(t).Valid[0].ContentJSON
+	for _, key := range []string{"__proto__", "constructor", "prototype"} {
+		for _, entry := range []string{`{"kind":"disabled"}`, `1`, `{"kind":"nope"}`} {
+			for _, test := range []struct {
+				old, new string
+				path     []string
+			}{
+				{`"SENTRY_DSN":{"kind":"disabled"}`, `"` + key + `":` + entry, []string{"app", "env"}},
+				{`"POSTGRES_PASSWORD":{"kind":"generated","generator":"random_secret"}`, `"` + key + `":` + entry, []string{"services", "0", "env"}},
+			} {
+				raw := strings.Replace(base, test.old, test.new, 1)
+				_, err := ParsePreviewBlueprintContentV1([]byte(raw))
+				var contentErr *PreviewBlueprintContentErrorV1
+				if !errors.As(err, &contentErr) {
+					t.Fatalf("%s %s: err = %v, want a content error", key, entry, err)
+				}
+				if got := contentErr.Paths(); !reflect.DeepEqual(got, [][]string{test.path}) {
+					t.Fatalf("%s %s: paths = %q, want %q", key, entry, got, test.path)
+				}
+			}
+		}
 	}
 }
 
