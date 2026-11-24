@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ const (
 type PreviewDeployVectorFile struct {
 	SchemaVersion int                          `json:"schema_version"`
 	Generator     string                       `json:"generator"`
+	Conventions   map[string]string            `json:"conventions"`
 	Valid         []PreviewDeployValidVector   `json:"valid"`
 	Invalid       []PreviewDeployInvalidVector `json:"invalid"`
 	Stateful      []PreviewDeployInvalidVector `json:"stateful"`
@@ -99,6 +101,33 @@ func vectorDeployOperation() PreviewDeployOperation {
 		PreviewKey: "abcdefghijklmnopqrstuvwxyz",
 		ExpiresAt:  vectorTime("2099-01-02T00:00:00.123Z"),
 	}
+}
+
+func oversizeVectorBlueprint() string {
+	decoder := json.NewDecoder(strings.NewReader(previewDeployVectorBlueprint))
+	decoder.UseNumber()
+	var blueprint map[string]any
+	if err := decoder.Decode(&blueprint); err != nil {
+		panic(err)
+	}
+	filler := map[string]any{"kind": "fake", "value": strings.Repeat("filler ", 146) + "ok"}
+	envs := []map[string]any{
+		blueprint["app"].(map[string]any)["env"].(map[string]any),
+		blueprint["services"].([]any)[0].(map[string]any)["env"].(map[string]any),
+	}
+	for index, env := range envs {
+		for key := 0; len(env) < 128; key++ {
+			env[fmt.Sprintf("FILLER_%d_%03d", index, key)] = filler
+		}
+	}
+	raw, err := json.Marshal(blueprint)
+	if err != nil {
+		panic(err)
+	}
+	if len(raw) <= 256<<10 {
+		panic(fmt.Sprintf("oversize blueprint is only %d bytes", len(raw)))
+	}
+	return string(raw)
 }
 
 func sealVectorDeploy(operation PreviewDeployOperation) PreviewDeployOperation {
@@ -252,13 +281,27 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 	stale := vectorDeployOperation()
 	stale.ExpiresAt = stale.ExpiresAt.Add(time.Hour)
 	stale = sealVectorDeploy(stale)
-	stale.CommitSet = deploy.CommitSet
-	tampered := deploy
-	tampered.ExpiresAt = tampered.ExpiresAt.Add(time.Hour)
+	operationDigestStale := deploy
+	operationDigestStale.PreviewDeployEffectRevision = 7
+	bindingDigestWrong := deploy
+	bindingDigestWrong.ResourceBindingDigest = strings.Repeat("e", 64)
+	bindingDigestWrong.OperationDigest = PreviewDeployOperationDigest(bindingDigestWrong)
+	bindingDigestWrong.CommandDigest = PreviewDeployCommandDigest(bindingDigestWrong)
+	commandDigestWrong := deploy
+	commandDigestWrong.CommandDigest = strings.Repeat("e", 64)
+	commitSetDigestWrong := deploy
+	commitSetDigestWrong.CommitSetDigest = strings.Repeat("e", 64)
+	commitSetDigestWrong.ResourceBindingDigest = PreviewDeployResourceBindingDigest(commitSetDigestWrong)
+	commitSetDigestWrong.OperationDigest = PreviewDeployOperationDigest(commitSetDigestWrong)
+	commitSetDigestWrong.CommandDigest = PreviewDeployCommandDigest(commitSetDigestWrong)
 	unsorted := mutatedDeploy(func(operation *PreviewDeployOperation) {
 		operation.CommitSet[0], operation.CommitSet[1] = operation.CommitSet[1], operation.CommitSet[0]
 	})
-	oversize := `{"schema_version":1,"padding":"` + strings.Repeat("a", 256<<10) + `"}`
+	oversize := oversizeVectorBlueprint()
+	manyRepositories := make([]PreviewObservationCommit, 17)
+	for index := range manyRepositories {
+		manyRepositories[index] = PreviewObservationCommit{RepositoryID: fmt.Sprintf("repo-%02d", index), CommitSHA: strings.Repeat("1", 40)}
+	}
 	untrusted := mutatedDeploy(func(operation *PreviewDeployOperation) {
 		operation.IdempotencyKey = "preview-deploy-" + strings.Repeat("9", 64)
 		operation.PreviewDeployOperationID = "preview-deploy-operation-" + strings.Repeat("9", 64)
@@ -271,6 +314,13 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 	return PreviewDeployVectorFile{
 		SchemaVersion: 1,
 		Generator:     previewDeployVectorsUpdateEnv + "=1 go test ./api/runner/v1 -run TestPreviewDeployV1VectorsAreCurrent",
+		Conventions: map[string]string{
+			"envelope":         "a full runner v1 envelope; compare it semantically, not byte-for-byte, because this file is indented and the wire omits zero milliseconds",
+			"byte_limits":      "blueprint.content size is measured on its compact JSON serialization, as the runner receives it after strict decoding",
+			"given":            "none: no prior state; trusted_commit_set: the vector's own commit_set is recorded as trusted for its execution manifest; trusted_commit_set:<valid name>: that vector's commit_set is trusted; deployed:<valid name>: that deploy vector was accepted and its preview is live; the command message id used for the setup does not affect the outcome",
+			"expected_outcome": "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",
+			"expected":         "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
+		},
 		Valid: []PreviewDeployValidVector{
 			validDeployVector("deploy_two_repositories", "two repositories, millisecond expires_at, empty edge_host", vectorDeployCommandID("1"), deploy),
 			validDeployVector("deploy_single_repository_max_version", "one repository, largest safe blueprint version, expires_at one millisecond after the lease", vectorDeployCommandID("2"), single),
@@ -289,8 +339,9 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 			invalidVector("deploy_expires_at_before_lease", "expires_at must be after lease_expires_at", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
 				operation.ExpiresAt = operation.LeaseExpiresAt.Add(-time.Millisecond)
 			}))),
-			invalidVector("deploy_blueprint_content_over_256_kib", "blueprint.content is at most 262144 bytes", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
+			invalidVector("deploy_blueprint_content_over_256_kib", "blueprint.content is at most 262144 bytes of compact JSON; the content is otherwise schema-valid and digest-bound", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
 				operation.Blueprint.Content = json.RawMessage(oversize)
+				operation.Blueprint.Digest = vectorBlueprintDigest(oversize)
 			}))),
 			invalidVector("deploy_blueprint_digest_mismatch", "blueprint.digest is the canonical digest of blueprint.content", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
 				operation.Blueprint.Digest = strings.Repeat("e", 64)
@@ -314,7 +365,28 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 			invalidVector("deploy_edge_host_foreign_key", "edge_host starts with preview_key and a dot", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
 				operation.EdgeHost = "zyxwvutsrqponmlkjihgfedcba.previews.example.com"
 			}))),
-			invalidVector("deploy_operation_digest_not_resealed", "operation_digest binds stable intent; a changed expires_at without resealing is refused", vectorDeployEnvelope(vectorDeployCommandID("4"), tampered)),
+			invalidVector("deploy_operation_digest_not_resealed", "operation_digest binds preview_deploy_effect_revision; changing it without resealing is refused", vectorDeployEnvelope(vectorDeployCommandID("4"), operationDigestStale)),
+			invalidVector("deploy_resource_binding_digest_mismatch", "resource_binding_digest is recomputed from the binding material", vectorDeployEnvelope(vectorDeployCommandID("4"), bindingDigestWrong)),
+			invalidVector("deploy_command_digest_mismatch", "command_digest is recomputed from the command material", vectorDeployEnvelope(vectorDeployCommandID("4"), commandDigestWrong)),
+			invalidVector("deploy_commit_set_digest_mismatch", "commit_set_digest is recomputed from commit_set", vectorDeployEnvelope(vectorDeployCommandID("4"), commitSetDigestWrong)),
+			invalidVector("deploy_commit_set_duplicate_repository", "commit_set repository_id values are unique", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
+				operation.CommitSet[1].RepositoryID = operation.CommitSet[0].RepositoryID
+			}))),
+			invalidVector("deploy_commit_set_over_16_repositories", "commit_set has at most 16 entries", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
+				operation.CommitSet = manyRepositories
+			}))),
+			invalidVector("deploy_commit_set_empty", "commit_set has at least 1 entry", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
+				operation.CommitSet = []PreviewObservationCommit{}
+			}))),
+			invalidVector("deploy_commit_sha_uppercase", "commit_sha is 40 lowercase hex characters", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
+				operation.CommitSet[0].CommitSHA = strings.Repeat("A", 40)
+			}))),
+			invalidVector("deploy_blueprint_version_zero", "blueprint.version matches ^[1-9][0-9]{0,15}$", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
+				operation.Blueprint.Version = "0"
+			}))),
+			invalidVector("deploy_blueprint_version_17_digits", "blueprint.version matches ^[1-9][0-9]{0,15}$", vectorDeployEnvelope(vectorDeployCommandID("4"), mutatedDeploy(func(operation *PreviewDeployOperation) {
+				operation.Blueprint.Version = "10000000000000000"
+			}))),
 			invalidVector("hosted_extend_without_desired_expiry", "extend requires desired_expires_at", vectorLifecycleEnvelope(vectorLifecycleCommandID("3"), mutatedLifecycle(PreviewLifecycleExtend, func(operation *PreviewLifecycleOperation) {
 				operation.DesiredExpiresAt = nil
 			}))),
@@ -370,6 +442,27 @@ func TestPreviewDeployV1VectorsAreCurrent(t *testing.T) {
 	}
 }
 
+func TestPreviewDeployV1VectorDigestsArePinned(t *testing.T) {
+	file := BuildPreviewDeployVectorFile()
+	pins := map[string][2]string{
+		"deploy_two_repositories":           {"2b0db84f9636698f552cd3fa32db5164968a57e444e670c6fa63e70307b05287", "052edcff07c6abcb371254c23b656afed14e38623352e8af4c59e02fb8b2a55f"},
+		"hosted_extend_with_desired_expiry": {"47cb24167ced4299408856c175b7a1a2b562fa28cc567ab438766cb4328cf1de", ""},
+	}
+	for _, vector := range file.Valid {
+		pin, ok := pins[vector.Name]
+		if !ok {
+			continue
+		}
+		if vector.Expected.OperationDigest != pin[0] || (pin[1] != "" && vector.Expected.CommandDigest != pin[1]) {
+			t.Fatalf("%s digests moved: operation=%s command=%s", vector.Name, vector.Expected.OperationDigest, vector.Expected.CommandDigest)
+		}
+		delete(pins, vector.Name)
+	}
+	if len(pins) != 0 {
+		t.Fatalf("pinned vectors missing: %v", pins)
+	}
+}
+
 func TestPreviewDeployV1VectorDigestsRecomputeFromTheWire(t *testing.T) {
 	var file PreviewDeployVectorFile
 	raw, err := os.ReadFile(previewDeployVectorsPath)
@@ -379,7 +472,7 @@ func TestPreviewDeployV1VectorDigestsRecomputeFromTheWire(t *testing.T) {
 	if err := json.Unmarshal(raw, &file); err != nil {
 		t.Fatal(err)
 	}
-	if len(file.Valid) != 5 || len(file.Invalid) != 18 || len(file.Stateful) != 2 {
+	if len(file.Valid) != 5 || len(file.Invalid) != 27 || len(file.Stateful) != 2 {
 		t.Fatalf("vector counts = %d valid, %d invalid, %d stateful", len(file.Valid), len(file.Invalid), len(file.Stateful))
 	}
 	for _, vector := range file.Valid {

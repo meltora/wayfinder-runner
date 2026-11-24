@@ -4,15 +4,47 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/validation"
 )
 
 const sharedPreviewDeployVectorsPath = "../../api/runner/v1/testdata/preview_deploy_v1_vectors.json"
+
+var sharedPreviewDeployRuleErrors = map[string]string{
+	"deploy_bad_command_id":                          "preview deploy command_message_id is invalid",
+	"deploy_expires_at_sub_millisecond":              "preview deploy expires_at is invalid",
+	"deploy_expires_at_equals_lease":                 "preview must remain valid beyond the deploy lease",
+	"deploy_expires_at_before_lease":                 "preview must remain valid beyond the deploy lease",
+	"deploy_blueprint_content_over_256_kib":          "preview deploy blueprint content size is invalid",
+	"deploy_blueprint_digest_mismatch":               "preview deploy blueprint digest does not bind content",
+	"deploy_blueprint_version_leading_zero":          "hosted preview blueprint version must be a positive decimal integer",
+	"deploy_blueprint_version_not_decimal":           "hosted preview blueprint version must be a positive decimal integer",
+	"deploy_blueprint_version_zero":                  "hosted preview blueprint version must be a positive decimal integer",
+	"deploy_blueprint_version_17_digits":             "hosted preview blueprint version must be a positive decimal integer",
+	"deploy_commit_set_unsorted":                     "preview observation commits must be unique and sorted",
+	"deploy_commit_set_duplicate_repository":         "preview observation commits must be unique and sorted",
+	"deploy_commit_set_over_16_repositories":         "preview observation commit_set is invalid",
+	"deploy_commit_set_empty":                        "preview observation commit_set is invalid",
+	"deploy_commit_sha_uppercase":                    "commit_sha must be a full lowercase Git commit SHA",
+	"deploy_preview_key_invalid":                     "preview_key is invalid",
+	"deploy_idempotency_key_invalid":                 "preview deploy idempotency_key is invalid",
+	"deploy_operation_id_invalid":                    "preview_deploy_operation_id is invalid",
+	"deploy_edge_host_foreign_key":                   "preview deploy edge_host is invalid",
+	"deploy_operation_digest_not_resealed":           "preview deploy operation_digest does not bind stable intent",
+	"deploy_resource_binding_digest_mismatch":        "preview deploy resource_binding_digest does not bind resource authority",
+	"deploy_command_digest_mismatch":                 "preview deploy command_digest does not bind delivery authority",
+	"deploy_commit_set_digest_mismatch":              "preview deploy commit_set_digest does not bind commit_set",
+	"hosted_extend_without_desired_expiry":           "preview lifecycle desired_expires_at is invalid",
+	"hosted_destroy_with_desired_expiry":             "destroy preview lifecycle operation forbids desired_expires_at",
+	"hosted_lifecycle_bad_command_id":                "preview lifecycle command_message_id is invalid",
+	"hosted_lifecycle_blueprint_version_not_decimal": "hosted preview blueprint version must be a positive decimal integer",
+}
 
 type sharedPreviewDeployVectors struct {
 	Valid []struct {
@@ -155,6 +187,19 @@ func TestSharedPreviewDeployInvalidVectorsAreRejectedAsInvalidCommands(t *testin
 			err := jr.d.executeCommand(context.Background(), envelope, command)
 			if reason := commandRejectionReason(err); reason != v1.CommandAckReasonInvalidCommand {
 				t.Fatalf("reason=%q err=%v", reason, err)
+			}
+			want, ok := sharedPreviewDeployRuleErrors[vector.Name]
+			if cause := errors.Unwrap(err); !ok || cause == nil || !strings.Contains(cause.Error(), want) {
+				t.Fatalf("cause=%v, want the %q rule", cause, want)
+			}
+			if vector.Name == "deploy_blueprint_content_over_256_kib" {
+				blueprint := command.PreviewDeploy.Blueprint
+				if digest, err := v1.PreviewBlueprintDigestV1(blueprint.Content); err != nil || digest != blueprint.Digest {
+					t.Fatalf("oversize content digest=%s err=%v", digest, err)
+				}
+				if _, err := validation.ParsePreviewBlueprintContentV1(blueprint.Content); err != nil {
+					t.Fatalf("oversize content is not otherwise schema-valid: %v", err)
+				}
 			}
 			if deploys, lifecycles, _ := controller.counts(); deploys != 0 || lifecycles != 0 {
 				t.Fatalf("deploys=%d lifecycles=%d", deploys, lifecycles)
