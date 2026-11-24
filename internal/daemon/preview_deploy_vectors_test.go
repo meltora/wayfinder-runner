@@ -7,10 +7,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/previewhost"
 	"github.com/example/app-runner/internal/validation"
 )
 
@@ -55,8 +58,31 @@ type sharedPreviewDeployVectors struct {
 			ResultEventID string `json:"result_event_id"`
 		} `json:"expected"`
 	} `json:"valid"`
-	Invalid  []sharedPreviewDeployRejection `json:"invalid"`
-	Stateful []sharedPreviewDeployRejection `json:"stateful"`
+	Invalid       []sharedPreviewDeployRejection `json:"invalid"`
+	Stateful      []sharedPreviewDeployRejection `json:"stateful"`
+	HostedResults []sharedHostedLifecycleResult  `json:"hosted_lifecycle_results"`
+}
+
+type sharedHostedLifecycleResult struct {
+	Name            string          `json:"name"`
+	Given           string          `json:"given"`
+	Controller      string          `json:"controller"`
+	CommandEnvelope json.RawMessage `json:"command_envelope"`
+	ResultEnvelope  json.RawMessage `json:"result_envelope"`
+	Expected        struct {
+		ResultEventID string `json:"result_event_id"`
+	} `json:"expected"`
+}
+
+type leaseOutlivingPreviewHostController struct {
+	*fakePreviewHostController
+}
+
+func (controller leaseOutlivingPreviewHostController) ApplyLifecycle(ctx context.Context, request previewhost.LifecycleRequest) previewhost.LifecycleResult {
+	<-ctx.Done()
+	deadline, _ := ctx.Deadline()
+	time.Sleep(time.Until(deadline.Add(2 * time.Millisecond)))
+	return controller.fakePreviewHostController.ApplyLifecycle(ctx, request)
 }
 
 type sharedPreviewDeployRejection struct {
@@ -252,6 +278,112 @@ func TestSharedPreviewDeployStatefulVectorsReachTheirOutcome(t *testing.T) {
 				}
 			default:
 				t.Fatalf("expected_outcome=%q", vector.ExpectedOutcome)
+			}
+		})
+	}
+}
+
+func decodeSharedResultEnvelope(t *testing.T, raw []byte) (map[string]any, v1.PreviewLifecycleResultEvent) {
+	t.Helper()
+	var envelope map[string]any
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	var event v1.PreviewLifecycleResultEvent
+	if err := strictJSON(t, wire.Payload, &event); err != nil {
+		t.Fatalf("result payload: %v", err)
+	}
+	return envelope, event
+}
+
+func TestSharedHostedLifecycleResultVectorsAreValidHostedResults(t *testing.T) {
+	vectors, _ := loadSharedPreviewDeployVectors(t)
+	if len(vectors.HostedResults) != 4 {
+		t.Fatalf("hosted lifecycle result vectors = %d", len(vectors.HostedResults))
+	}
+	for _, vector := range vectors.HostedResults {
+		t.Run(vector.Name, func(t *testing.T) {
+			envelope, event := decodeSharedResultEnvelope(t, vector.ResultEnvelope)
+			if err := validation.PreviewHostedLifecycleResultEvent(event); err != nil {
+				t.Fatal(err)
+			}
+			if envelope["id"] != vector.Expected.ResultEventID || envelope["id"] != previewLifecycleResultEventID(event.CommandMessageID) {
+				t.Fatalf("result envelope id=%v want %s", envelope["id"], vector.Expected.ResultEventID)
+			}
+		})
+	}
+}
+
+func TestSharedHostedLifecycleResultVectorsAreWhatTheDaemonPublishes(t *testing.T) {
+	vectors, deploys := loadSharedPreviewDeployVectors(t)
+	for _, vector := range vectors.HostedResults {
+		t.Run(vector.Name, func(t *testing.T) {
+			ctx := context.Background()
+			jr, _ := testJobRunner(t)
+			jr.d.runnerID = "runner-1"
+			envelope, command := decodeSharedVectorEnvelope(t, vector.CommandEnvelope)
+			operation := *command.PreviewLifecycle
+			controller := &fakePreviewHostController{}
+			jr.d.previewHostController = controller
+			wantCalls := 1
+			switch vector.Controller {
+			case "extends":
+				controller.lifecycleOutcome = hostedExtendSucceeded(operation)
+			case "not_called":
+				wantCalls = 0
+			case "denies":
+				controller.lifecycleOutcome = v1.PreviewLifecycleResultOutcome{Kind: v1.PreviewLifecyclePermanent, Code: v1.PreviewLifecyclePolicyDenied}
+			case "outlives_lease":
+				controller.lifecycleOutcome = v1.PreviewLifecycleResultOutcome{
+					Kind:          v1.PreviewLifecycleSucceeded,
+					ResourceState: &v1.PreviewLifecycleResourceState{Kind: v1.PreviewLifecycleResourceDestroyed, Disposition: v1.PreviewLifecycleDestroyed},
+				}
+				jr.d.previewHostController = leaseOutlivingPreviewHostController{controller}
+				operation.LeaseExpiresAt = time.Now().UTC().Truncate(time.Millisecond).Add(200 * time.Millisecond)
+				sealHostedPreviewLifecycle(&operation)
+				command.PreviewLifecycle = &operation
+			default:
+				t.Fatalf("controller=%q", vector.Controller)
+			}
+			if vector.Given != "none" {
+				insertHostedPreviewHost(t, jr.d, givenVectorDeploy(t, deploys, vector.Given, "deployed:"), nil)
+			}
+			events := captureLifecycleEvents(jr.d)
+			if err := jr.d.executeCommand(ctx, envelope, command); err != nil {
+				t.Fatal(err)
+			}
+			if _, calls, _ := controller.counts(); calls != wantCalls || len(*events) != 1 {
+				t.Fatalf("controller calls=%d want %d, published=%d", calls, wantCalls, len(*events))
+			}
+			record, found, err := jr.d.journal.LoadRecord(ctx, vector.Expected.ResultEventID)
+			if err != nil || !found {
+				t.Fatalf("result is not journalled under %s: found=%v err=%v", vector.Expected.ResultEventID, found, err)
+			}
+			got, event := decodeSharedResultEnvelope(t, record.Payload)
+			want, _ := decodeSharedResultEnvelope(t, vector.ResultEnvelope)
+			if event.ObservedAt.After(event.LeaseExpiresAt) {
+				t.Fatalf("observed_at %s is after lease_expires_at %s", event.ObservedAt, event.LeaseExpiresAt)
+			}
+			gotPayload, wantPayload := got["payload"].(map[string]any), want["payload"].(map[string]any)
+			if vector.Controller == "outlives_lease" {
+				if !event.ObservedAt.Equal(event.LeaseExpiresAt) {
+					t.Fatalf("timeout observed_at %s is not lease_expires_at %s", event.ObservedAt, event.LeaseExpiresAt)
+				}
+				gotPayload["lease_expires_at"] = wantPayload["lease_expires_at"]
+				gotPayload["command_digest"] = wantPayload["command_digest"]
+			}
+			gotPayload["observed_at"] = wantPayload["observed_at"]
+			got["sent_at"] = want["sent_at"]
+			if !reflect.DeepEqual(got, want) {
+				gotJSON, _ := json.Marshal(got)
+				wantJSON, _ := json.Marshal(want)
+				t.Fatalf("daemon published\n%s\nwant\n%s", gotJSON, wantJSON)
 			}
 		})
 	}

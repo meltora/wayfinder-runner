@@ -25,6 +25,27 @@ type PreviewDeployVectorFile struct {
 	Valid         []PreviewDeployValidVector   `json:"valid"`
 	Invalid       []PreviewDeployInvalidVector `json:"invalid"`
 	Stateful      []PreviewDeployInvalidVector `json:"stateful"`
+	HostedResults []PreviewHostedResultVector  `json:"hosted_lifecycle_results"`
+}
+
+type PreviewHostedResultVector struct {
+	Name            string                  `json:"name"`
+	Description     string                  `json:"description"`
+	Given           string                  `json:"given"`
+	Controller      string                  `json:"controller"`
+	CommandEnvelope json.RawMessage         `json:"command_envelope"`
+	ResultEnvelope  json.RawMessage         `json:"result_envelope"`
+	Expected        PreviewHostedResultWant `json:"expected"`
+}
+
+type PreviewHostedResultWant struct {
+	ResultEventID           string                      `json:"result_event_id"`
+	OutcomeKind             PreviewLifecycleOutcomeKind `json:"outcome_kind"`
+	OutcomeCode             PreviewLifecycleErrorCode   `json:"outcome_code,omitempty"`
+	ResourceBindingDigest   string                      `json:"resource_binding_digest"`
+	OperationDigest         string                      `json:"operation_digest"`
+	CommandDigest           string                      `json:"command_digest"`
+	ControllerReceiptDigest string                      `json:"controller_receipt_digest,omitempty"`
 }
 
 type PreviewDeployValidVector struct {
@@ -242,6 +263,81 @@ func validLifecycleVector(name, description, id string, operation PreviewLifecyc
 	}
 }
 
+func hostedResultVector(
+	name, description, given, controller, commandID string,
+	operation PreviewLifecycleOperation,
+	observedAt, sentAt string,
+	outcome PreviewLifecycleResultOutcome,
+) PreviewHostedResultVector {
+	if outcome.Kind == PreviewLifecycleSucceeded {
+		outcome.ResourceBindingDigest = operation.ResourceBindingDigest
+		outcome.ControllerReceiptDigest = PreviewHostedLifecycleReceiptDigest(operation, *outcome.ResourceState)
+	}
+	eventID := vectorLifecycleResultEventID(commandID)
+	result, err := json.Marshal(Envelope{
+		Version: ProtocolVersion, Type: TypeEvent, ID: eventID,
+		SentAt: vectorTime(sentAt), RunnerID: "runner-1",
+		Payload: PreviewLifecycleResultEvent{
+			Kind:                            EventPreviewLifecycleResult,
+			PreviewLifecycleResultAuthority: PreviewLifecycleResultAuthorityFromOperation(operation),
+			CommandMessageID:                commandID,
+			ObservedAt:                      vectorTime(observedAt),
+			Outcome:                         outcome,
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return PreviewHostedResultVector{
+		Name: name, Description: description, Given: given, Controller: controller,
+		CommandEnvelope: vectorLifecycleEnvelope(commandID, operation), ResultEnvelope: result,
+		Expected: PreviewHostedResultWant{
+			ResultEventID: eventID, OutcomeKind: outcome.Kind, OutcomeCode: outcome.Code,
+			ResourceBindingDigest: operation.ResourceBindingDigest, OperationDigest: operation.OperationDigest,
+			CommandDigest: operation.CommandDigest, ControllerReceiptDigest: outcome.ControllerReceiptDigest,
+		},
+	}
+}
+
+func hostedResultVectors(extend, destroy PreviewLifecycleOperation) []PreviewHostedResultVector {
+	blueprint := extend.Blueprint
+	overlong := mutatedLifecycle(PreviewLifecycleExtend, func(operation *PreviewLifecycleOperation) {
+		operation.PreviewLifecycleOperationID = "preview-lifecycle-operation-" + strings.Repeat("f", 64)
+		operation.IdempotencyKey = "preview-lifecycle-" + strings.Repeat("f", 64)
+		desired := operation.CurrentEffectiveExpiresAt.Add(8 * 24 * time.Hour)
+		operation.DesiredExpiresAt = &desired
+	})
+	return []PreviewHostedResultVector{
+		hostedResultVector("hosted_extend_succeeded", "the command of hosted_extend_with_desired_expiry; the runner fills resource_binding_digest and computes controller_receipt_digest",
+			"deployed:deploy_two_repositories", "extends", vectorLifecycleCommandID("1"), extend,
+			"2099-01-01T00:00:01.234Z", "2099-01-01T00:00:01.240Z",
+			PreviewLifecycleResultOutcome{
+				Kind: PreviewLifecycleSucceeded,
+				ResourceState: &PreviewLifecycleResourceState{
+					Kind: PreviewLifecycleResourceActive, Blueprint: &blueprint,
+					CommitSet: extend.CommitSet, ExpiresAt: extend.DesiredExpiresAt,
+				},
+			}),
+		hostedResultVector("hosted_destroy_already_absent", "the command of hosted_destroy_without_desired_expiry for a preview the runner does not host",
+			"none", "not_called", vectorLifecycleCommandID("2"), destroy,
+			"2099-01-01T00:00:01.5Z", "2099-01-01T00:00:01.501Z",
+			PreviewLifecycleResultOutcome{
+				Kind: PreviewLifecycleSucceeded,
+				ResourceState: &PreviewLifecycleResourceState{
+					Kind: PreviewLifecycleResourceDestroyed, Disposition: PreviewLifecycleAlreadyAbsent,
+				},
+			}),
+		hostedResultVector("hosted_extend_policy_denied", "extend to current_effective_expires_at plus 8 days, beyond the default 7 day max_extension_ms",
+			"deployed:deploy_two_repositories", "denies", vectorLifecycleCommandID("6"), overlong,
+			"2099-01-01T00:00:02Z", "2099-01-01T00:00:02.001Z",
+			PreviewLifecycleResultOutcome{Kind: PreviewLifecyclePermanent, Code: PreviewLifecyclePolicyDenied}),
+		hostedResultVector("hosted_destroy_controller_timeout", "the operation of hosted_destroy_without_desired_expiry under a new command id; the controller outlives the lease, so observed_at is clamped to lease_expires_at",
+			"deployed:deploy_two_repositories", "outlives_lease", vectorLifecycleCommandID("7"), destroy,
+			"2099-01-01T12:00:00Z", "2099-01-01T12:00:00.003Z",
+			PreviewLifecycleResultOutcome{Kind: PreviewLifecycleUncertain, Code: PreviewLifecycleControllerTimeout}),
+	}
+}
+
 func invalidVector(name, rule string, envelope json.RawMessage) PreviewDeployInvalidVector {
 	return PreviewDeployInvalidVector{Name: name, Rule: rule, Given: "none", Envelope: envelope, ExpectedOutcome: "invalid_command"}
 }
@@ -322,6 +418,8 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 			"expected_outcome":          "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",
 			"expected":                  "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
 			"hosted_destroyed_event_id": "preview-hosted-destroyed- followed by hex sha256 of preview_id, NUL, the idempotency_key of the deploy named in given, NUL, and the outcome; vectors use outcome destroyed",
+			"hosted_lifecycle_results":  "each vector is a hosted preview_lifecycle command_envelope and the preview_lifecycle_result event envelope the runner publishes for it given that state and controller; the result envelope id is result_event_id and its payload carries the command authority unchanged; sent_at and observed_at are runner wall-clock times, so compare them only as observed_at <= lease_expires_at, except that a controller_timeout sets observed_at to lease_expires_at; expected.resource_binding_digest, operation_digest and command_digest recompute from the command; on success the outcome repeats resource_binding_digest and controller_receipt_digest is the canonical digest of operation_digest, resource_binding_digest, resource_kind, disposition and, when present, expires_at of resource_state",
+			"controller":                "what the preview host controller does in a hosted_lifecycle_results vector: extends: returns an active resource_state at desired_expires_at without a receipt; not_called: the runner answers without the controller; denies: returns permanent policy_denied, as the runner's controller does for an extension beyond max_extension_ms; outlives_lease: does not answer before lease_expires_at",
 		},
 		Valid: []PreviewDeployValidVector{
 			validDeployVector("deploy_two_repositories", "two repositories, millisecond expires_at, empty edge_host", vectorDeployCommandID("1"), deploy),
@@ -413,6 +511,7 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 				ExpectedOutcome: "command_conflict",
 			},
 		},
+		HostedResults: hostedResultVectors(extend, destroy),
 	}
 }
 
@@ -463,6 +562,16 @@ func TestPreviewDeployV1VectorDigestsArePinned(t *testing.T) {
 	if len(pins) != 0 {
 		t.Fatalf("pinned vectors missing: %v", pins)
 	}
+	const extendReceipt = "c9d91d8440426aa7bf985f9e7141fe337cf27cf462fa064bd400222a77c02979"
+	for _, vector := range file.HostedResults {
+		if vector.Name == "hosted_extend_succeeded" {
+			if vector.Expected.ControllerReceiptDigest != extendReceipt {
+				t.Fatalf("hosted_extend_succeeded receipt moved: %s", vector.Expected.ControllerReceiptDigest)
+			}
+			return
+		}
+	}
+	t.Fatal("pinned vector hosted_extend_succeeded missing")
 }
 
 func vectorGivenDeployKey(t *testing.T, file PreviewDeployVectorFile, given string) string {
@@ -540,6 +649,72 @@ func TestPreviewDeployV1VectorDigestsRecomputeFromTheWire(t *testing.T) {
 				}
 			default:
 				t.Fatalf("command = %q", envelope.Payload.Command)
+			}
+			if got != vector.Expected {
+				t.Fatalf("recomputed %+v, want %+v", got, vector.Expected)
+			}
+		})
+	}
+}
+
+func TestPreviewHostedLifecycleResultVectorsRecomputeFromTheWire(t *testing.T) {
+	var file PreviewDeployVectorFile
+	raw, err := os.ReadFile(previewDeployVectorsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.HostedResults) != 4 {
+		t.Fatalf("hosted lifecycle result vectors = %d", len(file.HostedResults))
+	}
+	for _, vector := range file.HostedResults {
+		t.Run(vector.Name, func(t *testing.T) {
+			var command struct {
+				ID      string         `json:"id"`
+				Payload CommandPayload `json:"payload"`
+			}
+			if err := json.Unmarshal(vector.CommandEnvelope, &command); err != nil || command.Payload.PreviewLifecycle == nil {
+				t.Fatalf("command envelope: %v", err)
+			}
+			var result struct {
+				Version  int                         `json:"version"`
+				Type     MessageType                 `json:"type"`
+				ID       string                      `json:"id"`
+				RunnerID string                      `json:"runner_id"`
+				Payload  PreviewLifecycleResultEvent `json:"payload"`
+			}
+			if err := json.Unmarshal(vector.ResultEnvelope, &result); err != nil {
+				t.Fatal(err)
+			}
+			operation := *command.Payload.PreviewLifecycle
+			event := result.Payload
+			if result.Version != ProtocolVersion || result.Type != TypeEvent || result.RunnerID == "" ||
+				result.ID != vectorLifecycleResultEventID(command.ID) || event.Kind != EventPreviewLifecycleResult ||
+				event.CommandMessageID != command.ID || event.ObservedAt.After(event.LeaseExpiresAt) {
+				t.Fatalf("result envelope %+v does not answer command %s", result, command.ID)
+			}
+			gotAuthority, _ := json.Marshal(event.PreviewLifecycleResultAuthority)
+			wantAuthority, _ := json.Marshal(PreviewLifecycleResultAuthorityFromOperation(operation))
+			if !bytes.Equal(gotAuthority, wantAuthority) {
+				t.Fatalf("result authority %s, want %s", gotAuthority, wantAuthority)
+			}
+			got := PreviewHostedResultWant{
+				ResultEventID: vectorLifecycleResultEventID(command.ID),
+				OutcomeKind:   event.Outcome.Kind, OutcomeCode: event.Outcome.Code,
+				ResourceBindingDigest: PreviewHostedLifecycleResourceBindingDigest(operation),
+				OperationDigest:       PreviewHostedLifecycleOperationDigest(operation),
+				CommandDigest:         PreviewLifecycleCommandDigest(operation),
+			}
+			if event.Outcome.Kind == PreviewLifecycleSucceeded {
+				if event.Outcome.ResourceState == nil || event.Outcome.ResourceBindingDigest != got.ResourceBindingDigest {
+					t.Fatalf("success outcome %+v does not bind %s", event.Outcome, got.ResourceBindingDigest)
+				}
+				got.ControllerReceiptDigest = PreviewHostedLifecycleReceiptDigest(operation, *event.Outcome.ResourceState)
+				if event.Outcome.ControllerReceiptDigest != got.ControllerReceiptDigest {
+					t.Fatalf("controller_receipt_digest=%s, recomputed %s", event.Outcome.ControllerReceiptDigest, got.ControllerReceiptDigest)
+				}
 			}
 			if got != vector.Expected {
 				t.Fatalf("recomputed %+v, want %+v", got, vector.Expected)

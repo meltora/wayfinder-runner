@@ -3,11 +3,13 @@
   "generator": "PREVIEW_DEPLOY_VECTORS_UPDATE=1 go test ./api/runner/v1 -run TestPreviewDeployV1VectorsAreCurrent",
   "conventions": {
     "byte_limits": "blueprint.content size is measured on Go encoding/json Marshal output of the decoded payload: compact, object keys sorted, and <, >, & escaped as \\u003c, \\u003e, \\u0026",
+    "controller": "what the preview host controller does in a hosted_lifecycle_results vector: extends: returns an active resource_state at desired_expires_at without a receipt; not_called: the runner answers without the controller; denies: returns permanent policy_denied, as the runner's controller does for an extension beyond max_extension_ms; outlives_lease: does not answer before lease_expires_at",
     "envelope": "a full runner v1 envelope; compare it semantically, not byte-for-byte, because this file is indented and the wire omits zero milliseconds",
     "expected": "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
     "expected_outcome": "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",
     "given": "none: no prior state; trusted_commit_set: the vector's own commit_set is recorded as trusted for its execution manifest; trusted_commit_set:<valid name>: that vector's commit_set is trusted; deployed:<valid name>: that deploy vector was accepted and its preview is live; the command message id used for the setup does not affect the outcome",
-    "hosted_destroyed_event_id": "preview-hosted-destroyed- followed by hex sha256 of preview_id, NUL, the idempotency_key of the deploy named in given, NUL, and the outcome; vectors use outcome destroyed"
+    "hosted_destroyed_event_id": "preview-hosted-destroyed- followed by hex sha256 of preview_id, NUL, the idempotency_key of the deploy named in given, NUL, and the outcome; vectors use outcome destroyed",
+    "hosted_lifecycle_results": "each vector is a hosted preview_lifecycle command_envelope and the preview_lifecycle_result event envelope the runner publishes for it given that state and controller; the result envelope id is result_event_id and its payload carries the command authority unchanged; sent_at and observed_at are runner wall-clock times, so compare them only as observed_at <= lease_expires_at, except that a controller_timeout sets observed_at to lease_expires_at; expected.resource_binding_digest, operation_digest and command_digest recompute from the command; on success the outcome repeats resource_binding_digest and controller_receipt_digest is the canonical digest of operation_digest, resource_binding_digest, resource_kind, disposition and, when present, expires_at of resource_state"
   },
   "valid": [
     {
@@ -4797,6 +4799,501 @@
         }
       },
       "expected_outcome": "command_conflict"
+    }
+  ],
+  "hosted_lifecycle_results": [
+    {
+      "name": "hosted_extend_succeeded",
+      "description": "the command of hosted_extend_with_desired_expiry; the runner fills resource_binding_digest and computes controller_receipt_digest",
+      "given": "deployed:deploy_two_repositories",
+      "controller": "extends",
+      "command_envelope": {
+        "version": 1,
+        "type": "command",
+        "id": "preview-lifecycle-command-1111111111111111111111111111111111111111111111111111111111111111",
+        "sent_at": "2099-01-01T00:00:00Z",
+        "runner_id": "runner-1",
+        "payload": {
+          "command": "preview_lifecycle",
+          "preview_lifecycle": {
+            "schema_version": 1,
+            "preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+            "preview_lifecycle_effect_revision": 1,
+            "preview_lifecycle_operation_id": "preview-lifecycle-operation-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "organization_id": "organization-1",
+            "project_id": "project-1",
+            "workflow_run_id": "workflow-1",
+            "execution_manifest_id": "manifest-1",
+            "execution_manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "action": "extend",
+            "idempotency_key": "preview-lifecycle-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+            "operation_digest": "47cb24167ced4299408856c175b7a1a2b562fa28cc567ab438766cb4328cf1de",
+            "command_digest": "63c72f039766e1ad9ae97ece59247ee17184779fbe4fd41d3c80f37800d5653f",
+            "lease_id": "lease-2",
+            "fencing_token": 5,
+            "lease_expires_at": "2099-01-01T12:00:00Z",
+            "preview_id": "preview-1",
+            "preview_key": "abcdefghijklmnopqrstuvwxyz",
+            "blueprint": {
+              "blueprint_id": "blueprint-version-1",
+              "version": "3",
+              "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+            },
+            "commit_set": [
+              {
+                "repository_id": "api",
+                "commit_sha": "1111111111111111111111111111111111111111"
+              },
+              {
+                "repository_id": "web",
+                "commit_sha": "2222222222222222222222222222222222222222"
+              }
+            ],
+            "commit_set_digest": "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415",
+            "original_expires_at": "2099-01-02T00:00:00.123Z",
+            "current_effective_expires_at": "2099-01-02T00:00:00.123Z",
+            "desired_expires_at": "2099-01-03T00:00:00.123Z"
+          }
+        }
+      },
+      "result_envelope": {
+        "version": 1,
+        "type": "event",
+        "id": "preview-lifecycle-result-001e3bfae58a6a10c8457aaf23dd07300df996d1f24702ec3a82ec6e607906dc",
+        "sent_at": "2099-01-01T00:00:01.24Z",
+        "runner_id": "runner-1",
+        "payload": {
+          "kind": "preview_lifecycle_result",
+          "schema_version": 1,
+          "preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+          "preview_lifecycle_effect_revision": 1,
+          "preview_lifecycle_operation_id": "preview-lifecycle-operation-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "organization_id": "organization-1",
+          "project_id": "project-1",
+          "workflow_run_id": "workflow-1",
+          "execution_manifest_id": "manifest-1",
+          "execution_manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action": "extend",
+          "idempotency_key": "preview-lifecycle-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+          "operation_digest": "47cb24167ced4299408856c175b7a1a2b562fa28cc567ab438766cb4328cf1de",
+          "command_digest": "63c72f039766e1ad9ae97ece59247ee17184779fbe4fd41d3c80f37800d5653f",
+          "lease_id": "lease-2",
+          "fencing_token": 5,
+          "lease_expires_at": "2099-01-01T12:00:00Z",
+          "preview_id": "preview-1",
+          "preview_key": "abcdefghijklmnopqrstuvwxyz",
+          "blueprint": {
+            "blueprint_id": "blueprint-version-1",
+            "version": "3",
+            "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+          },
+          "commit_set": [
+            {
+              "repository_id": "api",
+              "commit_sha": "1111111111111111111111111111111111111111"
+            },
+            {
+              "repository_id": "web",
+              "commit_sha": "2222222222222222222222222222222222222222"
+            }
+          ],
+          "commit_set_digest": "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415",
+          "original_expires_at": "2099-01-02T00:00:00.123Z",
+          "current_effective_expires_at": "2099-01-02T00:00:00.123Z",
+          "desired_expires_at": "2099-01-03T00:00:00.123Z",
+          "command_message_id": "preview-lifecycle-command-1111111111111111111111111111111111111111111111111111111111111111",
+          "observed_at": "2099-01-01T00:00:01.234Z",
+          "outcome": {
+            "kind": "succeeded",
+            "controller_receipt_digest": "c9d91d8440426aa7bf985f9e7141fe337cf27cf462fa064bd400222a77c02979",
+            "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+            "resource_state": {
+              "kind": "active",
+              "blueprint": {
+                "blueprint_id": "blueprint-version-1",
+                "version": "3",
+                "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+              },
+              "commit_set": [
+                {
+                  "repository_id": "api",
+                  "commit_sha": "1111111111111111111111111111111111111111"
+                },
+                {
+                  "repository_id": "web",
+                  "commit_sha": "2222222222222222222222222222222222222222"
+                }
+              ],
+              "expires_at": "2099-01-03T00:00:00.123Z"
+            }
+          }
+        }
+      },
+      "expected": {
+        "result_event_id": "preview-lifecycle-result-001e3bfae58a6a10c8457aaf23dd07300df996d1f24702ec3a82ec6e607906dc",
+        "outcome_kind": "succeeded",
+        "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+        "operation_digest": "47cb24167ced4299408856c175b7a1a2b562fa28cc567ab438766cb4328cf1de",
+        "command_digest": "63c72f039766e1ad9ae97ece59247ee17184779fbe4fd41d3c80f37800d5653f",
+        "controller_receipt_digest": "c9d91d8440426aa7bf985f9e7141fe337cf27cf462fa064bd400222a77c02979"
+      }
+    },
+    {
+      "name": "hosted_destroy_already_absent",
+      "description": "the command of hosted_destroy_without_desired_expiry for a preview the runner does not host",
+      "given": "none",
+      "controller": "not_called",
+      "command_envelope": {
+        "version": 1,
+        "type": "command",
+        "id": "preview-lifecycle-command-2222222222222222222222222222222222222222222222222222222222222222",
+        "sent_at": "2099-01-01T00:00:00Z",
+        "runner_id": "runner-1",
+        "payload": {
+          "command": "preview_lifecycle",
+          "preview_lifecycle": {
+            "schema_version": 1,
+            "preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+            "preview_lifecycle_effect_revision": 1,
+            "preview_lifecycle_operation_id": "preview-lifecycle-operation-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "organization_id": "organization-1",
+            "project_id": "project-1",
+            "workflow_run_id": "workflow-1",
+            "execution_manifest_id": "manifest-1",
+            "execution_manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "action": "destroy",
+            "idempotency_key": "preview-lifecycle-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+            "operation_digest": "2aaf489f7b20c94783193958d18119555dee4670f97c132366c234725dea25af",
+            "command_digest": "1f32757456857f0a0476f710edd68a577b748f48b786e921bde5a003c7a696d4",
+            "lease_id": "lease-2",
+            "fencing_token": 5,
+            "lease_expires_at": "2099-01-01T12:00:00Z",
+            "preview_id": "preview-1",
+            "preview_key": "abcdefghijklmnopqrstuvwxyz",
+            "blueprint": {
+              "blueprint_id": "blueprint-version-1",
+              "version": "3",
+              "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+            },
+            "commit_set": [
+              {
+                "repository_id": "api",
+                "commit_sha": "1111111111111111111111111111111111111111"
+              },
+              {
+                "repository_id": "web",
+                "commit_sha": "2222222222222222222222222222222222222222"
+              }
+            ],
+            "commit_set_digest": "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415",
+            "original_expires_at": "2099-01-02T00:00:00.123Z",
+            "current_effective_expires_at": "2099-01-02T00:00:00.123Z"
+          }
+        }
+      },
+      "result_envelope": {
+        "version": 1,
+        "type": "event",
+        "id": "preview-lifecycle-result-06e9ca56931900580c93c5b01ef47f925dabfb4290fd1472fb3babba7b622a1e",
+        "sent_at": "2099-01-01T00:00:01.501Z",
+        "runner_id": "runner-1",
+        "payload": {
+          "kind": "preview_lifecycle_result",
+          "schema_version": 1,
+          "preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+          "preview_lifecycle_effect_revision": 1,
+          "preview_lifecycle_operation_id": "preview-lifecycle-operation-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "organization_id": "organization-1",
+          "project_id": "project-1",
+          "workflow_run_id": "workflow-1",
+          "execution_manifest_id": "manifest-1",
+          "execution_manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action": "destroy",
+          "idempotency_key": "preview-lifecycle-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+          "operation_digest": "2aaf489f7b20c94783193958d18119555dee4670f97c132366c234725dea25af",
+          "command_digest": "1f32757456857f0a0476f710edd68a577b748f48b786e921bde5a003c7a696d4",
+          "lease_id": "lease-2",
+          "fencing_token": 5,
+          "lease_expires_at": "2099-01-01T12:00:00Z",
+          "preview_id": "preview-1",
+          "preview_key": "abcdefghijklmnopqrstuvwxyz",
+          "blueprint": {
+            "blueprint_id": "blueprint-version-1",
+            "version": "3",
+            "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+          },
+          "commit_set": [
+            {
+              "repository_id": "api",
+              "commit_sha": "1111111111111111111111111111111111111111"
+            },
+            {
+              "repository_id": "web",
+              "commit_sha": "2222222222222222222222222222222222222222"
+            }
+          ],
+          "commit_set_digest": "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415",
+          "original_expires_at": "2099-01-02T00:00:00.123Z",
+          "current_effective_expires_at": "2099-01-02T00:00:00.123Z",
+          "command_message_id": "preview-lifecycle-command-2222222222222222222222222222222222222222222222222222222222222222",
+          "observed_at": "2099-01-01T00:00:01.5Z",
+          "outcome": {
+            "kind": "succeeded",
+            "controller_receipt_digest": "9dc059ef45a2f0f2e056e0b6d9205d4c52c5f10f8631fb3eabc6f305f25e0676",
+            "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+            "resource_state": {
+              "kind": "destroyed",
+              "disposition": "already_absent"
+            }
+          }
+        }
+      },
+      "expected": {
+        "result_event_id": "preview-lifecycle-result-06e9ca56931900580c93c5b01ef47f925dabfb4290fd1472fb3babba7b622a1e",
+        "outcome_kind": "succeeded",
+        "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+        "operation_digest": "2aaf489f7b20c94783193958d18119555dee4670f97c132366c234725dea25af",
+        "command_digest": "1f32757456857f0a0476f710edd68a577b748f48b786e921bde5a003c7a696d4",
+        "controller_receipt_digest": "9dc059ef45a2f0f2e056e0b6d9205d4c52c5f10f8631fb3eabc6f305f25e0676"
+      }
+    },
+    {
+      "name": "hosted_extend_policy_denied",
+      "description": "extend to current_effective_expires_at plus 8 days, beyond the default 7 day max_extension_ms",
+      "given": "deployed:deploy_two_repositories",
+      "controller": "denies",
+      "command_envelope": {
+        "version": 1,
+        "type": "command",
+        "id": "preview-lifecycle-command-6666666666666666666666666666666666666666666666666666666666666666",
+        "sent_at": "2099-01-01T00:00:00Z",
+        "runner_id": "runner-1",
+        "payload": {
+          "command": "preview_lifecycle",
+          "preview_lifecycle": {
+            "schema_version": 1,
+            "preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+            "preview_lifecycle_effect_revision": 1,
+            "preview_lifecycle_operation_id": "preview-lifecycle-operation-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "organization_id": "organization-1",
+            "project_id": "project-1",
+            "workflow_run_id": "workflow-1",
+            "execution_manifest_id": "manifest-1",
+            "execution_manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "action": "extend",
+            "idempotency_key": "preview-lifecycle-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+            "operation_digest": "84d62af5188e9f07c9455fce489e8715b01d08d2ea060da473000fdf3aee17a5",
+            "command_digest": "9c0014f805764012a2da67290e5b29fde1eaea9bf52028ccfe34c2ad7880823c",
+            "lease_id": "lease-2",
+            "fencing_token": 5,
+            "lease_expires_at": "2099-01-01T12:00:00Z",
+            "preview_id": "preview-1",
+            "preview_key": "abcdefghijklmnopqrstuvwxyz",
+            "blueprint": {
+              "blueprint_id": "blueprint-version-1",
+              "version": "3",
+              "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+            },
+            "commit_set": [
+              {
+                "repository_id": "api",
+                "commit_sha": "1111111111111111111111111111111111111111"
+              },
+              {
+                "repository_id": "web",
+                "commit_sha": "2222222222222222222222222222222222222222"
+              }
+            ],
+            "commit_set_digest": "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415",
+            "original_expires_at": "2099-01-02T00:00:00.123Z",
+            "current_effective_expires_at": "2099-01-02T00:00:00.123Z",
+            "desired_expires_at": "2099-01-10T00:00:00.123Z"
+          }
+        }
+      },
+      "result_envelope": {
+        "version": 1,
+        "type": "event",
+        "id": "preview-lifecycle-result-f92cdc03b45c2736ea6a045c7600c1fbdb82805bcd1d4f573a0b4d3bfb4f24b4",
+        "sent_at": "2099-01-01T00:00:02.001Z",
+        "runner_id": "runner-1",
+        "payload": {
+          "kind": "preview_lifecycle_result",
+          "schema_version": 1,
+          "preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+          "preview_lifecycle_effect_revision": 1,
+          "preview_lifecycle_operation_id": "preview-lifecycle-operation-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "organization_id": "organization-1",
+          "project_id": "project-1",
+          "workflow_run_id": "workflow-1",
+          "execution_manifest_id": "manifest-1",
+          "execution_manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action": "extend",
+          "idempotency_key": "preview-lifecycle-ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+          "operation_digest": "84d62af5188e9f07c9455fce489e8715b01d08d2ea060da473000fdf3aee17a5",
+          "command_digest": "9c0014f805764012a2da67290e5b29fde1eaea9bf52028ccfe34c2ad7880823c",
+          "lease_id": "lease-2",
+          "fencing_token": 5,
+          "lease_expires_at": "2099-01-01T12:00:00Z",
+          "preview_id": "preview-1",
+          "preview_key": "abcdefghijklmnopqrstuvwxyz",
+          "blueprint": {
+            "blueprint_id": "blueprint-version-1",
+            "version": "3",
+            "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+          },
+          "commit_set": [
+            {
+              "repository_id": "api",
+              "commit_sha": "1111111111111111111111111111111111111111"
+            },
+            {
+              "repository_id": "web",
+              "commit_sha": "2222222222222222222222222222222222222222"
+            }
+          ],
+          "commit_set_digest": "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415",
+          "original_expires_at": "2099-01-02T00:00:00.123Z",
+          "current_effective_expires_at": "2099-01-02T00:00:00.123Z",
+          "desired_expires_at": "2099-01-10T00:00:00.123Z",
+          "command_message_id": "preview-lifecycle-command-6666666666666666666666666666666666666666666666666666666666666666",
+          "observed_at": "2099-01-01T00:00:02Z",
+          "outcome": {
+            "kind": "permanent",
+            "code": "policy_denied"
+          }
+        }
+      },
+      "expected": {
+        "result_event_id": "preview-lifecycle-result-f92cdc03b45c2736ea6a045c7600c1fbdb82805bcd1d4f573a0b4d3bfb4f24b4",
+        "outcome_kind": "permanent",
+        "outcome_code": "policy_denied",
+        "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+        "operation_digest": "84d62af5188e9f07c9455fce489e8715b01d08d2ea060da473000fdf3aee17a5",
+        "command_digest": "9c0014f805764012a2da67290e5b29fde1eaea9bf52028ccfe34c2ad7880823c"
+      }
+    },
+    {
+      "name": "hosted_destroy_controller_timeout",
+      "description": "the operation of hosted_destroy_without_desired_expiry under a new command id; the controller outlives the lease, so observed_at is clamped to lease_expires_at",
+      "given": "deployed:deploy_two_repositories",
+      "controller": "outlives_lease",
+      "command_envelope": {
+        "version": 1,
+        "type": "command",
+        "id": "preview-lifecycle-command-7777777777777777777777777777777777777777777777777777777777777777",
+        "sent_at": "2099-01-01T00:00:00Z",
+        "runner_id": "runner-1",
+        "payload": {
+          "command": "preview_lifecycle",
+          "preview_lifecycle": {
+            "schema_version": 1,
+            "preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+            "preview_lifecycle_effect_revision": 1,
+            "preview_lifecycle_operation_id": "preview-lifecycle-operation-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "organization_id": "organization-1",
+            "project_id": "project-1",
+            "workflow_run_id": "workflow-1",
+            "execution_manifest_id": "manifest-1",
+            "execution_manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "action": "destroy",
+            "idempotency_key": "preview-lifecycle-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+            "operation_digest": "2aaf489f7b20c94783193958d18119555dee4670f97c132366c234725dea25af",
+            "command_digest": "1f32757456857f0a0476f710edd68a577b748f48b786e921bde5a003c7a696d4",
+            "lease_id": "lease-2",
+            "fencing_token": 5,
+            "lease_expires_at": "2099-01-01T12:00:00Z",
+            "preview_id": "preview-1",
+            "preview_key": "abcdefghijklmnopqrstuvwxyz",
+            "blueprint": {
+              "blueprint_id": "blueprint-version-1",
+              "version": "3",
+              "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+            },
+            "commit_set": [
+              {
+                "repository_id": "api",
+                "commit_sha": "1111111111111111111111111111111111111111"
+              },
+              {
+                "repository_id": "web",
+                "commit_sha": "2222222222222222222222222222222222222222"
+              }
+            ],
+            "commit_set_digest": "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415",
+            "original_expires_at": "2099-01-02T00:00:00.123Z",
+            "current_effective_expires_at": "2099-01-02T00:00:00.123Z"
+          }
+        }
+      },
+      "result_envelope": {
+        "version": 1,
+        "type": "event",
+        "id": "preview-lifecycle-result-bd4c60fe8b4f462d4f98596b88e0ca142aca6662142800e275ad576e24c40bd3",
+        "sent_at": "2099-01-01T12:00:00.003Z",
+        "runner_id": "runner-1",
+        "payload": {
+          "kind": "preview_lifecycle_result",
+          "schema_version": 1,
+          "preview_lifecycle_effect_id": "preview-lifecycle-effect-1",
+          "preview_lifecycle_effect_revision": 1,
+          "preview_lifecycle_operation_id": "preview-lifecycle-operation-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "organization_id": "organization-1",
+          "project_id": "project-1",
+          "workflow_run_id": "workflow-1",
+          "execution_manifest_id": "manifest-1",
+          "execution_manifest_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "action": "destroy",
+          "idempotency_key": "preview-lifecycle-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+          "operation_digest": "2aaf489f7b20c94783193958d18119555dee4670f97c132366c234725dea25af",
+          "command_digest": "1f32757456857f0a0476f710edd68a577b748f48b786e921bde5a003c7a696d4",
+          "lease_id": "lease-2",
+          "fencing_token": 5,
+          "lease_expires_at": "2099-01-01T12:00:00Z",
+          "preview_id": "preview-1",
+          "preview_key": "abcdefghijklmnopqrstuvwxyz",
+          "blueprint": {
+            "blueprint_id": "blueprint-version-1",
+            "version": "3",
+            "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+          },
+          "commit_set": [
+            {
+              "repository_id": "api",
+              "commit_sha": "1111111111111111111111111111111111111111"
+            },
+            {
+              "repository_id": "web",
+              "commit_sha": "2222222222222222222222222222222222222222"
+            }
+          ],
+          "commit_set_digest": "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415",
+          "original_expires_at": "2099-01-02T00:00:00.123Z",
+          "current_effective_expires_at": "2099-01-02T00:00:00.123Z",
+          "command_message_id": "preview-lifecycle-command-7777777777777777777777777777777777777777777777777777777777777777",
+          "observed_at": "2099-01-01T12:00:00Z",
+          "outcome": {
+            "kind": "uncertain",
+            "code": "controller_timeout"
+          }
+        }
+      },
+      "expected": {
+        "result_event_id": "preview-lifecycle-result-bd4c60fe8b4f462d4f98596b88e0ca142aca6662142800e275ad576e24c40bd3",
+        "outcome_kind": "uncertain",
+        "outcome_code": "controller_timeout",
+        "resource_binding_digest": "e2e4b3087feecbf984a6d28dd2017fd32130a60743d59a29b442272a1fd2b901",
+        "operation_digest": "2aaf489f7b20c94783193958d18119555dee4670f97c132366c234725dea25af",
+        "command_digest": "1f32757456857f0a0476f710edd68a577b748f48b786e921bde5a003c7a696d4"
+      }
     }
   ]
 }
