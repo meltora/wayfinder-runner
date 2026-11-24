@@ -46,9 +46,9 @@ func TestJitterBackoffStaysWithinBounds(t *testing.T) {
 	t.Parallel()
 	base := 10 * time.Second
 	for range 100 {
-		got := jitterBackoff(base)
+		got := JitterBackoff(base)
 		if got < 8*time.Second || got > 12*time.Second {
-			t.Fatalf("jitterBackoff(%s) = %s", base, got)
+			t.Fatalf("JitterBackoff(%s) = %s", base, got)
 		}
 	}
 }

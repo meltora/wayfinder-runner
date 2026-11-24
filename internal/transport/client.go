@@ -118,7 +118,7 @@ func (c *Client) Run(ctx context.Context) error {
 		if !connectedAt.IsZero() && time.Since(connectedAt) >= time.Minute {
 			backoff = time.Second
 		}
-		wait := jitterBackoff(backoff)
+		wait := JitterBackoff(backoff)
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -130,7 +130,7 @@ func (c *Client) Run(ctx context.Context) error {
 	}
 }
 
-func jitterBackoff(backoff time.Duration) time.Duration {
+func JitterBackoff(backoff time.Duration) time.Duration {
 	var random [8]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return backoff

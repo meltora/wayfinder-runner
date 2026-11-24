@@ -117,8 +117,8 @@ func NewSession(conn Conn, resolver Resolver, dial DialFunc, logger *slog.Logger
 	return s
 }
 
-func (s *Session) Run(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
+func (s *Session) Run(parent context.Context) error {
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	s.mu.Lock()
 	s.ctx = ctx
@@ -144,10 +144,19 @@ func (s *Session) Run(ctx context.Context) error {
 	s.mu.Lock()
 	writeErr := s.writeErr
 	s.mu.Unlock()
-	if writeErr != nil && !errors.Is(err, ErrProtocol) && !overflowed {
+	switch {
+	case errors.Is(err, ErrProtocol) || overflowed:
+		return err
+	case parent.Err() != nil:
+		return parent.Err()
+	case isContextError(err) && writeErr != nil && !isContextError(writeErr):
 		return writeErr
 	}
 	return err
+}
+
+func isContextError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (s *Session) ResetPreview(previewID string) {

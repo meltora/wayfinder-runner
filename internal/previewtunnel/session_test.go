@@ -965,6 +965,97 @@ func TestControlBacklogOverflowCloses1008(t *testing.T) {
 	}
 }
 
+type erroringConn struct {
+	in       chan []byte
+	readErr  error
+	writeErr error
+	writing  chan struct{}
+}
+
+func (c *erroringConn) ReadMessage(ctx context.Context) ([]byte, error) {
+	select {
+	case message, ok := <-c.in:
+		if !ok {
+			return nil, c.readErr
+		}
+		return message, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (c *erroringConn) WriteMessage(ctx context.Context, _ []byte) error {
+	select {
+	case c.writing <- struct{}{}:
+	default:
+	}
+	if c.writeErr != nil {
+		return c.writeErr
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (c *erroringConn) Close(int, string) error { return nil }
+
+func TestRunReportsConnErrorNotInternalCancel(t *testing.T) {
+	errGatewayClosed := errors.New("gateway closed the websocket")
+	errWriteFailed := errors.New("write failed")
+	cases := []struct {
+		name string
+		conn *erroringConn
+		want error
+	}{
+		{"read error while a write is in flight", &erroringConn{readErr: errGatewayClosed}, errGatewayClosed},
+		{"write error ends the read", &erroringConn{writeErr: errWriteFailed}, errWriteFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.conn.in = make(chan []byte)
+			tc.conn.writing = make(chan struct{}, 1)
+			session := NewSession(tc.conn, &fakeResolver{previews: map[string]fakePreview{}}, nil, nil, nil)
+			result := make(chan error, 1)
+			go func() { result <- session.Run(context.Background()) }()
+			tc.conn.in <- rawFrame(byte(FrameOpen), 1, []byte(`{"preview_id":"x","preview_key":"y"}`))
+			select {
+			case <-tc.conn.writing:
+			case <-time.After(waitTimeout):
+				t.Fatal("session did not write the RESET")
+			}
+			if tc.conn.writeErr == nil {
+				close(tc.conn.in)
+			}
+			select {
+			case err := <-result:
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("Run error = %v, want %v", err, tc.want)
+				}
+			case <-time.After(waitTimeout):
+				t.Fatal("session did not stop")
+			}
+		})
+	}
+}
+
+func TestRunReportsCallerCancellation(t *testing.T) {
+	conn := &erroringConn{in: make(chan []byte), writing: make(chan struct{}, 1)}
+	session := NewSession(conn, &fakeResolver{previews: map[string]fakePreview{}}, nil, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- session.Run(ctx) }()
+	conn.in <- rawFrame(byte(FrameOpen), 1, []byte(`{"preview_id":"x","preview_key":"y"}`))
+	<-conn.writing
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run error = %v, want context.Canceled", err)
+		}
+	case <-time.After(waitTimeout):
+		t.Fatal("session did not stop")
+	}
+}
+
 func TestProtocolCloseReasonIsFixed(t *testing.T) {
 	h := newHarness(t, "a")
 	h.start()
