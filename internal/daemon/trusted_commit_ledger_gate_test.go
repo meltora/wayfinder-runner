@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/example/app-runner/internal/repo"
@@ -43,6 +44,24 @@ func TestMidBuildPreviewOfAGitlinkCommitIsNeverTrusted(t *testing.T) {
 	}
 	if ledgerTrusts(t, f.jr, resolved) {
 		t.Fatal("a commit adding a gitlink became deploy-trusted")
+	}
+}
+
+func TestMidBuildPreviewOfARunnerArtifactCommitIsNeverTrusted(t *testing.T) {
+	f := newAgentResultTest(t)
+	baseTree := strings.TrimSpace(f.trustedGit(t, "rev-parse", f.base+"^{tree}"))
+	crafted := trustedCommitWithEntry(t, f, f.base, "040000 tree "+baseTree+"\t"+runnerArtifactsDirectory)
+	repository := &f.jr.repositories[0]
+	repository.StartSHA = crafted
+	writeAgentFile(t, f.checkout, "feature.txt", "artifact preview\n")
+
+	resolved := publishPreviewAndResolve(t, f, "preview-artifact")
+
+	if err := f.jr.refuseCommittedRunnerArtifacts(context.Background(), *repository, resolved["repo-1"]); err == nil {
+		t.Fatal("fixture did not produce a runner artifact result")
+	}
+	if ledgerTrusts(t, f.jr, resolved) {
+		t.Fatal("a commit carrying runner artifacts became deploy-trusted")
 	}
 }
 
@@ -92,6 +111,9 @@ func TestTrustedCommitSetMustCoverEveryRepository(t *testing.T) {
 	}
 	if err := f.jr.trustedCommitSetEligible(context.Background(), map[string]string{"other": resolved["repo-1"]}); err == nil {
 		t.Fatal("a commit set for an unknown repository was eligible")
+	}
+	if err := f.jr.trustedCommitSetEligible(context.Background(), map[string]string{"repo-1": resolved["repo-1"], "other": resolved["repo-1"]}); err == nil {
+		t.Fatal("a commit set with an extra repository was eligible")
 	}
 	if err := f.jr.trustedCommitSetEligible(context.Background(), resolved); err != nil {
 		t.Fatalf("the resolved set was refused: %v", err)
