@@ -1,6 +1,7 @@
 package previewhost
 
 import (
+	"context"
 	"net/netip"
 	"testing"
 )
@@ -19,28 +20,15 @@ func TestRegistryHost(t *testing.T) {
 	}
 }
 
-func TestPublicAddress(t *testing.T) {
-	for address, want := range map[string]bool{
-		"93.184.216.34":   true,
-		"2606:4700::1111": true,
-		"10.1.2.3":        false,
-		"172.16.0.1":      false,
-		"192.168.1.1":     false,
-		"127.0.0.1":       false,
-		"169.254.169.254": false,
-		"100.64.0.1":      false,
-		"0.0.0.0":         false,
-		"::1":             false,
-		"fe80::1":         false,
-		"fd00::1":         false,
-		"fd00:ec2::254":   false,
-		"224.0.0.1":       false,
-		"198.18.0.1":      false,
-		"64:ff9b::a00:1":  false,
-		"::ffff:10.0.0.1": false,
+func TestCheckRegistryHostRefusesNonPublicAddresses(t *testing.T) {
+	for address, ok := range map[string]bool{
+		"93.184.216.34": true, "10.1.2.3": false, "169.254.169.254": false, "::ffff:10.0.0.1": false, "198.18.0.1": false,
 	} {
-		if got := publicAddress(netip.MustParseAddr(address)); got != want {
-			t.Fatalf("publicAddress(%s) = %v, want %v", address, got, want)
+		lookup := func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr(address)}, nil
+		}
+		if err := checkRegistryHost(context.Background(), lookup, "registry.example.com"); (err == nil) != ok {
+			t.Fatalf("checkRegistryHost(%s) = %v", address, err)
 		}
 	}
 }

@@ -74,6 +74,8 @@ func runCLI(args []string) int {
 		err = cmdRegisterRepo(args[1:])
 	case "scan-agent-config":
 		err = cmdScanConfig(args[1:])
+	case "preview-gateway":
+		err = cmdPreviewGateway(args[1:])
 	default:
 		usage()
 		return 2
