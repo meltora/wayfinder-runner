@@ -111,6 +111,12 @@ type Daemon struct {
 	previewDeployCommandActive                            map[string]struct{}
 	previewDeployKeyActive                                map[string]struct{}
 	previewDeployCommands                                 sync.WaitGroup
+	previewHostMu                                         sync.Mutex
+	previewHostReapMu                                     sync.Mutex
+	previewHostEmergencyGeneration                        uint64
+	previewHostDeployCancels                              map[string]context.CancelFunc
+	previewHostWake                                       chan struct{}
+	hostMemory                                            func() uint64
 	reviewerIdentityVerifier                              reviewerIdentityVerifier
 	reviewerIdentityVerificationCommandMu                 sync.Mutex
 	reviewerIdentityVerificationCommandActive             map[string]struct{}
@@ -403,6 +409,16 @@ func NewWithExternalOperationDependencies(
 	d.updateDrain = pending
 	d.updateRestored = pending != nil
 	d.updateExpiredAtStartup = expired
+	d.previewHostWake = make(chan struct{}, 1)
+	if cfg.PreviewHosting.Enabled {
+		controller, err := d.newPreviewHostController()
+		if err != nil {
+			_ = j.Close()
+			_ = lock.Close()
+			return nil, fmt.Errorf("initialize preview host controller: %w", err)
+		}
+		d.previewHostController = controller
+	}
 	return d, nil
 }
 
@@ -490,6 +506,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.rotationLoop(spoolCtx)
 	go d.updateLoop(spoolCtx)
 	go d.capabilityRefreshLoop(spoolCtx, capabilityRefreshInterval)
+	go d.previewHostExpiryLoop(spoolCtx)
 	if d.configurationReloader != nil {
 		go d.configurationReloadLoop(spoolCtx)
 	}
@@ -1272,6 +1289,9 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 		if err := d.cancelJob(ctx, "", "emergency_stop"); err != nil {
 			d.logger.Error("clear lease during emergency stop", "err", err)
 		}
+		if err := d.emergencyStopPreviewHosts(ctx); err != nil {
+			d.logger.Error("destroy hosted previews during emergency stop", "err", err)
+		}
 		d.logger.Error("emergency stop received; jobs cancelled and runner paused")
 		return nil
 	case v1.CmdResumeRunner:
@@ -1321,7 +1341,7 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 		}
 		return d.executePreviewObservation(ctx, env.ID, *cmd.PreviewObservation)
 	case v1.CmdPreviewLifecycle:
-		if d.Paused() {
+		if d.Paused() && (!cmd.PreviewLifecycle.Hosted() || cmd.PreviewLifecycle.Action != v1.PreviewLifecycleDestroy) {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executePreviewLifecycle(ctx, env.ID, *cmd.PreviewLifecycle)

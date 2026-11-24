@@ -33,6 +33,11 @@ func (d *Daemon) executeHostedPreviewLifecycle(
 	if found {
 		return d.replayHostedPreviewLifecycle(ctx, operation, stored)
 	}
+	d.previewHostMu.Lock()
+	defer d.previewHostMu.Unlock()
+	if d.Paused() && operation.Action != v1.PreviewLifecycleDestroy {
+		return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+	}
 	now := time.Now()
 	if !operation.LeaseExpiresAt.After(now) ||
 		(operation.Action == v1.PreviewLifecycleExtend && !operation.CurrentEffectiveExpiresAt.After(now)) {

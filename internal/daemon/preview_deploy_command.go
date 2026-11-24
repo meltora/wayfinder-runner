@@ -109,17 +109,14 @@ func (d *Daemon) executePreviewDeploy(
 		}
 		return d.sendPreviewDeployResult(ctx, event)
 	}
-	if _, inserted, err := d.journal.InsertPreviewHost(ctx, host); err != nil || !inserted {
-		if err == nil {
-			return rejectCommand(v1.CommandAckReasonCommandConflict, nil)
-		}
-		return previewHostInsertRejection(err)
+	admission, err := d.admitPreviewDeploy(ctx, commandMessageID, operation, host)
+	if admission == nil {
+		return err
 	}
-	deployCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
-	result := d.previewHostController.Deploy(deployCtx, previewhost.DeployRequest{
+	result := d.previewHostController.Deploy(admission.ctx, previewhost.DeployRequest{
 		Operation: operation, Content: content, Credential: credential,
 	})
-	cancel()
+	admission.cancel()
 	observedAt := time.Now().UTC().Truncate(time.Millisecond)
 	outcome := result.Outcome
 	if observedAt.After(operation.LeaseExpiresAt) {
@@ -137,9 +134,8 @@ func (d *Daemon) executePreviewDeploy(
 			return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 		}
 	}
-	if err := d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
-		IdempotencyKey: operation.IdempotencyKey, State: previewHostStateForOutcome(event.Outcome.Kind), Result: raw,
-	}); err != nil {
+	if err := d.recordPreviewDeployOutcome(ctx, operation.IdempotencyKey, admission,
+		previewHostStateForOutcome(event.Outcome.Kind), raw); err != nil {
 		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 	}
 	return d.sendPreviewDeployResult(ctx, event)
