@@ -139,6 +139,7 @@ func newHarness(t *testing.T) *harness {
 			v1.PreviewDeployPhaseServices: 2 * time.Second,
 			v1.PreviewDeployPhaseHealth:   2 * time.Second,
 		},
+		GatewayExecutable: staticRunnerFixture(t),
 	}
 	return h
 }
@@ -232,23 +233,29 @@ func TestEveryCreatedObjectCarriesOnlyPreviewLabels(t *testing.T) {
 		}
 	}
 	created := h.engine.Created()
-	if len(created) < 9 {
+	if len(created) < 10 {
 		t.Fatalf("created = %d containers", len(created))
 	}
 	for _, spec := range created {
 		check("container", spec.Name, spec.Labels)
 	}
 	networks := h.engine.CreatedNetworks()
-	if len(networks) != 1 {
+	if len(networks) != 2 {
 		t.Fatalf("networks = %+v", networks)
 	}
-	check("network", networks[0].Name, networks[0].Labels)
 	prefix := ResourcePrefix(testRunnerID, testPreviewID)
-	if networks[0].Name != prefix {
-		t.Fatalf("network name = %q", networks[0].Name)
+	for index, name := range []string{prefix, prefix + "-edge"} {
+		check("network", networks[index].Name, networks[index].Labels)
+		if networks[index].Name != name {
+			t.Fatalf("network name = %q, want %q", networks[index].Name, name)
+		}
 	}
 	for _, spec := range created {
-		if spec.Network != prefix || !strings.HasPrefix(spec.Name, prefix+"-") {
+		network := prefix
+		if spec.Name == prefix+"-gateway" {
+			network = prefix + "-edge"
+		}
+		if spec.Network != network || !strings.HasPrefix(spec.Name, prefix+"-") {
 			t.Fatalf("container %s on network %q", spec.Name, spec.Network)
 		}
 	}
@@ -303,7 +310,7 @@ func TestContainerPolicyPerRole(t *testing.T) {
 		}
 	}
 	for _, spec := range created {
-		if _, service := wantCaps[spec.Name]; service {
+		if _, service := wantCaps[spec.Name]; service || spec.Name == prefix+"-gateway" {
 			continue
 		}
 		if len(spec.CapAdd) != 0 || !spec.ReadOnly || spec.User != "10001:10001" {
@@ -321,7 +328,7 @@ func TestContainerPolicyPerRole(t *testing.T) {
 		}
 	}
 	app := specNamed(t, created, prefix+"-app")
-	if app.PublishPort != 3000 || !slices.Equal(app.Command, []string{"-c", "npm start"}) || app.Entrypoint != "/bin/sh" {
+	if app.PublishPort != 0 || app.NetworkAlias != "app" || !slices.Equal(app.Command, []string{"-c", "npm start"}) || app.Entrypoint != "/bin/sh" {
 		t.Fatalf("app = %+v", app)
 	}
 }
@@ -346,7 +353,7 @@ func TestDeployRunsPhasesInOrder(t *testing.T) {
 	events := h.engine.Events()
 	prefix := ResourcePrefix(testRunnerID, testPreviewID)
 	order := []string{
-		"pull " + testImage("postgres"), "network " + prefix, "detached " + prefix + "-svc-db",
+		"pull " + testImage("postgres"), "network " + prefix, "detached " + prefix + "-gateway", "detached " + prefix + "-svc-db",
 		"exec " + prefix + "-svc-db pg_isready -U preview", "once -c npm ci", "once -c npm run build",
 		"once -c npm run migrate", "once -c npm run seed", "detached " + prefix + "-app",
 	}
@@ -927,7 +934,8 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 			PhaseTimeouts: map[v1.PreviewDeployPhase]time.Duration{v1.PreviewDeployPhaseBuild: -time.Second}},
 		"unknown phase": {RunnerID: testRunnerID, StateDir: "/var/lib/runner",
 			PhaseTimeouts: map[v1.PreviewDeployPhase]time.Duration{v1.PreviewDeployPhaseLeaseExpired: time.Second}},
-		"root user": {RunnerID: testRunnerID, StateDir: "/var/lib/runner", JobUID: -1},
+		"root user":        {RunnerID: testRunnerID, StateDir: "/var/lib/runner", JobUID: -1},
+		"relative gateway": {RunnerID: testRunnerID, StateDir: "/var/lib/runner", GatewayExecutable: "bin/our-runner"},
 		"teardown over lease": {RunnerID: testRunnerID, StateDir: "/var/lib/runner", Lease: 20 * time.Minute,
 			TeardownTimeout: 6 * time.Minute, PhaseTimeouts: uniformPhaseTimeouts(time.Minute)},
 	} {

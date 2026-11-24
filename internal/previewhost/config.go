@@ -58,6 +58,8 @@ type Config struct {
 	MaxExtension    time.Duration
 	JobUID          int
 	JobGID          int
+
+	GatewayExecutable string
 }
 
 func (cfg Config) normalized() (Config, error) {
@@ -68,6 +70,12 @@ func (cfg Config) normalized() (Config, error) {
 		return Config{}, fmt.Errorf("preview host state directory must be absolute")
 	}
 	cfg.StateDir = filepath.Clean(cfg.StateDir)
+	if cfg.GatewayExecutable != "" {
+		if !filepath.IsAbs(cfg.GatewayExecutable) {
+			return Config{}, fmt.Errorf("preview host gateway executable must be absolute")
+		}
+		cfg.GatewayExecutable = filepath.Clean(cfg.GatewayExecutable)
+	}
 	if cfg.Lease == 0 {
 		cfg.Lease = DefaultLease
 	}

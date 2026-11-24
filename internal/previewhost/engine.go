@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 )
 
 const (
@@ -24,6 +25,7 @@ type NetworkSpec struct {
 	Name     string
 	Labels   map[string]string
 	Internal bool
+	Options  map[string]string
 }
 
 type Mount struct {
@@ -64,9 +66,12 @@ func (objects Objects) Empty() bool {
 }
 
 type Engine interface {
+	ServerVersion(ctx context.Context) (string, error)
 	ImagePresent(ctx context.Context, image string) (bool, error)
 	Pull(ctx context.Context, image string) (string, error)
+	ImportImage(ctx context.Context, tag string, tar io.Reader, changes []string) error
 	CreateNetwork(ctx context.Context, spec NetworkSpec) error
+	ConnectNetwork(ctx context.Context, network, container, alias string) error
 	RunDetached(ctx context.Context, spec ContainerSpec) error
 	RunOnce(ctx context.Context, spec ContainerSpec) (string, error)
 	Exec(ctx context.Context, container string, command []string) (string, error)

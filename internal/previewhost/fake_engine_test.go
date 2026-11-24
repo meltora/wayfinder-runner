@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -33,6 +35,86 @@ type fakeEngine struct {
 	hostPort   int
 	stopped    map[string]bool
 	listErr    error
+	version    string
+	versionErr error
+	versions   int
+	imports    []fakeImport
+	connects   []fakeConnect
+	hostPorts  []string
+}
+
+func (engine *fakeEngine) HostPortCalls() []string {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return slices.Clone(engine.hostPorts)
+}
+
+type fakeImport struct {
+	tag     string
+	archive []byte
+	changes []string
+}
+
+type fakeConnect struct {
+	network, container, alias string
+}
+
+func (engine *fakeEngine) ServerVersion(ctx context.Context) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	engine.versions++
+	if engine.versionErr != nil {
+		return "", engine.versionErr
+	}
+	return engine.version, nil
+}
+
+func (engine *fakeEngine) ImportImage(ctx context.Context, tag string, archive io.Reader, changes []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	data, err := io.ReadAll(archive)
+	if err != nil {
+		return err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	engine.record("import " + tag)
+	engine.imports = append(engine.imports, fakeImport{tag: tag, archive: data, changes: slices.Clone(changes)})
+	engine.present[tag] = true
+	return nil
+}
+
+func (engine *fakeEngine) ConnectNetwork(ctx context.Context, network, container, alias string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	engine.record("connect " + network + " " + container + " " + alias)
+	if _, exists := engine.networks[network]; !exists {
+		return fmt.Errorf("network %s does not exist", network)
+	}
+	if _, exists := engine.containers[container]; !exists {
+		return fmt.Errorf("container %s does not exist", container)
+	}
+	engine.connects = append(engine.connects, fakeConnect{network: network, container: container, alias: alias})
+	return nil
+}
+
+func (engine *fakeEngine) Imports() []fakeImport {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return slices.Clone(engine.imports)
+}
+
+func (engine *fakeEngine) Connects() []fakeConnect {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return slices.Clone(engine.connects)
 }
 
 func newFakeEngine() *fakeEngine {
@@ -42,6 +124,7 @@ func newFakeEngine() *fakeEngine {
 		networks:   map[string]NetworkSpec{},
 		containers: map[string]ContainerSpec{},
 		stopped:    map[string]bool{},
+		version:    "27.3.1",
 	}
 }
 
@@ -192,6 +275,7 @@ func (engine *fakeEngine) HostPort(ctx context.Context, container string, port i
 	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
+	engine.hostPorts = append(engine.hostPorts, container+":"+strconv.Itoa(port))
 	spec, exists := engine.containers[container]
 	if !exists || spec.PublishPort != port {
 		return 0, errors.New("port is not published")

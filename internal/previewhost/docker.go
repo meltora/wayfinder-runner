@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -71,7 +72,11 @@ type Docker struct {
 	ownership    WorkspaceOwnership
 	lookup       func(context.Context, string) ([]netip.Addr, error)
 	random       func() (string, error)
+	dial         func(context.Context, string, string) (net.Conn, error)
 	client       *http.Client
+
+	versionMu      sync.Mutex
+	versionChecked bool
 }
 
 var _ Controller = (*Docker)(nil)
@@ -87,7 +92,7 @@ func New(cfg Config, deps Dependencies) (*Docker, error) {
 	return &Docker{
 		cfg: normalized, engine: deps.Engine, workspaces: deps.Workspaces,
 		repositories: deps.Repositories, ownership: deps.Ownership,
-		lookup: defaultLookup, random: randomSecret,
+		lookup: defaultLookup, random: randomSecret, dial: (&net.Dialer{}).DialContext,
 		client: &http.Client{
 			Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -159,6 +164,9 @@ func (d *Docker) deploy(ctx context.Context, request DeployRequest) ([]v1.Previe
 		workspace: filepath.Join(d.previewDir(previewID), "workspace"),
 	}
 	env, err := resolveEnvironment(request.Content, request.Operation, d.random)
+	if err == nil {
+		err = checkReservedServiceNames(request.Content)
+	}
 	if err != nil {
 		return nil, &phaseFailure{phase: v1.PreviewDeployPhaseValidate, log: "error: " + err.Error() + "\n"}
 	}
@@ -184,7 +192,11 @@ func (d *Docker) deploy(ctx context.Context, request DeployRequest) ([]v1.Previe
 		if err != nil {
 			cause := ctx.Err()
 			_, _ = log.Write([]byte("error: " + redact.KnownSecretsError(err).Error() + "\n"))
-			return nil, &phaseFailure{phase: step.phase, log: log.String(), cause: cause}
+			phase := step.phase
+			if errors.As(err, new(validationError)) {
+				phase = v1.PreviewDeployPhaseValidate
+			}
+			return nil, &phaseFailure{phase: phase, log: log.String(), cause: cause}
 		}
 	}
 	phaseCtx, cancel := context.WithTimeout(ctx, d.cfg.PhaseTimeouts[v1.PreviewDeployPhaseHealth])
@@ -203,6 +215,9 @@ func (d *Docker) deploy(ctx context.Context, request DeployRequest) ([]v1.Previe
 }
 
 func (d *Docker) checkout(ctx context.Context, run *deployment, _ *tailBuffer) error {
+	if err := d.checkDockerVersion(ctx); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(run.workspace), 0o700); err != nil {
 		return err
 	}
@@ -274,7 +289,14 @@ func (d *Docker) baseSpec(run *deployment, image string) ContainerSpec {
 }
 
 func (d *Docker) services(ctx context.Context, run *deployment, log *tailBuffer) error {
-	if err := d.engine.CreateNetwork(ctx, NetworkSpec{Name: run.prefix, Labels: run.labels}); err != nil {
+	network := NetworkSpec{
+		Name: run.prefix, Labels: run.labels, Internal: true,
+		Options: map[string]string{"com.docker.network.bridge.inhibit_ipv4": "true"},
+	}
+	if err := d.engine.CreateNetwork(ctx, network); err != nil {
+		return err
+	}
+	if err := d.startGateway(ctx, run); err != nil {
 		return err
 	}
 	for _, service := range run.request.Content.Services {
@@ -330,6 +352,7 @@ func (d *Docker) appSpec(run *deployment) ContainerSpec {
 	if _, set := env["HOME"]; !set {
 		env["HOME"] = "/tmp"
 	}
+	applyProxyEnvironment(env, run.request.Content)
 	spec.Env = env
 	spec.User = strconv.Itoa(d.cfg.JobUID) + ":" + strconv.Itoa(d.cfg.JobGID)
 	spec.ReadOnly = true
@@ -359,7 +382,7 @@ func (d *Docker) commands(phase v1.PreviewDeployPhase, commands []string) func(c
 func (d *Docker) start(ctx context.Context, run *deployment, _ *tailBuffer) error {
 	spec := d.appSpec(run)
 	spec.Name = run.prefix + "-app"
-	spec.PublishPort = run.request.Content.App.Port
+	spec.NetworkAlias = appAlias
 	spec.Command = []string{"-c", run.request.Content.App.Start}
 	return d.engine.RunDetached(ctx, spec)
 }
@@ -369,7 +392,7 @@ func (d *Docker) health(ctx context.Context, run *deployment) ([]v1.PreviewObser
 	slices.SortFunc(checks, func(a, b v1.PreviewBlueprintHealthCheckV1) int { return strings.Compare(a.ID, b.ID) })
 	var last []v1.PreviewObservationCheck
 	for {
-		port, err := d.engine.HostPort(ctx, run.prefix+"-app", run.request.Content.App.Port)
+		port, err := d.engine.HostPort(ctx, gatewayName(run.prefix), gatewayIngressPort)
 		if err == nil {
 			results, complete := d.probe(ctx, port, checks)
 			if complete {

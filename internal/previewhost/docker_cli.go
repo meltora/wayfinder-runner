@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -33,8 +34,13 @@ type DockerCLI struct {
 }
 
 func (cli DockerCLI) run(ctx context.Context, args ...string) (string, error) {
+	return cli.runWithInput(ctx, nil, args...)
+}
+
+func (cli DockerCLI) runWithInput(ctx context.Context, input io.Reader, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = isolation.DockerEnvironment()
+	cmd.Stdin = input
 	output := &tailBuffer{limit: dockerOutputLimit}
 	cmd.Stdout = output
 	cmd.Stderr = output
@@ -58,6 +64,38 @@ func ownedByCurrentUser(info os.FileInfo) bool {
 	return ok && int(stat.Uid) == os.Geteuid()
 }
 
+func (cli DockerCLI) ServerVersion(ctx context.Context) (string, error) {
+	output, err := cli.run(ctx, "version", "--format", "{{.Server.Version}}")
+	if err != nil {
+		return "", fmt.Errorf("docker version: %w: %s", err, strings.TrimSpace(output))
+	}
+	return strings.TrimSpace(output), nil
+}
+
+func (cli DockerCLI) ImportImage(ctx context.Context, tag string, archive io.Reader, changes []string) error {
+	args := []string{"import"}
+	for _, change := range changes {
+		args = append(args, "--change", change)
+	}
+	output, err := cli.runWithInput(ctx, archive, append(args, "-", tag)...)
+	if err != nil {
+		return fmt.Errorf("import image: %w: %s", err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+func (cli DockerCLI) ConnectNetwork(ctx context.Context, network, container, alias string) error {
+	args := []string{"network", "connect"}
+	if alias != "" {
+		args = append(args, "--alias", alias)
+	}
+	output, err := cli.run(ctx, append(args, network, container)...)
+	if err != nil {
+		return fmt.Errorf("connect network: %w: %s", err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
 func (cli DockerCLI) ImagePresent(ctx context.Context, image string) (bool, error) {
 	output, err := cli.run(ctx, "image", "inspect", "--format", "{{.Id}}", image)
 	if err == nil {
@@ -78,6 +116,7 @@ func (cli DockerCLI) CreateNetwork(ctx context.Context, spec NetworkSpec) error 
 	if spec.Internal {
 		args = append(args, "--internal")
 	}
+	args = append(args, labelArgs("-o", spec.Options)...)
 	args = append(args, labelArgs("--label", spec.Labels)...)
 	output, err := cli.run(ctx, append(args, spec.Name)...)
 	if err != nil {

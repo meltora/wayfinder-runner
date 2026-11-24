@@ -283,3 +283,49 @@ func TestDockerCLIHostPort(t *testing.T) {
 		t.Fatal("port published on all interfaces accepted")
 	}
 }
+
+func TestDockerCLIGatewayVerbs(t *testing.T) {
+	log := installFakeDocker(t, `
+case "$1" in
+version) echo 27.3.1 ;;
+import) cat > "$(dirname "$0")/stdin" ;;
+esac`)
+	cli := DockerCLI{TempDir: privateDir(t)}
+	network := NetworkSpec{
+		Name: "our-preview-0123456789ab", Labels: PreviewLabels(testRunnerID, testPreviewID), Internal: true,
+		Options: map[string]string{"com.docker.network.bridge.inhibit_ipv4": "true"},
+	}
+	if err := cli.CreateNetwork(context.Background(), network); err != nil {
+		t.Fatal(err)
+	}
+	if err := cli.ConnectNetwork(context.Background(), "our-preview-0123456789ab", "our-preview-0123456789ab-gateway", "our-gateway"); err != nil {
+		t.Fatal(err)
+	}
+	version, err := cli.ServerVersion(context.Background())
+	if err != nil || version != "27.3.1" {
+		t.Fatalf("version = %q err = %v", version, err)
+	}
+	changes := []string{`ENTRYPOINT ["/our-preview-gateway","preview-gateway"]`, "LABEL com.ourplatform.preview-gateway=1"}
+	if err := cli.ImportImage(context.Background(), "our-preview-gateway:0123456789abcdef", strings.NewReader("tar bytes"), changes); err != nil {
+		t.Fatal(err)
+	}
+	calls := readCalls(t, log)
+	want := []string{
+		"network create --driver bridge --internal -o com.docker.network.bridge.inhibit_ipv4=true " +
+			"--label com.ourplatform.preview-host=runner-1 --label com.ourplatform.preview-id=preview-1 our-preview-0123456789ab",
+		"network connect --alias our-gateway our-preview-0123456789ab our-preview-0123456789ab-gateway",
+		"version --format {{.Server.Version}}",
+		`import --change ENTRYPOINT ["/our-preview-gateway","preview-gateway"] --change LABEL com.ourplatform.preview-gateway=1 - our-preview-gateway:0123456789abcdef`,
+	}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("calls = %q", calls)
+	}
+	stdin, err := os.ReadFile(filepath.Join(filepath.Dir(log), "stdin"))
+	if err != nil || string(stdin) != "tar bytes" {
+		t.Fatalf("import stdin = %q err = %v", stdin, err)
+	}
+	installFakeDocker(t, `echo "Cannot connect to the Docker daemon" >&2; exit 1`)
+	if _, err := cli.ServerVersion(context.Background()); err == nil {
+		t.Fatal("unreachable docker daemon reported a version")
+	}
+}
