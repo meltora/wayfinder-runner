@@ -175,6 +175,9 @@ func TestSharedPreviewDeployVectorsAreAcceptedWithTheirEventIDs(t *testing.T) {
 
 func TestSharedPreviewDeployInvalidVectorsAreRejectedAsInvalidCommands(t *testing.T) {
 	vectors, _ := loadSharedPreviewDeployVectors(t)
+	if len(sharedPreviewDeployRuleErrors) != len(vectors.Invalid) {
+		t.Fatalf("rule table has %d entries for %d invalid vectors", len(sharedPreviewDeployRuleErrors), len(vectors.Invalid))
+	}
 	for _, vector := range vectors.Invalid {
 		t.Run(vector.Name, func(t *testing.T) {
 			if vector.ExpectedOutcome != string(v1.CommandAckReasonInvalidCommand) || vector.Given != "none" {

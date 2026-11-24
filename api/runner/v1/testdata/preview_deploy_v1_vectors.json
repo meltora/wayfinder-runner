@@ -2,7 +2,7 @@
   "schema_version": 1,
   "generator": "PREVIEW_DEPLOY_VECTORS_UPDATE=1 go test ./api/runner/v1 -run TestPreviewDeployV1VectorsAreCurrent",
   "conventions": {
-    "byte_limits": "blueprint.content size is measured on its compact JSON serialization, as the runner receives it after strict decoding",
+    "byte_limits": "blueprint.content size is measured on Go encoding/json Marshal output of the decoded payload: compact, object keys sorted, and <, >, & escaped as \\u003c, \\u003e, \\u0026",
     "envelope": "a full runner v1 envelope; compare it semantically, not byte-for-byte, because this file is indented and the wire omits zero milliseconds",
     "expected": "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
     "expected_outcome": "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",

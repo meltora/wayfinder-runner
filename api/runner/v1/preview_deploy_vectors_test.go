@@ -316,7 +316,7 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 		Generator:     previewDeployVectorsUpdateEnv + "=1 go test ./api/runner/v1 -run TestPreviewDeployV1VectorsAreCurrent",
 		Conventions: map[string]string{
 			"envelope":         "a full runner v1 envelope; compare it semantically, not byte-for-byte, because this file is indented and the wire omits zero milliseconds",
-			"byte_limits":      "blueprint.content size is measured on its compact JSON serialization, as the runner receives it after strict decoding",
+			"byte_limits":      "blueprint.content size is measured on Go encoding/json Marshal output of the decoded payload: compact, object keys sorted, and <, >, & escaped as \\u003c, \\u003e, \\u0026",
 			"given":            "none: no prior state; trusted_commit_set: the vector's own commit_set is recorded as trusted for its execution manifest; trusted_commit_set:<valid name>: that vector's commit_set is trusted; deployed:<valid name>: that deploy vector was accepted and its preview is live; the command message id used for the setup does not affect the outcome",
 			"expected_outcome": "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",
 			"expected":         "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
