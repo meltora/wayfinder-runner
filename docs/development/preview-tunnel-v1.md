@@ -54,7 +54,7 @@ Tunnel protocol errors close the whole tunnel with close code 1002:
 - a frame that is too short or too long;
 - an unknown frame type;
 - any frame with an even stream id or stream id 0;
-- an OPEN sent by the runner, an OPEN with a non-increasing id, or an OPEN with an invalid payload (not UTF-8, not a JSON object, a duplicate key, a missing or extra key, or an empty or non-string value);
+- an OPEN sent by the runner, an OPEN with a non-increasing id, or an OPEN with an invalid payload: bytes that are not valid UTF-8 (a BOM counts as a byte before the object, so it is rejected), not exactly one JSON object surrounded only by JSON whitespace (space, tab, CR, LF), a duplicate key after unescaping, a missing or extra key, an empty or non-string value, or a string escape that leaves a lone UTF-16 surrogate. The 1024-byte limit counts raw payload bytes.
 - a DATA payload of 0 bytes, or an END, RESET or WINDOW with the wrong payload length;
 - a WINDOW credit of 0, or a WINDOW grant that would push the receiving side's send window for that stream above 2^31−1;
 - a second END on the same stream.

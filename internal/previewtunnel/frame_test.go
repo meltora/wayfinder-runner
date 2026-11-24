@@ -21,6 +21,10 @@ func creditPayload(credit uint32) []byte {
 	return payload
 }
 
+func jsonUnit(unit string) string {
+	return `\` + "u" + unit
+}
+
 func openPayloadOfSize(size int) []byte {
 	base := `{"preview_id":"p","preview_key":""}`
 	return []byte(`{"preview_id":"p","preview_key":"` + strings.Repeat("k", size-len(base)) + `"}`)
@@ -119,8 +123,29 @@ func TestFrameWindowCredit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := WindowCredit(frame); got != MaxWindow {
-		t.Fatalf("WindowCredit = %d", got)
+	if got, ok := WindowCredit(frame); !ok || got != MaxWindow {
+		t.Fatalf("WindowCredit = %d, %v", got, ok)
+	}
+	for _, frame := range []Frame{
+		{Type: FrameData, StreamID: 1, Payload: creditPayload(1)},
+		{Type: FrameWindow, StreamID: 1, Payload: []byte{0, 0, 1}},
+		{Type: FrameWindow, StreamID: 1, Payload: []byte{0, 0, 0, 0, 1}},
+	} {
+		if got, ok := WindowCredit(frame); ok || got != 0 {
+			t.Fatalf("WindowCredit(%+v) = %d, %v", frame, got, ok)
+		}
+	}
+}
+
+func TestFramePayloadAliasesMessage(t *testing.T) {
+	message := rawFrame(2, 1, []byte("abc"))
+	frame, err := DecodeFrame(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message[5] = 'z'
+	if frame.Payload[0] != 'z' {
+		t.Fatalf("Payload = %q, want it to alias the message", frame.Payload)
 	}
 }
 
@@ -141,9 +166,57 @@ func TestFrameResetCodeOf(t *testing.T) {
 		if err != nil {
 			t.Fatalf("code %d: %v", code, err)
 		}
-		if got := ResetCodeOf(frame); got != want {
-			t.Fatalf("ResetCodeOf(code %d) = %d, want %d", code, got, want)
+		got, raw, ok := ResetCodeOf(frame)
+		if !ok || got != want || raw != code {
+			t.Fatalf("ResetCodeOf(code %d) = %d, %d, %v, want %d", code, got, raw, ok, want)
 		}
+	}
+	for _, frame := range []Frame{
+		{Type: FrameData, StreamID: 1, Payload: []byte{1}},
+		{Type: FrameReset, StreamID: 1, Payload: nil},
+		{Type: FrameReset, StreamID: 1, Payload: []byte{1, 1}},
+	} {
+		if got, raw, ok := ResetCodeOf(frame); ok || got != 0 || raw != 0 {
+			t.Fatalf("ResetCodeOf(%+v) = %d, %d, %v", frame, got, raw, ok)
+		}
+	}
+}
+
+func TestFrameDecodeOpenSurrogateEscapes(t *testing.T) {
+	cases := map[string]bool{
+		jsonUnit("d83d") + jsonUnit("de00"):                    true,
+		jsonUnit("D83D") + jsonUnit("DE00"):                    true,
+		jsonUnit("0041"):                                       true,
+		`a\\ud800`:                                             true,
+		jsonUnit("d800"):                                       false,
+		jsonUnit("dbff"):                                       false,
+		jsonUnit("dc00"):                                       false,
+		jsonUnit("dfff"):                                       false,
+		jsonUnit("de00") + jsonUnit("d83d"):                    false,
+		jsonUnit("d83d") + "x" + jsonUnit("de00"):              false,
+		jsonUnit("d83d") + jsonUnit("0041"):                    false,
+		jsonUnit("d83d") + jsonUnit("d83d"):                    false,
+		"p" + jsonUnit("d800"):                                 false,
+		`\\` + jsonUnit("d800"):                                false,
+		jsonUnit("d83d") + jsonUnit("de00") + jsonUnit("d800"): false,
+	}
+	for value, accepted := range cases {
+		for _, payload := range []string{
+			`{"preview_id":"` + value + `","preview_key":"k"}`,
+			`{"preview_id":"p","preview_key":"` + value + `"}`,
+		} {
+			_, err := DecodeOpen([]byte(payload))
+			if accepted && err != nil {
+				t.Fatalf("DecodeOpen(%s): %v", payload, err)
+			}
+			if !accepted && !errors.Is(err, ErrProtocol) {
+				t.Fatalf("DecodeOpen(%s) error = %v, want ErrProtocol", payload, err)
+			}
+		}
+	}
+	got, err := DecodeOpen([]byte(`{"preview_id":"` + jsonUnit("d83d") + jsonUnit("de00") + `","preview_key":"k"}`))
+	if err != nil || got.PreviewID != "\U0001F600" {
+		t.Fatalf("DecodeOpen = %+v, %v", got, err)
 	}
 }
 

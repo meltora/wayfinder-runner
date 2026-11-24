@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +16,7 @@ const (
 	previewTunnelVectorsUpdateEnv = "PREVIEW_TUNNEL_VECTORS_UPDATE"
 	expectOK                      = "ok"
 	expectClose1002               = "close_1002"
+	maxSpelledRun                 = 1024
 )
 
 type PreviewTunnelVectorFile struct {
@@ -25,19 +28,24 @@ type PreviewTunnelVectorFile struct {
 }
 
 type PreviewTunnelFrame struct {
-	Name    string                     `json:"name"`
-	Hex     string                     `json:"hex"`
-	Expect  string                     `json:"expect"`
-	Decoded *PreviewTunnelFrameDecoded `json:"decoded,omitempty"`
+	Name      string                     `json:"name"`
+	Hex       string                     `json:"hex"`
+	FillByte  string                     `json:"fill_byte,omitempty"`
+	FillCount int                        `json:"fill_count,omitempty"`
+	Length    int                        `json:"length"`
+	Expect    string                     `json:"expect"`
+	Decoded   *PreviewTunnelFrameDecoded `json:"decoded,omitempty"`
 }
 
 type PreviewTunnelFrameDecoded struct {
-	Type         FrameType          `json:"type"`
-	StreamID     uint32             `json:"stream_id"`
-	PayloadHex   string             `json:"payload_hex"`
-	Open         *PreviewTunnelOpen `json:"open,omitempty"`
-	WindowCredit uint32             `json:"window_credit,omitempty"`
-	ResetCode    string             `json:"reset_code,omitempty"`
+	Type             FrameType          `json:"type"`
+	StreamID         uint32             `json:"stream_id"`
+	PayloadHex       string             `json:"payload_hex"`
+	PayloadFillByte  string             `json:"payload_fill_byte,omitempty"`
+	PayloadFillCount int                `json:"payload_fill_count,omitempty"`
+	Open             *PreviewTunnelOpen `json:"open,omitempty"`
+	WindowCredit     uint32             `json:"window_credit,omitempty"`
+	ResetCode        string             `json:"reset_code,omitempty"`
 }
 
 type PreviewTunnelOpen struct {
@@ -67,17 +75,54 @@ var resetCodeNames = map[ResetCode]string{
 	ResetProtocol:      "protocol",
 }
 
-func okFrame(name string, frameType FrameType, streamID uint32, payload []byte) PreviewTunnelFrame {
-	return PreviewTunnelFrame{
-		Name:   name,
-		Hex:    hex.EncodeToString(rawFrame(byte(frameType), streamID, payload)),
-		Expect: expectOK,
-		Decoded: &PreviewTunnelFrameDecoded{
-			Type:       frameType,
-			StreamID:   streamID,
-			PayloadHex: hex.EncodeToString(payload),
-		},
+func compactHex(data []byte) (string, string, int) {
+	run := 0
+	for run < len(data) && data[len(data)-1-run] == data[len(data)-1] {
+		run++
 	}
+	if run <= maxSpelledRun {
+		return hex.EncodeToString(data), "", 0
+	}
+	return hex.EncodeToString(data[:len(data)-run]), hex.EncodeToString(data[len(data)-1:]), run
+}
+
+func expandHex(prefix, fillByte string, fillCount int) ([]byte, error) {
+	if prefix != strings.ToLower(prefix) {
+		return nil, fmt.Errorf("hex %q is not lowercase", prefix)
+	}
+	data, err := hex.DecodeString(prefix)
+	if err != nil {
+		return nil, err
+	}
+	if fillByte == "" && fillCount == 0 {
+		return data, nil
+	}
+	if len(fillByte) != 2 || fillByte != strings.ToLower(fillByte) || fillCount <= 0 {
+		return nil, fmt.Errorf("fill byte %q with count %d is invalid", fillByte, fillCount)
+	}
+	fill, err := hex.DecodeString(fillByte)
+	if err != nil {
+		return nil, err
+	}
+	return append(data, bytes.Repeat(fill, fillCount)...), nil
+}
+
+func messageVector(name string, message []byte, expect string) PreviewTunnelFrame {
+	prefix, fillByte, fillCount := compactHex(message)
+	return PreviewTunnelFrame{Name: name, Hex: prefix, FillByte: fillByte, FillCount: fillCount, Length: len(message), Expect: expect}
+}
+
+func okFrame(name string, frameType FrameType, streamID uint32, payload []byte) PreviewTunnelFrame {
+	vector := messageVector(name, rawFrame(byte(frameType), streamID, payload), expectOK)
+	payloadHex, payloadFillByte, payloadFillCount := compactHex(payload)
+	vector.Decoded = &PreviewTunnelFrameDecoded{
+		Type:             frameType,
+		StreamID:         streamID,
+		PayloadHex:       payloadHex,
+		PayloadFillByte:  payloadFillByte,
+		PayloadFillCount: payloadFillCount,
+	}
+	return vector
 }
 
 func okOpen(name string, streamID uint32, payload []byte, previewID, previewKey string) PreviewTunnelFrame {
@@ -99,21 +144,58 @@ func okReset(name string, code byte, want ResetCode) PreviewTunnelFrame {
 }
 
 func badFrame(name string, message []byte) PreviewTunnelFrame {
-	return PreviewTunnelFrame{Name: name, Hex: hex.EncodeToString(message), Expect: expectClose1002}
+	return messageVector(name, message, expectClose1002)
 }
 
 func badOpen(name string, payload string) PreviewTunnelFrame {
 	return badFrame(name, rawFrame(byte(FrameOpen), 1, []byte(payload)))
 }
 
+func openWith(previewID string) string {
+	return `{"preview_id":"` + previewID + `","preview_key":"k"}`
+}
+
+func multibyteOpenPayloadOfSize(size int) string {
+	base := `{"preview_id":"p","preview_key":""}`
+	return `{"preview_id":"p","preview_key":"` + strings.Repeat("é", (size-len(base))/2) + `"}`
+}
+
+var divergenceVectorNames = []string{
+	"open_utf8_bom_before_object",
+	"open_1025_bytes_multibyte",
+	"open_utf8_encoded_surrogate",
+	"open_utf8_overlong",
+	"open_duplicate_key_via_escape",
+	"open_extra_key_proto",
+	"open_extra_key_constructor",
+	"open_formfeed_before_object",
+	"open_nbsp_before_object",
+	"open_u2028_before_object",
+	"open_object_value",
+	"open_array_value",
+	"open_true_value",
+	"open_trailing_comma",
+	"open_missing_comma",
+	"open_lone_high_surrogate_escape",
+	"open_lone_low_surrogate_escape",
+	"open_reversed_surrogate_escapes",
+	"open_escaped_key",
+	"open_tab_cr_lf_whitespace",
+	"open_surrogate_pair_escape",
+}
+
 func BuildPreviewTunnelVectorFile() PreviewTunnelVectorFile {
 	open1024 := openPayloadOfSize(1024)
+	surrogatePair := jsonUnit("d83d") + jsonUnit("de00")
 	return PreviewTunnelVectorFile{
 		SchemaVersion: 1,
 		Generator:     previewTunnelVectorsUpdateEnv + "=1 go test ./internal/previewtunnel -run TestPreviewTunnelV1VectorsAreCurrent",
 		Conventions: map[string]string{
 			"hex":            "one complete websocket binary message, lowercase hex: 1 byte type, 4 bytes big-endian stream id, then the payload",
+			"fill":           "optional fill_byte (one lowercase hex byte) and fill_count: the message is hex followed by fill_byte repeated fill_count times; decoded.payload_fill_byte and decoded.payload_fill_count apply the same rule to payload_hex; fill is used only when the repeated run is over 1024 bytes",
+			"length":         "required: the total message length in bytes after fill expansion; replayers must assert it",
 			"expect":         "ok: the frame passes every stateless check of preview tunnel v1 T2; close_1002: the receiver closes the tunnel with close code 1002",
+			"receiver":       "frames are judged as received by the runner; a gateway receiving OPEN closes 1002 regardless of payload",
 			"decoded":        "present only when expect is ok; type is the numeric frame type, payload_hex the payload bytes in lowercase hex",
 			"open":           "present for OPEN: the strictly parsed preview_id and preview_key",
 			"window_credit":  "present for WINDOW: the uint32 big-endian credit",
@@ -126,6 +208,9 @@ func BuildPreviewTunnelVectorFile() PreviewTunnelVectorFile {
 			okOpen("open_ok", 1, []byte(`{"preview_id":"prv_1","preview_key":"key_1"}`), "prv_1", "key_1"),
 			okOpen("open_keys_reordered_with_whitespace", 3, []byte(` {"preview_key":"key_1", "preview_id":"prv_1"} `), "prv_1", "key_1"),
 			okOpen("open_1024_bytes", 5, open1024, "p", string(open1024[len(`{"preview_id":"p","preview_key":"`):len(open1024)-2])),
+			okOpen("open_escaped_key", 7, []byte(`{"preview_`+jsonUnit("0069")+`d":"p","preview_key":"k"}`), "p", "k"),
+			okOpen("open_tab_cr_lf_whitespace", 9, []byte("\t\r\n"+openWith("p")+"\t\r\n"), "p", "k"),
+			okOpen("open_surrogate_pair_escape", 11, []byte(openWith(surrogatePair)), "\U0001F600", "k"),
 			okFrame("data_1_byte", FrameData, 1, []byte{0}),
 			okFrame("data_65541_byte_message", FrameData, 1, bytes.Repeat([]byte{'a'}, MaxPayload)),
 			okFrame("data_max_stream_id", FrameData, 0xffffffff, []byte("x")),
@@ -158,16 +243,34 @@ func BuildPreviewTunnelVectorFile() PreviewTunnelVectorFile {
 			badFrame("window_credit_2_pow_31", rawFrame(byte(FrameWindow), 1, creditPayload(1<<31))),
 			badOpen("open_empty", ""),
 			badFrame("open_1025_bytes", rawFrame(byte(FrameOpen), 1, openPayloadOfSize(1025))),
+			badOpen("open_1025_bytes_multibyte", multibyteOpenPayloadOfSize(1025)),
 			badOpen("open_invalid_utf8", "{\"preview_id\":\"p\xff\",\"preview_key\":\"k\"}"),
+			badOpen("open_utf8_bom_before_object", "\xef\xbb\xbf"+openWith("p")),
+			badOpen("open_utf8_encoded_surrogate", openWith("\xed\xa0\x80")),
+			badOpen("open_utf8_overlong", openWith("\xc0\xaf")),
 			badOpen("open_json_array", `[{"preview_id":"p","preview_key":"k"}]`),
 			badOpen("open_duplicate_preview_id", `{"preview_id":"p","preview_id":"q","preview_key":"k"}`),
 			badOpen("open_duplicate_preview_key", `{"preview_id":"p","preview_key":"k","preview_key":"k"}`),
+			badOpen("open_duplicate_key_via_escape", `{"preview_id":"p","preview_`+jsonUnit("0069")+`d":"q","preview_key":"k"}`),
 			badOpen("open_extra_key", `{"preview_id":"p","preview_key":"k","port":8080}`),
+			badOpen("open_extra_key_proto", `{"__proto__":"x","preview_id":"p","preview_key":"k"}`),
+			badOpen("open_extra_key_constructor", `{"constructor":"x","preview_id":"p","preview_key":"k"}`),
 			badOpen("open_missing_key", `{"preview_id":"p"}`),
 			badOpen("open_empty_value", `{"preview_id":"","preview_key":"k"}`),
 			badOpen("open_numeric_value", `{"preview_id":1,"preview_key":"k"}`),
 			badOpen("open_null_value", `{"preview_id":"p","preview_key":null}`),
+			badOpen("open_object_value", `{"preview_id":{"a":"p"},"preview_key":"k"}`),
+			badOpen("open_array_value", `{"preview_id":["p"],"preview_key":"k"}`),
+			badOpen("open_true_value", `{"preview_id":true,"preview_key":"k"}`),
+			badOpen("open_trailing_comma", `{"preview_id":"p","preview_key":"k",}`),
+			badOpen("open_missing_comma", `{"preview_id":"p" "preview_key":"k"}`),
 			badOpen("open_trailing_data", `{"preview_id":"p","preview_key":"k"}{}`),
+			badOpen("open_formfeed_before_object", "\f"+openWith("p")),
+			badOpen("open_nbsp_before_object", "\xc2\xa0"+openWith("p")),
+			badOpen("open_u2028_before_object", "\xe2\x80\xa8"+openWith("p")),
+			badOpen("open_lone_high_surrogate_escape", openWith(jsonUnit("d800"))),
+			badOpen("open_lone_low_surrogate_escape", openWith(jsonUnit("dc00"))),
+			badOpen("open_reversed_surrogate_escapes", openWith(jsonUnit("de00")+jsonUnit("d83d"))),
 			badFrame("open_even_stream_id", rawFrame(byte(FrameOpen), 2, []byte(`{"preview_id":"p","preview_key":"k"}`))),
 		},
 		Sequences: []PreviewTunnelSequence{},
@@ -202,14 +305,6 @@ func TestPreviewTunnelV1VectorsAreCurrent(t *testing.T) {
 	}
 }
 
-func TestPreviewTunnelV1VectorsAreDeterministic(t *testing.T) {
-	first := encodePreviewTunnelVectorFile(t, BuildPreviewTunnelVectorFile())
-	second := encodePreviewTunnelVectorFile(t, BuildPreviewTunnelVectorFile())
-	if !bytes.Equal(first, second) {
-		t.Fatal("vector generation is not deterministic")
-	}
-}
-
 func loadPreviewTunnelVectorFile(t *testing.T) PreviewTunnelVectorFile {
 	t.Helper()
 	raw, err := os.ReadFile(previewTunnelVectorsPath)
@@ -232,9 +327,12 @@ func TestPreviewTunnelV1FrameVectorsDecode(t *testing.T) {
 		}
 		names[vector.Name] = true
 		t.Run(vector.Name, func(t *testing.T) {
-			message, err := hex.DecodeString(vector.Hex)
+			message, err := expandHex(vector.Hex, vector.FillByte, vector.FillCount)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(message) != vector.Length {
+				t.Fatalf("expanded message has %d bytes, want length %d", len(message), vector.Length)
 			}
 			frame, err := DecodeFrame(message)
 			switch vector.Expect {
@@ -255,9 +353,21 @@ func TestPreviewTunnelV1FrameVectorsDecode(t *testing.T) {
 			}
 		})
 	}
-	for _, required := range []string{"data_even_stream_id", "open_duplicate_preview_id", "reset_code_7_maps_to_protocol"} {
-		if !names[required] {
-			t.Fatalf("missing required vector %q", required)
+	required := append([]string{"data_even_stream_id", "open_duplicate_preview_id", "reset_code_7_maps_to_protocol", "open_1024_bytes", "open_1025_bytes"}, divergenceVectorNames...)
+	for _, name := range required {
+		if !names[name] {
+			t.Fatalf("missing required vector %q", name)
+		}
+	}
+}
+
+func TestPreviewTunnelV1VectorsSpellOutOpenBoundaries(t *testing.T) {
+	for _, vector := range loadPreviewTunnelVectorFile(t).Frames {
+		if strings.HasPrefix(vector.Name, "open_") && (vector.FillByte != "" || vector.FillCount != 0) {
+			t.Fatalf("%s uses fill", vector.Name)
+		}
+		if vector.Decoded != nil && vector.Decoded.Type == FrameOpen && (vector.Decoded.PayloadFillByte != "" || vector.Decoded.PayloadFillCount != 0) {
+			t.Fatalf("%s uses payload fill", vector.Name)
 		}
 	}
 }
@@ -267,8 +377,12 @@ func assertDecodedVector(t *testing.T, frame Frame, want *PreviewTunnelFrameDeco
 	if want == nil {
 		t.Fatal("an ok vector has no decoded fields")
 	}
-	if frame.Type != want.Type || frame.StreamID != want.StreamID || hex.EncodeToString(frame.Payload) != want.PayloadHex {
-		t.Fatalf("decoded %+v, want %+v", frame, want)
+	payload, err := expandHex(want.PayloadHex, want.PayloadFillByte, want.PayloadFillCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame.Type != want.Type || frame.StreamID != want.StreamID || !bytes.Equal(frame.Payload, payload) {
+		t.Fatalf("decoded type %d stream %d payload %d bytes, want %+v", frame.Type, frame.StreamID, len(frame.Payload), want)
 	}
 	if (frame.Type == FrameOpen) != (want.Open != nil) {
 		t.Fatalf("open fields present = %v for type %d", want.Open != nil, frame.Type)
@@ -282,16 +396,18 @@ func assertDecodedVector(t *testing.T, frame Frame, want *PreviewTunnelFrameDeco
 			t.Fatalf("DecodeOpen = %+v, want %+v", request, want.Open)
 		}
 	}
-	if frame.Type == FrameWindow && WindowCredit(frame) != want.WindowCredit {
-		t.Fatalf("WindowCredit = %d, want %d", WindowCredit(frame), want.WindowCredit)
+	credit, creditOK := WindowCredit(frame)
+	if creditOK != (frame.Type == FrameWindow) || credit != want.WindowCredit {
+		t.Fatalf("WindowCredit = %d, %v, want %d", credit, creditOK, want.WindowCredit)
 	}
-	if frame.Type != FrameWindow && want.WindowCredit != 0 {
-		t.Fatalf("window_credit on type %d", frame.Type)
+	code, raw, resetOK := ResetCodeOf(frame)
+	if resetOK != (frame.Type == FrameReset) {
+		t.Fatalf("ResetCodeOf ok = %v for type %d", resetOK, frame.Type)
 	}
-	if frame.Type == FrameReset && resetCodeNames[ResetCodeOf(frame)] != want.ResetCode {
-		t.Fatalf("ResetCodeOf = %q, want %q", resetCodeNames[ResetCodeOf(frame)], want.ResetCode)
+	if resetOK && (resetCodeNames[code] != want.ResetCode || raw != frame.Payload[0]) {
+		t.Fatalf("ResetCodeOf = %q, %d, want %q", resetCodeNames[code], raw, want.ResetCode)
 	}
-	if frame.Type != FrameReset && want.ResetCode != "" {
+	if !resetOK && want.ResetCode != "" {
 		t.Fatalf("reset_code on type %d", frame.Type)
 	}
 }

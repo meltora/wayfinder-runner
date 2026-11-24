@@ -146,25 +146,80 @@ func DecodeOpen(payload []byte) (OpenRequest, error) {
 		if value == "" {
 			return OpenRequest{}, protocolError("OPEN %s is empty", key)
 		}
+		if err := checkSurrogateEscapes(fields[key]); err != nil {
+			return OpenRequest{}, protocolError("OPEN %s: %v", key, err)
+		}
 		values[index] = value
 	}
 	return OpenRequest{PreviewID: values[0], PreviewKey: values[1]}, nil
 }
 
-func WindowCredit(frame Frame) uint32 {
-	if len(frame.Payload) != 4 {
-		return 0
+func checkSurrogateEscapes(token []byte) error {
+	for index := 0; index < len(token); index++ {
+		if token[index] != '\\' {
+			continue
+		}
+		if index+1 >= len(token) || token[index+1] != 'u' {
+			index++
+			continue
+		}
+		unit, ok := unicodeEscape(token, index)
+		if !ok {
+			return errors.New("invalid unicode escape")
+		}
+		switch {
+		case unit >= 0xdc00 && unit <= 0xdfff:
+			return errors.New("lone low surrogate escape")
+		case unit >= 0xd800 && unit <= 0xdbff:
+			low, ok := unicodeEscape(token, index+6)
+			if !ok || low < 0xdc00 || low > 0xdfff {
+				return errors.New("high surrogate escape without a low surrogate escape")
+			}
+			index += 11
+		default:
+			index += 5
+		}
 	}
-	return binary.BigEndian.Uint32(frame.Payload)
+	return nil
 }
 
-func ResetCodeOf(frame Frame) ResetCode {
-	if len(frame.Payload) != 1 {
-		return ResetProtocol
+func unicodeEscape(token []byte, start int) (uint16, bool) {
+	if start+6 > len(token) || token[start] != '\\' || token[start+1] != 'u' {
+		return 0, false
 	}
-	code := ResetCode(frame.Payload[0])
+	var unit uint16
+	for _, digit := range token[start+2 : start+6] {
+		var value byte
+		switch {
+		case digit >= '0' && digit <= '9':
+			value = digit - '0'
+		case digit >= 'a' && digit <= 'f':
+			value = digit - 'a' + 10
+		case digit >= 'A' && digit <= 'F':
+			value = digit - 'A' + 10
+		default:
+			return 0, false
+		}
+		unit = unit<<4 | uint16(value)
+	}
+	return unit, true
+}
+
+func WindowCredit(frame Frame) (uint32, bool) {
+	if frame.Type != FrameWindow || len(frame.Payload) != 4 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint32(frame.Payload), true
+}
+
+func ResetCodeOf(frame Frame) (code ResetCode, raw byte, ok bool) {
+	if frame.Type != FrameReset || len(frame.Payload) != 1 {
+		return 0, 0, false
+	}
+	raw = frame.Payload[0]
+	code = ResetCode(raw)
 	if code < ResetNotFound || code > ResetProtocol {
-		return ResetProtocol
+		code = ResetProtocol
 	}
-	return code
+	return code, raw, true
 }
