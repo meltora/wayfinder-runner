@@ -23,7 +23,7 @@ const (
 	cancelledDockerCalls   = 4
 )
 
-func deployBudget(phases, teardown time.Duration) time.Duration {
+func DeployBudget(phases, teardown time.Duration) time.Duration {
 	return phases + 2*teardown + logGrace + cancelledDockerCalls*dockerWaitDelay
 }
 
@@ -107,7 +107,7 @@ func (cfg Config) normalized() (Config, error) {
 	for _, timeout := range timeouts {
 		sum += timeout
 	}
-	if budget := deployBudget(sum, cfg.TeardownTimeout); budget > cfg.Lease {
+	if budget := DeployBudget(sum, cfg.TeardownTimeout); budget > cfg.Lease {
 		return Config{}, fmt.Errorf("preview host phase timeouts, teardown, log grace and docker wait delays %s exceed the deploy lease %s", budget, cfg.Lease)
 	}
 	cfg.PhaseTimeouts = maps.Clone(timeouts)

@@ -52,7 +52,7 @@ func (d *Daemon) executeHostedPreviewLifecycle(
 		return err
 	}
 	if apply {
-		lifecycleCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
+		lifecycleCtx, cancel := context.WithDeadline(ctx, d.previewHostDeadline(operation.LeaseExpiresAt))
 		outcome = d.previewHostController.ApplyLifecycle(lifecycleCtx, previewhost.LifecycleRequest{
 			Operation: operation, Host: host,
 		}).Outcome

@@ -21,17 +21,18 @@ const testPreviewDeployBlueprintContent = `{"schema_version":1,"services":[{"nam
 const testPreviewDeployBlueprintDigest = "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
 
 type fakePreviewHostController struct {
-	mu               sync.Mutex
-	deployOutcome    v1.PreviewDeployOutcome
-	lifecycleOutcome v1.PreviewLifecycleResultOutcome
-	recoverErr       error
-	deploys          int
-	lifecycles       int
-	recovered        []journal.PreviewHost
-	lastDeploy       previewhost.DeployRequest
-	deadline         time.Time
-	started          chan struct{}
-	release          chan struct{}
+	mu                sync.Mutex
+	deployOutcome     v1.PreviewDeployOutcome
+	lifecycleOutcome  v1.PreviewLifecycleResultOutcome
+	recoverErr        error
+	deploys           int
+	lifecycles        int
+	recovered         []journal.PreviewHost
+	lastDeploy        previewhost.DeployRequest
+	deadline          time.Time
+	lifecycleDeadline time.Time
+	started           chan struct{}
+	release           chan struct{}
 }
 
 func (controller *fakePreviewHostController) Capability() v1.PreviewHostingCapability {
@@ -58,10 +59,11 @@ func (controller *fakePreviewHostController) Deploy(ctx context.Context, request
 	return previewhost.DeployResult{Outcome: outcome}
 }
 
-func (controller *fakePreviewHostController) ApplyLifecycle(_ context.Context, _ previewhost.LifecycleRequest) previewhost.LifecycleResult {
+func (controller *fakePreviewHostController) ApplyLifecycle(ctx context.Context, _ previewhost.LifecycleRequest) previewhost.LifecycleResult {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
 	controller.lifecycles++
+	controller.lifecycleDeadline, _ = ctx.Deadline()
 	return previewhost.LifecycleResult{Outcome: controller.lifecycleOutcome}
 }
 

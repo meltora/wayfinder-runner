@@ -69,6 +69,12 @@ func TestPreviewHostingRejectsUnsafeConfiguration(t *testing.T) {
 			cfg.PreviewHosting.LeaseMaxSeconds = 600
 			cfg.PreviewHosting.PhaseTimeoutSeconds = map[string]int{"install": 400, "build": 400}
 		},
+		"default phases and teardown exceed lease": func(cfg *Config) {
+			cfg.PreviewHosting.LeaseMaxSeconds = 2600
+		},
+		"teardown pushes the deploy budget over the lease": func(cfg *Config) {
+			cfg.PreviewHosting.TeardownTimeoutSeconds = 600
+		},
 		"enabled without docker": func(cfg *Config) {
 			cfg.PreviewHosting.Enabled = true
 			cfg.Isolation = "direct"

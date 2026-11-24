@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,6 +96,44 @@ func TestCreatePinnedWorkspaceRefusesAnonymousFetchOfAMissingCommit(t *testing.T
 	}
 	if _, err := m.runGitWithProtocols(ctx, m.mirrorDir(origin), false, "cat-file", "-e", later+"^{commit}"); err == nil {
 		t.Fatal("refused checkout still fetched the commit anonymously")
+	}
+}
+
+func TestCachedPinnedCheckoutNeverFetchesAPrunedCommit(t *testing.T) {
+	ctx := context.Background()
+	origin := seedOrigin(t)
+	cached := gitOutputForTest(t, origin, "rev-parse", "HEAD")
+	m := NewManager(filepath.Join(t.TempDir(), "repos"))
+	m.AllowLocal = true
+	if _, err := m.Register(ctx, origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(origin, "later.txt"), []byte("later\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, origin, "add", "later.txt")
+	git(t, origin, "commit", "-m", "later")
+	pruned := gitOutputForTest(t, origin, "rev-parse", "HEAD")
+	remote := &pinnedRemote{origin: origin}
+	m.RemoteGit = remote.run
+	dest := filepath.Join(t.TempDir(), "workspace")
+	if err := m.createDetachedWorkspaceFromCache(ctx, origin, pruned, dest); !errors.Is(err, errPinnedCommitNotCached) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Lstat(dest); !os.IsNotExist(statErr) {
+		t.Fatal("workspace created for an uncached commit")
+	}
+	if _, err := m.runGitWithProtocols(ctx, m.mirrorDir(origin), false, "cat-file", "-e", pruned+"^{commit}"); err == nil {
+		t.Fatal("cached checkout fetched the commit")
+	}
+	if err := m.createDetachedWorkspaceFromCache(ctx, origin, cached, dest); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitOutputForTest(t, dest, "rev-parse", "HEAD"); got != cached {
+		t.Fatalf("HEAD = %s, want %s", got, cached)
+	}
+	if len(remote.calls) != 0 {
+		t.Fatalf("cached checkout reached the network: %v", remote.calls)
 	}
 }
 

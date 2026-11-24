@@ -75,16 +75,5 @@ func (d *Daemon) recoverInterruptedPreviewDeploy(
 	if err := d.previewHostController.Recover(ctx, host); err != nil {
 		d.logger.Warn("interrupted preview deploy teardown unproven", "preview_id", host.PreviewID, "err", err)
 	}
-	event := previewDeployResultEvent(operation, commandMessageID, previewDeployObservedAt(operation),
-		v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain})
-	raw, err := validatedPreviewDeployResult(event)
-	if err != nil {
-		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
-	}
-	if err := d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
-		IdempotencyKey: host.IdempotencyKey, State: journal.PreviewHostUncertain, Result: raw,
-	}); err != nil {
-		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
-	}
-	return d.sendPreviewDeployResult(ctx, event)
+	return d.reportUncertainPreviewDeploy(ctx, commandMessageID, operation)
 }

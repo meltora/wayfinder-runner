@@ -151,10 +151,50 @@ func (d *Daemon) resumePreviewDeploy(
 		return d.recoverInterruptedPreviewDeploy(ctx, commandMessageID, operation, host)
 	}
 	if len(host.Result) == 0 {
-		return nil
+		return d.reportUncertainPreviewDeploy(ctx, commandMessageID, operation)
 	}
+	return d.resendStoredPreviewDeployResult(ctx, host.Result)
+}
+
+func (d *Daemon) reportUncertainPreviewDeploy(
+	ctx context.Context,
+	commandMessageID string,
+	operation v1.PreviewDeployOperation,
+) error {
+	event := previewDeployResultEvent(operation, commandMessageID, previewDeployObservedAt(operation),
+		v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain})
+	raw, err := validatedPreviewDeployResult(event)
+	if err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	d.previewHostMu.Lock()
+	current, found, err := d.journal.PreviewHostByIdempotencyKey(ctx, operation.IdempotencyKey)
+	if err == nil && !found {
+		err = journal.ErrPreviewHostNotFound
+	}
+	if err == nil && len(current.Result) > 0 {
+		d.previewHostMu.Unlock()
+		return d.resendStoredPreviewDeployResult(ctx, current.Result)
+	}
+	if err == nil {
+		state := current.State
+		if state == journal.PreviewHostDeploying {
+			state = journal.PreviewHostUncertain
+		}
+		err = d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
+			IdempotencyKey: operation.IdempotencyKey, State: state, Result: raw,
+		})
+	}
+	d.previewHostMu.Unlock()
+	if err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	return d.sendPreviewDeployResult(ctx, event)
+}
+
+func (d *Daemon) resendStoredPreviewDeployResult(ctx context.Context, raw []byte) error {
 	var stored v1.PreviewDeployResultEvent
-	if err := json.Unmarshal(host.Result, &stored); err != nil {
+	if err := json.Unmarshal(raw, &stored); err != nil {
 		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 	}
 	if err := validation.PreviewDeployResultEvent(stored); err != nil {

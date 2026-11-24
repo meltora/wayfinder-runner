@@ -13,6 +13,10 @@ import (
 
 const previewHostExpiryInterval = 30 * time.Second
 
+var previewHostOccupiedStates = []journal.PreviewHostState{
+	journal.PreviewHostDeploying, journal.PreviewHostDeployed, journal.PreviewHostDestroying, journal.PreviewHostUncertain,
+}
+
 type previewHostIDLister interface {
 	HostedPreviewIDs(ctx context.Context) ([]string, error)
 }
@@ -41,6 +45,36 @@ func (d *Daemon) previewHostMemoryBudgetMB() int {
 	return int(total() / 2 / (1 << 20))
 }
 
+func (d *Daemon) previewHostNow() time.Time {
+	if d.now != nil {
+		return d.now()
+	}
+	return time.Now()
+}
+
+func (d *Daemon) previewHostLeaseMax() time.Duration {
+	seconds := d.cfg.PreviewHosting.LeaseMaxSeconds
+	if seconds <= 0 {
+		seconds = config.DefaultPreviewHostingLeaseMaxSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func (d *Daemon) previewHostDeadline(lease time.Time) time.Time {
+	limit := d.previewHostNow().Add(d.previewHostLeaseMax())
+	if lease.After(limit) {
+		return limit
+	}
+	return lease
+}
+
+func previewHostExpired(host journal.PreviewHost, now time.Time) bool {
+	if host.State == journal.PreviewHostUncertain && host.DestroyReason != "" {
+		return true
+	}
+	return !host.ExpiresAt.After(now)
+}
+
 func (d *Daemon) admitPreviewDeploy(
 	ctx context.Context,
 	commandMessageID string,
@@ -52,8 +86,11 @@ func (d *Daemon) admitPreviewDeploy(
 		d.previewHostMu.Unlock()
 		return nil, rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 	}
-	occupied, err := d.journal.PreviewHostsInStates(ctx,
-		journal.PreviewHostDeploying, journal.PreviewHostDeployed, journal.PreviewHostDestroying)
+	if _, sweeping := d.previewHostSweeping[operation.PreviewID]; sweeping {
+		d.previewHostMu.Unlock()
+		return nil, rejectCommand(v1.CommandAckReasonRunnerBusy, nil)
+	}
+	occupied, err := d.journal.PreviewHostsInStates(ctx, previewHostOccupiedStates...)
 	if err != nil {
 		d.previewHostMu.Unlock()
 		return nil, rejectCommand(v1.CommandAckReasonInternalRejection, err)
@@ -86,7 +123,7 @@ func (d *Daemon) admitPreviewDeploy(
 		}
 		return nil, previewHostInsertRejection(err)
 	}
-	deployCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
+	deployCtx, cancel := context.WithDeadline(ctx, d.previewHostDeadline(operation.LeaseExpiresAt))
 	if d.previewHostDeployCancels == nil {
 		d.previewHostDeployCancels = make(map[string]context.CancelFunc)
 	}
@@ -139,7 +176,8 @@ func (d *Daemon) emergencyStopPreviewHosts(ctx context.Context) error {
 	for _, cancel := range d.previewHostDeployCancels {
 		cancel()
 	}
-	err := d.markPreviewHostsDestroyingLocked(ctx, v1.PreviewHostedDestroyEmergencyStop, time.Time{})
+	err := d.markPreviewHostsDestroyingLocked(ctx, v1.PreviewHostedDestroyEmergencyStop,
+		func(journal.PreviewHost) bool { return true })
 	d.previewHostMu.Unlock()
 	d.wakePreviewHostReaper()
 	return err
@@ -148,20 +186,30 @@ func (d *Daemon) emergencyStopPreviewHosts(ctx context.Context) error {
 func (d *Daemon) markPreviewHostsDestroyingLocked(
 	ctx context.Context,
 	reason v1.PreviewHostedDestroyReason,
-	expiredBy time.Time,
+	selected func(journal.PreviewHost) bool,
 ) error {
-	hosts, err := d.journal.PreviewHostsInStates(ctx, journal.PreviewHostDeployed)
+	hosts, err := d.journal.PreviewHostsInStates(ctx,
+		journal.PreviewHostDeploying, journal.PreviewHostDeployed, journal.PreviewHostUncertain)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, host := range hosts {
-		if !expiredBy.IsZero() && host.ExpiresAt.After(expiredBy) {
+		if host.State == journal.PreviewHostDeploying {
+			if _, running := d.previewHostDeployCancels[host.IdempotencyKey]; running {
+				continue
+			}
+		}
+		if !selected(host) {
 			continue
 		}
-		if err := d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
+		update := journal.PreviewHostUpdate{
 			IdempotencyKey: host.IdempotencyKey, State: journal.PreviewHostDestroying, DestroyReason: reason,
-		}); err != nil {
+		}
+		if host.State == journal.PreviewHostUncertain && host.DestroyReason != "" {
+			update.DestroyReason = ""
+		}
+		if err := d.journal.UpdatePreviewHost(ctx, update); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -172,8 +220,19 @@ func (d *Daemon) expirePreviewHosts(ctx context.Context, reason v1.PreviewHosted
 	if d.previewHostController == nil {
 		return nil
 	}
+	now := d.previewHostNow()
+	return d.destroySelectedPreviewHosts(ctx, reason, func(host journal.PreviewHost) bool {
+		return previewHostExpired(host, now)
+	})
+}
+
+func (d *Daemon) destroySelectedPreviewHosts(
+	ctx context.Context,
+	reason v1.PreviewHostedDestroyReason,
+	selected func(journal.PreviewHost) bool,
+) error {
 	d.previewHostMu.Lock()
-	markErr := d.markPreviewHostsDestroyingLocked(ctx, reason, time.Now())
+	markErr := d.markPreviewHostsDestroyingLocked(ctx, reason, selected)
 	d.previewHostMu.Unlock()
 	return errors.Join(markErr, d.reapPreviewHosts(ctx))
 }
@@ -228,7 +287,14 @@ func (d *Daemon) reconcilePreviewHostsAtStartup(ctx context.Context) error {
 		return nil
 	}
 	sweepErr := d.sweepOrphanPreviewResources(ctx)
-	return errors.Join(sweepErr, d.expirePreviewHosts(ctx, v1.PreviewHostedDestroyReconcileExpired))
+	now, leaseMax := d.previewHostNow(), d.previewHostLeaseMax()
+	return errors.Join(sweepErr, d.destroySelectedPreviewHosts(ctx, v1.PreviewHostedDestroyReconcileExpired,
+		func(host journal.PreviewHost) bool {
+			if previewHostExpired(host, now) {
+				return true
+			}
+			return host.State == journal.PreviewHostDeploying && !host.CreatedAt.Add(leaseMax).After(now)
+		}))
 }
 
 func (d *Daemon) sweepOrphanPreviewResources(ctx context.Context) error {
@@ -236,31 +302,47 @@ func (d *Daemon) sweepOrphanPreviewResources(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	d.previewHostMu.Lock()
-	defer d.previewHostMu.Unlock()
 	ids, listErr := lister.HostedPreviewIDs(ctx)
 	if listErr != nil && len(ids) == 0 {
 		return listErr
 	}
-	tracked, err := d.journal.PreviewHostsInStates(ctx,
-		journal.PreviewHostDeploying, journal.PreviewHostDeployed, journal.PreviewHostDestroying)
-	if err != nil {
-		return errors.Join(listErr, err)
-	}
-	live := make(map[string]bool, len(tracked))
-	for _, host := range tracked {
-		live[host.PreviewID] = true
-	}
 	errs := []error{listErr}
 	for _, id := range ids {
-		if live[id] {
+		claimed, err := d.claimOrphanPreviewSweep(ctx, id)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if !claimed {
 			continue
 		}
 		if err := d.previewHostController.Recover(ctx, journal.PreviewHost{PreviewID: id}); err != nil {
 			errs = append(errs, err)
 		}
+		d.previewHostMu.Lock()
+		delete(d.previewHostSweeping, id)
+		d.previewHostMu.Unlock()
 	}
 	return errors.Join(errs...)
+}
+
+func (d *Daemon) claimOrphanPreviewSweep(ctx context.Context, previewID string) (bool, error) {
+	d.previewHostMu.Lock()
+	defer d.previewHostMu.Unlock()
+	tracked, err := d.journal.PreviewHostsInStates(ctx, previewHostOccupiedStates...)
+	if err != nil {
+		return false, err
+	}
+	for _, host := range tracked {
+		if host.PreviewID == previewID {
+			return false, nil
+		}
+	}
+	if d.previewHostSweeping == nil {
+		d.previewHostSweeping = make(map[string]struct{})
+	}
+	d.previewHostSweeping[previewID] = struct{}{}
+	return true, nil
 }
 
 func (d *Daemon) previewHostExpiryLoop(ctx context.Context) {

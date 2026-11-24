@@ -12,6 +12,7 @@ import (
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/previewhost"
+	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/repo"
 )
 
@@ -108,6 +109,12 @@ func (repositories previewHostRepositories) ResolveRepository(
 	}
 	gitCredential, _, err := repositoryCredential(credential, repository.URL, hot.sourcePublicationInstallations, time.Now())
 	if err != nil {
+		token := ""
+		if credential != nil {
+			token = credential.Token
+		}
+		repositories.d.logger.Warn("preview repository credential unusable, continuing without it",
+			"repository_id", repositoryID, "err", redact.Token(redact.KnownSecrets(err.Error()), token))
 		gitCredential = nil
 	}
 	return previewhost.ResolvedRepository{URL: repository.URL, Credential: gitCredential}, nil

@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/previewhost"
 )
 
 const (
@@ -91,7 +93,7 @@ func validatePreviewHosting(hosting PreviewHostingConfig, isolation string) erro
 	if hosting.TeardownTimeoutSeconds < 0 || hosting.TeardownTimeoutSeconds > maxPreviewHostingTeardownSeconds {
 		return fmt.Errorf("preview_hosting.teardown_timeout_seconds must be between 1 and %d", maxPreviewHostingTeardownSeconds)
 	}
-	sum := 0
+	phases := previewhost.DefaultPhaseTimeouts()
 	for phase, seconds := range hosting.PhaseTimeoutSeconds {
 		if !previewHostingPhases[phase] {
 			return fmt.Errorf("preview_hosting.phase_timeout_seconds has unknown phase %q", phase)
@@ -99,10 +101,19 @@ func validatePreviewHosting(hosting PreviewHostingConfig, isolation string) erro
 		if seconds <= 0 || seconds > lease {
 			return fmt.Errorf("preview_hosting.phase_timeout_seconds.%s must be between 1 and the lease", phase)
 		}
-		sum += seconds
+		phases[v1.PreviewDeployPhase(phase)] = time.Duration(seconds) * time.Second
 	}
-	if sum > lease {
-		return fmt.Errorf("preview_hosting phase timeouts total %ds and exceed lease_max_seconds %ds", sum, lease)
+	var sum time.Duration
+	for _, timeout := range phases {
+		sum += timeout
+	}
+	teardown := time.Duration(hosting.TeardownTimeoutSeconds) * time.Second
+	if teardown == 0 {
+		teardown = previewhost.DefaultTeardownTimeout
+	}
+	leaseDuration := time.Duration(lease) * time.Second
+	if budget := previewhost.DeployBudget(sum, teardown); budget > leaseDuration {
+		return fmt.Errorf("preview_hosting phase timeouts, teardown and grace total %s and exceed lease_max_seconds %s", budget, leaseDuration)
 	}
 	return nil
 }

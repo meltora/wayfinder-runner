@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,6 +101,30 @@ func TestPreviewHostRepositoryResolverUsesConfiguredRepositories(t *testing.T) {
 	}
 	if _, err := resolver.ResolveRepository(context.Background(), "missing", credential); err == nil {
 		t.Fatal("unknown repository resolved")
+	}
+}
+
+func TestPreviewHostRepositoryResolverLogsTheRedactedCredentialCause(t *testing.T) {
+	d := previewHostingWiringDaemon(t)
+	var logs bytes.Buffer
+	d.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	d.cfg.Repositories = map[string]config.RepositoryConfig{"web": {URL: "https://github.com/org/web.git"}}
+	d.cfg.SourcePublicationInstallations = map[string]config.SourcePublicationInstallationConfig{"main": {Provider: "github"}}
+	token := "ghs-unusable-preview-token-value"
+	credential := &v1.ProviderCredential{
+		Kind: v1.ProviderCredentialGitHubInstallationToken, Token: token,
+		ExpiresAt: time.Now().Add(30 * time.Second), RepositoryIDs: []string{"42"},
+	}
+	resolved, err := previewHostRepositories{d: d}.ResolveRepository(context.Background(), "web", credential)
+	if err != nil || resolved.Credential != nil {
+		t.Fatalf("resolved=%+v err=%v", resolved, err)
+	}
+	output := logs.String()
+	if !strings.Contains(output, repo.ErrRepositoryCredentialUnavailable.Error()) || !strings.Contains(output, "web") {
+		t.Fatalf("credential cause not logged: %s", output)
+	}
+	if strings.Contains(output, token) {
+		t.Fatalf("token leaked into the log: %s", output)
 	}
 }
 

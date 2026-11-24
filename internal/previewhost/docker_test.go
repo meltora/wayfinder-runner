@@ -915,7 +915,7 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 		PhaseTimeouts:   uniformPhaseTimeouts(time.Minute)}).normalized(); err == nil {
 		t.Fatal("budget that ignores docker wait delays accepted")
 	}
-	if budget := deployBudget(sum, cfg.TeardownTimeout); budget > cfg.Lease {
+	if budget := DeployBudget(sum, cfg.TeardownTimeout); budget > cfg.Lease {
 		t.Fatalf("default deploy budget %s exceeds lease %s", budget, cfg.Lease)
 	}
 	for name, bad := range map[string]Config{
