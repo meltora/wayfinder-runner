@@ -57,7 +57,7 @@ Tunnel protocol errors close the whole tunnel with close code 1002:
 - an OPEN sent by the runner, an OPEN with a non-increasing id, or an OPEN with an invalid payload: bytes that are not valid UTF-8 (a BOM counts as a byte before the object, so it is rejected), not exactly one JSON object surrounded only by JSON whitespace (space, tab, CR, LF), a duplicate key after unescaping, a missing or extra key, an empty or non-string value, or a string escape that leaves a lone UTF-16 surrogate. The 1024-byte limit counts raw payload bytes.
 - a DATA payload of 0 bytes, or an END, RESET or WINDOW with the wrong payload length;
 - a WINDOW credit of 0, or a WINDOW grant that would push the receiving side's send window for that stream above 2^31−1;
-- a second END on the same stream.
+- a second END on the same stream while the stream is still open.
 
 Stream-level errors reset only that stream, with RESET `protocol`:
 - DATA after the sender's own END;
@@ -80,7 +80,8 @@ Races:
 
 ## T4 Runner limits
 
-- At most 64 open streams per preview and 256 per tunnel. An OPEN above either limit gets RESET `limit`.
+- At most 64 streams per preview and 256 per tunnel. An OPEN above either limit gets RESET `limit`. A stream counts toward these limits from its OPEN until the runner has released its upstream, which can be shortly after the stream is closed in protocol terms (both ENDs, or RESET) while queued bytes drain or the upstream tears down. A gateway must treat RESET `limit` as a normal, possibly transient answer, not as a protocol violation.
+- The runner bounds its outbound DATA backlog at about 4 MiB per tunnel, plus at most one 64 KiB frame per stream in flight; while above it, the runner stops reading from upstreams.
 - A stream with no DATA in either direction for 5 minutes gets RESET `idle`. An open websocket (HMR) stream stays alive as long as DATA flows in either direction.
 - The edge enforces the 25 MB request body cap and the rate limits.
 - When a preview is destroyed or expires, the runner sends RESET `not_found` on all of its streams.
