@@ -233,7 +233,8 @@ func validLifecycleVector(name, description, id string, operation PreviewLifecyc
 		ResultEventID: vectorLifecycleResultEventID(id),
 	}
 	if operation.Action == PreviewLifecycleDestroy {
-		want.HostedDestroyedEventID = PreviewHostedDestroyedEventID(operation.PreviewID)
+		want.HostedDestroyedEventID = PreviewHostedDestroyedEventID(operation.PreviewID,
+			sealVectorDeploy(vectorDeployOperation()).IdempotencyKey, PreviewHostedDestroyOutcomeDestroyed)
 	}
 	return PreviewDeployValidVector{
 		Name: name, Description: description, Given: "deployed:deploy_two_repositories",
@@ -315,11 +316,12 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 		SchemaVersion: 1,
 		Generator:     previewDeployVectorsUpdateEnv + "=1 go test ./api/runner/v1 -run TestPreviewDeployV1VectorsAreCurrent",
 		Conventions: map[string]string{
-			"envelope":         "a full runner v1 envelope; compare it semantically, not byte-for-byte, because this file is indented and the wire omits zero milliseconds",
-			"byte_limits":      "blueprint.content size is measured on Go encoding/json Marshal output of the decoded payload: compact, object keys sorted, and <, >, & escaped as \\u003c, \\u003e, \\u0026",
-			"given":            "none: no prior state; trusted_commit_set: the vector's own commit_set is recorded as trusted for its execution manifest; trusted_commit_set:<valid name>: that vector's commit_set is trusted; deployed:<valid name>: that deploy vector was accepted and its preview is live; the command message id used for the setup does not affect the outcome",
-			"expected_outcome": "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",
-			"expected":         "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
+			"envelope":                  "a full runner v1 envelope; compare it semantically, not byte-for-byte, because this file is indented and the wire omits zero milliseconds",
+			"byte_limits":               "blueprint.content size is measured on Go encoding/json Marshal output of the decoded payload: compact, object keys sorted, and <, >, & escaped as \\u003c, \\u003e, \\u0026",
+			"given":                     "none: no prior state; trusted_commit_set: the vector's own commit_set is recorded as trusted for its execution manifest; trusted_commit_set:<valid name>: that vector's commit_set is trusted; deployed:<valid name>: that deploy vector was accepted and its preview is live; the command message id used for the setup does not affect the outcome",
+			"expected_outcome":          "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",
+			"expected":                  "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
+			"hosted_destroyed_event_id": "preview-hosted-destroyed- followed by hex sha256 of preview_id, NUL, the idempotency_key of the deploy named in given, NUL, and the outcome; vectors use outcome destroyed",
 		},
 		Valid: []PreviewDeployValidVector{
 			validDeployVector("deploy_two_repositories", "two repositories, millisecond expires_at, empty edge_host", vectorDeployCommandID("1"), deploy),
@@ -463,6 +465,28 @@ func TestPreviewDeployV1VectorDigestsArePinned(t *testing.T) {
 	}
 }
 
+func vectorGivenDeployKey(t *testing.T, file PreviewDeployVectorFile, given string) string {
+	t.Helper()
+	name, ok := strings.CutPrefix(given, "deployed:")
+	if !ok {
+		t.Fatalf("hosted destroy vector given=%q names no deploy", given)
+	}
+	for _, vector := range file.Valid {
+		if vector.Name != name {
+			continue
+		}
+		var envelope struct {
+			Payload CommandPayload `json:"payload"`
+		}
+		if err := json.Unmarshal(vector.Envelope, &envelope); err != nil || envelope.Payload.PreviewDeploy == nil {
+			t.Fatalf("given deploy %s: %v", name, err)
+		}
+		return envelope.Payload.PreviewDeploy.IdempotencyKey
+	}
+	t.Fatalf("given deploy %s is not a valid vector", name)
+	return ""
+}
+
 func TestPreviewDeployV1VectorDigestsRecomputeFromTheWire(t *testing.T) {
 	var file PreviewDeployVectorFile
 	raw, err := os.ReadFile(previewDeployVectorsPath)
@@ -511,7 +535,8 @@ func TestPreviewDeployV1VectorDigestsRecomputeFromTheWire(t *testing.T) {
 					ResultEventID:         vectorLifecycleResultEventID(envelope.ID),
 				}
 				if operation.Action == PreviewLifecycleDestroy {
-					got.HostedDestroyedEventID = PreviewHostedDestroyedEventID(operation.PreviewID)
+					got.HostedDestroyedEventID = PreviewHostedDestroyedEventID(operation.PreviewID,
+						vectorGivenDeployKey(t, file, vector.Given), PreviewHostedDestroyOutcomeDestroyed)
 				}
 			default:
 				t.Fatalf("command = %q", envelope.Payload.Command)

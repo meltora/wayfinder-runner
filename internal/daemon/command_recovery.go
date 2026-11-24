@@ -72,8 +72,28 @@ func (d *Daemon) recoverInterruptedPreviewDeploy(
 	operation v1.PreviewDeployOperation,
 	host journal.PreviewHost,
 ) error {
-	if err := d.previewHostController.Recover(ctx, host); err != nil {
-		d.logger.Warn("interrupted preview deploy teardown unproven", "preview_id", host.PreviewID, "err", err)
+	d.previewHostMu.Lock()
+	current, found, err := d.journal.PreviewHostByIdempotencyKey(ctx, host.IdempotencyKey)
+	if err == nil && !found {
+		err = journal.ErrPreviewHostNotFound
 	}
-	return d.reportUncertainPreviewDeploy(ctx, commandMessageID, operation)
+	if err != nil {
+		d.previewHostMu.Unlock()
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if current.State != journal.PreviewHostDeploying {
+		d.previewHostMu.Unlock()
+		return d.reportUncertainPreviewDeploy(ctx, commandMessageID, operation, false, false)
+	}
+	if d.previewHostInFlightLocked(current.IdempotencyKey) {
+		d.previewHostMu.Unlock()
+		return rejectCommand(v1.CommandAckReasonRunnerBusy, nil)
+	}
+	d.claimPreviewHostRecoveryLocked(current.IdempotencyKey)
+	d.previewHostMu.Unlock()
+	recoverErr := d.previewHostController.Recover(ctx, current)
+	if recoverErr != nil {
+		d.logger.Warn("interrupted preview deploy teardown unproven", "preview_id", current.PreviewID, "err", recoverErr)
+	}
+	return d.reportUncertainPreviewDeploy(ctx, commandMessageID, operation, recoverErr == nil, true)
 }

@@ -270,7 +270,8 @@ func TestPreviewHostExpiryDestroysExpiredHostsWhilePausedAndEmitsOnce(t *testing
 	if host := previewHostState(t, d, live.IdempotencyKey); host.State != journal.PreviewHostDeployed {
 		t.Fatalf("live host=%+v", host)
 	}
-	if exists, _ := d.journal.HasRecord(context.Background(), v1.PreviewHostedDestroyedEventID("preview-a")); !exists {
+	if exists, _ := d.journal.HasRecord(context.Background(), v1.PreviewHostedDestroyedEventID("preview-a",
+		expired.IdempotencyKey, v1.PreviewHostedDestroyOutcomeDestroyed)); !exists {
 		t.Fatal("destroyed event is not journalled under its stable ID")
 	}
 }
@@ -278,13 +279,15 @@ func TestPreviewHostExpiryDestroysExpiredHostsWhilePausedAndEmitsOnce(t *testing
 func TestPreviewHostDestroyResumesAfterRestartWithoutASecondEvent(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	d := jr.d
-	controller := &fakePreviewHostController{}
+	controller := &fakePreviewHostController{recoverErr: errors.New("docker unavailable")}
 	d.previewHostController = controller
 	host := insertPreviewHostRow(t, d, "preview-a", "a", journal.PreviewHostDestroying, time.Now().Add(-time.Minute), v1.PreviewHostedDestroyEmergencyStop)
 	earlier := v1.NewPreviewHostedDestroyedEvent(v1.PreviewHostedDestroyedSubject{
 		PreviewID: host.PreviewID, OrganizationID: host.OrganizationID, ProjectID: host.ProjectID, PreviewKey: host.PreviewKey,
+		IdempotencyKey: host.IdempotencyKey,
 	}, time.Now(), v1.PreviewHostedDestroyEmergencyStop, v1.PreviewHostedDestroyOutcomeDestroyed)
-	if _, err := d.sendEventWithStableID(context.Background(), v1.PreviewHostedDestroyedEventID(host.PreviewID), earlier); err != nil {
+	if _, err := d.sendEventWithStableID(context.Background(), v1.PreviewHostedDestroyedEventID(host.PreviewID,
+		host.IdempotencyKey, v1.PreviewHostedDestroyOutcomeDestroyed), earlier); err != nil {
 		t.Fatal(err)
 	}
 	events := capturePreviewHostingEvents(d)
@@ -494,8 +497,8 @@ func TestStartupReconcileExpiresStaleHostsAndSweepsOrphans(t *testing.T) {
 	insertPreviewHostRow(t, d, "preview-live", "b", journal.PreviewHostDeployed, future, "")
 	deploying := insertPreviewHostRow(t, d, "preview-deploying", "c", journal.PreviewHostDeploying, future, "")
 	insertPreviewHostRow(t, d, "preview-deploying-expired", "f", journal.PreviewHostDeploying, past, "")
-	uncertain := insertPreviewHostRow(t, d, "preview-uncertain", "g", journal.PreviewHostUncertain, future, "")
-	insertPreviewHostRow(t, d, "preview-uncertain-expired", "h", journal.PreviewHostUncertain, past, "")
+	uncertain := insertPreviewHostRow(t, d, "preview-uncertain", "1", journal.PreviewHostUncertain, future, "")
+	insertPreviewHostRow(t, d, "preview-uncertain-expired", "2", journal.PreviewHostUncertain, past, "")
 	insertPreviewHostRow(t, d, "preview-failed", "e", journal.PreviewHostFailed, future, "")
 	if err := d.reconcilePreviewHostsAtStartup(context.Background()); err != nil {
 		t.Fatal(err)
@@ -509,28 +512,57 @@ func TestStartupReconcileExpiresStaleHostsAndSweepsOrphans(t *testing.T) {
 		ids = append(ids, event.PreviewID)
 	}
 	slices.Sort(ids)
-	if !slices.Equal(ids, []string{"preview-deploying-expired", "preview-expired", "preview-uncertain-expired"}) {
+	if !slices.Equal(ids, []string{
+		"preview-deploying", "preview-deploying-expired", "preview-expired", "preview-uncertain-expired",
+	}) {
 		t.Fatalf("destroyed=%v", ids)
 	}
 	if ids := recoveredPreviewIDs(fake); !slices.Equal(ids, []string{
-		"preview-deploying-expired", "preview-expired", "preview-failed", "preview-orphan", "preview-uncertain-expired",
+		"preview-deploying", "preview-deploying-expired", "preview-expired", "preview-failed", "preview-orphan",
+		"preview-uncertain", "preview-uncertain-expired",
 	}) {
 		t.Fatalf("recovered=%v", ids)
 	}
-	for _, id := range []string{"preview-orphan", "preview-failed"} {
-		if exists, _ := d.journal.HasRecord(context.Background(), v1.PreviewHostedDestroyedEventID(id)); exists {
-			t.Fatalf("orphan sweep emitted an event for %s", id)
-		}
+	if host := previewHostState(t, d, deploying.IdempotencyKey); host.State != journal.PreviewHostDestroyed {
+		t.Fatalf("deploying row survived the restart: %+v", host)
 	}
-	if host := previewHostState(t, d, deploying.IdempotencyKey); host.State != journal.PreviewHostDeploying {
-		t.Fatalf("deploying within its lease was touched: %+v", host)
-	}
-	if host := previewHostState(t, d, uncertain.IdempotencyKey); host.State != journal.PreviewHostUncertain {
-		t.Fatalf("unexpired uncertain host was touched: %+v", host)
+	if host := previewHostState(t, d, uncertain.IdempotencyKey); host.State != journal.PreviewHostDestroyed {
+		t.Fatalf("uncertain deploy was not proven absent: %+v", host)
 	}
 }
 
-func TestStartupReconcileTearsDownDeployingPastItsLease(t *testing.T) {
+func TestStartupReconcileTearsDownEveryDeployingRowAndReplayReportsUncertain(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	controller := &fakePreviewHostController{deployOutcome: deployedPreviewOutcome()}
+	d.previewHostController = controller
+	events := capturePreviewHostingEvents(d)
+	command := validPreviewDeployCommand()
+	insertHostedPreviewHost(t, d, *command.PreviewDeploy, func(host *journal.PreviewHost) {
+		host.State = journal.PreviewHostDeploying
+		host.Result = nil
+		host.ExpiresAt = time.Now().Add(24 * time.Hour)
+	})
+	if err := d.reconcilePreviewHostsAtStartup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command); err != nil {
+		t.Fatal(err)
+	}
+	destroyed, deploys, _ := events.snapshot()
+	if len(destroyed) != 1 || destroyed[0].Reason != v1.PreviewHostedDestroyReconcileExpired ||
+		destroyed[0].Outcome != v1.PreviewHostedDestroyOutcomeDestroyed {
+		t.Fatalf("destroyed=%+v", destroyed)
+	}
+	if count, _, _ := controller.counts(); count != 0 || len(deploys) != 1 || deploys[0].Outcome.Kind != v1.PreviewDeployUncertain {
+		t.Fatalf("deploys=%d events=%+v", count, deploys)
+	}
+	if host := previewHostState(t, d, command.PreviewDeploy.IdempotencyKey); host.State != journal.PreviewHostDestroyed {
+		t.Fatalf("host=%+v", host)
+	}
+}
+
+func TestPreviewHostExpiryTearsDownIdleDeployingPastLeaseMax(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	d := jr.d
 	d.cfg.PreviewHosting.LeaseMaxSeconds = 600
@@ -538,16 +570,250 @@ func TestStartupReconcileTearsDownDeployingPastItsLease(t *testing.T) {
 	d.previewHostController = fake
 	events := capturePreviewHostingEvents(d)
 	host := insertPreviewHostRow(t, d, "preview-a", "a", journal.PreviewHostDeploying, time.Now().Add(24*time.Hour), "")
+	if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
+		t.Fatal(err)
+	}
+	if stored := previewHostState(t, d, host.IdempotencyKey); stored.State != journal.PreviewHostDeploying {
+		t.Fatalf("deploying within lease max was torn down: %+v", stored)
+	}
 	d.now = func() time.Time { return time.Now().Add(11 * time.Minute) }
-	if err := d.reconcilePreviewHostsAtStartup(context.Background()); err != nil {
+	if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
 		t.Fatal(err)
 	}
 	destroyed, _, _ := events.snapshot()
-	if len(destroyed) != 1 || destroyed[0].PreviewID != "preview-a" || destroyed[0].Reason != v1.PreviewHostedDestroyReconcileExpired {
+	if len(destroyed) != 1 || destroyed[0].PreviewID != "preview-a" || destroyed[0].Reason != v1.PreviewHostedDestroyExpired {
 		t.Fatalf("destroyed=%+v", destroyed)
 	}
 	if stored := previewHostState(t, d, host.IdempotencyKey); stored.State != journal.PreviewHostDestroyed {
 		t.Fatalf("host=%+v", stored)
+	}
+}
+
+func TestPreviewHostExpiryProvesUncertainDeploysWithoutAnEvent(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	fake := &fakePreviewHostController{recoverErr: errors.New("docker unavailable")}
+	d.previewHostController = fake
+	events := capturePreviewHostingEvents(d)
+	host := insertPreviewHostRow(t, d, "preview-a", "a", journal.PreviewHostUncertain, time.Now().Add(time.Hour), "")
+	if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, recovered := fake.counts(); recovered != 1 {
+		t.Fatalf("teardown attempts=%d", recovered)
+	}
+	if stored := previewHostState(t, d, host.IdempotencyKey); stored.State != journal.PreviewHostUncertain {
+		t.Fatalf("unproven host=%+v", stored)
+	}
+	fake.mu.Lock()
+	fake.recoverErr = nil
+	fake.mu.Unlock()
+	for range 2 {
+		if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stored := previewHostState(t, d, host.IdempotencyKey); stored.State != journal.PreviewHostDestroyed || stored.DestroyReason != "" {
+		t.Fatalf("proven host=%+v", stored)
+	}
+	if _, _, recovered := fake.counts(); recovered != 2 {
+		t.Fatalf("a proven deploy was retried: attempts=%d", recovered)
+	}
+	if destroyed, _, _ := events.snapshot(); len(destroyed) != 0 {
+		t.Fatalf("proving an uncertain deploy emitted %+v", destroyed)
+	}
+}
+
+func TestPreviewHostExpiryRetriesAnEmergencyStopTeardownBeforeExpiry(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	fake := &fakePreviewHostController{}
+	d.previewHostController = fake
+	events := capturePreviewHostingEvents(d)
+	host := insertPreviewHostRow(t, d, "preview-a", "a", journal.PreviewHostUncertain, time.Now().Add(time.Hour),
+		v1.PreviewHostedDestroyEmergencyStop)
+	if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
+		t.Fatal(err)
+	}
+	if stored := previewHostState(t, d, host.IdempotencyKey); stored.State != journal.PreviewHostDestroyed ||
+		stored.DestroyReason != v1.PreviewHostedDestroyEmergencyStop {
+		t.Fatalf("host=%+v", stored)
+	}
+	destroyed, _, _ := events.snapshot()
+	if len(destroyed) != 1 || destroyed[0].Reason != v1.PreviewHostedDestroyEmergencyStop ||
+		destroyed[0].Outcome != v1.PreviewHostedDestroyOutcomeDestroyed {
+		t.Fatalf("destroyed=%+v", destroyed)
+	}
+}
+
+func TestPreviewHostProvenRetryAfterUncertainEmitsExactlyOneDestroyedEvent(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	fake := &fakePreviewHostController{recoverErr: errors.New("docker unavailable")}
+	d.previewHostController = fake
+	events := capturePreviewHostingEvents(d)
+	host := insertPreviewHostRow(t, d, "preview-a", "a", journal.PreviewHostDeployed, time.Now().Add(-time.Minute), "")
+	for range 2 {
+		if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake.mu.Lock()
+	fake.recoverErr = nil
+	fake.mu.Unlock()
+	for range 3 {
+		if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
+			t.Fatal(err)
+		}
+	}
+	destroyed, _, _ := events.snapshot()
+	if len(destroyed) != 2 || destroyed[0].Outcome != v1.PreviewHostedDestroyOutcomeUncertain ||
+		destroyed[1].Outcome != v1.PreviewHostedDestroyOutcomeDestroyed {
+		t.Fatalf("destroyed=%+v", destroyed)
+	}
+	for _, event := range destroyed {
+		if event.IdempotencyKey != host.IdempotencyKey {
+			t.Fatalf("event key=%s want %s", event.IdempotencyKey, host.IdempotencyKey)
+		}
+	}
+	if _, _, recovered := fake.counts(); recovered != 3 {
+		t.Fatalf("teardown attempts=%d", recovered)
+	}
+}
+
+func TestPreviewHostTeardownSkipsAGenuinelyInFlightDeploy(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	allowPreviewHostingPause(t, d)
+	d.cfg.PreviewHosting.MemoryBudgetMB = 1 << 20
+	command := validPreviewDeployCommand()
+	trustPreviewDeployCommits(t, d, *command.PreviewDeploy)
+	controller := &fakePreviewHostController{
+		deployOutcome: deployedPreviewOutcome(), started: make(chan struct{}, 1), release: make(chan struct{}),
+	}
+	d.previewHostController = controller
+	events := capturePreviewHostingEvents(d)
+	done := make(chan error, 1)
+	go func() {
+		done <- d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command)
+	}()
+	select {
+	case <-controller.started:
+	case err := <-done:
+		t.Fatalf("deploy finished before reaching the controller: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("deploy never reached the controller")
+	}
+	past := time.Now().Add(-time.Minute)
+	if err := d.journal.UpdatePreviewHost(context.Background(), journal.PreviewHostUpdate{
+		IdempotencyKey: command.PreviewDeploy.IdempotencyKey, State: journal.PreviewHostDeploying, ExpiresAt: &past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.emergencyStopPreviewHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if stored := previewHostState(t, d, command.PreviewDeploy.IdempotencyKey); stored.State != journal.PreviewHostDeploying {
+		t.Fatalf("in-flight deploy was marked for teardown: %+v", stored)
+	}
+	if _, _, recovered := controller.counts(); recovered != 0 {
+		t.Fatalf("in-flight deploy was torn down concurrently: attempts=%d", recovered)
+	}
+	close(controller.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := d.reapPreviewHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if stored := previewHostState(t, d, command.PreviewDeploy.IdempotencyKey); stored.State != journal.PreviewHostDestroyed ||
+		stored.DestroyReason != v1.PreviewHostedDestroyEmergencyStop {
+		t.Fatalf("host=%+v", stored)
+	}
+	if destroyed, _, _ := events.snapshot(); len(destroyed) != 1 {
+		t.Fatalf("destroyed=%+v", destroyed)
+	}
+}
+
+func TestInterruptedPreviewDeployRecoveryIsInFlightForTeardown(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	controller := blockingSweepController{
+		fakePreviewHostController: &fakePreviewHostController{deployOutcome: deployedPreviewOutcome()},
+		entered:                   make(chan struct{}),
+		released:                  make(chan struct{}),
+	}
+	d.previewHostController = controller
+	events := capturePreviewHostingEvents(d)
+	command := validPreviewDeployCommand()
+	insertHostedPreviewHost(t, d, *command.PreviewDeploy, func(host *journal.PreviewHost) {
+		host.State = journal.PreviewHostDeploying
+		host.Result = nil
+		host.ExpiresAt = time.Now().Add(-time.Minute)
+	})
+	done := make(chan error, 1)
+	go func() {
+		done <- d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command)
+	}()
+	select {
+	case <-controller.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery never reached the teardown")
+	}
+	if err := d.emergencyStopPreviewHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
+		t.Fatal(err)
+	}
+	if stored := previewHostState(t, d, command.PreviewDeploy.IdempotencyKey); stored.State != journal.PreviewHostDeploying {
+		t.Fatalf("recovering deploy was marked for teardown: %+v", stored)
+	}
+	close(controller.released)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, recovered := controller.counts(); recovered != 1 {
+		t.Fatalf("teardown attempts=%d", recovered)
+	}
+	if stored := previewHostState(t, d, command.PreviewDeploy.IdempotencyKey); stored.State != journal.PreviewHostDestroyed {
+		t.Fatalf("host=%+v", stored)
+	}
+	if destroyed, deploys, _ := events.snapshot(); len(destroyed) != 0 || len(deploys) != 1 ||
+		deploys[0].Outcome.Kind != v1.PreviewDeployUncertain {
+		t.Fatalf("destroyed=%+v deploys=%+v", destroyed, deploys)
+	}
+}
+
+func TestInterruptedPreviewDeployRecoveryNeverOverwritesAStoredResult(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	controller := &fakePreviewHostController{}
+	d.previewHostController = controller
+	events := capturePreviewHostingEvents(d)
+	command := validPreviewDeployCommand()
+	stored := previewDeployResultEvent(*command.PreviewDeploy, previewDeployCommandID("1"),
+		previewDeployObservedAt(*command.PreviewDeploy), deployedPreviewOutcome())
+	raw, err := validatedPreviewDeployResult(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertHostedPreviewHost(t, d, *command.PreviewDeploy, func(host *journal.PreviewHost) {
+		host.State = journal.PreviewHostDeploying
+		host.Result = raw
+	})
+	if err := d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("2")}, command); err != nil {
+		t.Fatal(err)
+	}
+	host := previewHostState(t, d, command.PreviewDeploy.IdempotencyKey)
+	if string(host.Result) != string(raw) {
+		t.Fatalf("stored result overwritten: %s", host.Result)
+	}
+	if _, deploys, _ := events.snapshot(); len(deploys) != 1 || deploys[0].Outcome.Kind != v1.PreviewDeployDeployed {
+		t.Fatalf("deploys=%+v", deploys)
 	}
 }
 
@@ -610,7 +876,8 @@ func TestPreviewHostExpiryRetriesUncertainTeardownUntilProven(t *testing.T) {
 		}
 	}
 	destroyed, _, _ := events.snapshot()
-	if len(destroyed) != 2 || destroyed[0].Outcome != v1.PreviewHostedDestroyOutcomeUncertain {
+	if len(destroyed) != 4 || destroyed[0].Outcome != v1.PreviewHostedDestroyOutcomeUncertain ||
+		destroyed[3].Outcome != v1.PreviewHostedDestroyOutcomeDestroyed {
 		t.Fatalf("destroyed=%+v", destroyed)
 	}
 	if err := d.expirePreviewHosts(context.Background(), v1.PreviewHostedDestroyExpired); err != nil {
@@ -671,6 +938,7 @@ func TestPreviewDeployAndLifecycleDeadlinesAreClampedToLeaseMax(t *testing.T) {
 	d := jr.d
 	d.cfg.PreviewHosting.LeaseMaxSeconds = 120
 	d.cfg.PreviewHosting.MemoryBudgetMB = 1 << 20
+	d.now = func() time.Time { return time.Now().Add(24 * time.Hour) }
 	command := validPreviewDeployCommand()
 	command.PreviewDeploy.LeaseExpiresAt = time.Now().UTC().Truncate(time.Millisecond).Add(time.Hour)
 	sealTestPreviewDeploy(command.PreviewDeploy)

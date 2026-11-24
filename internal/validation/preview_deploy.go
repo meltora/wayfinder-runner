@@ -300,6 +300,44 @@ func PreviewHostedLifecycleOperation(value v1.PreviewLifecycleOperation) error {
 	return nil
 }
 
+func PreviewHostedDestroyedEvent(value v1.PreviewHostedDestroyedEvent) error {
+	if value.Kind != v1.EventPreviewHostedDestroyed {
+		return fmt.Errorf("preview hosted destroyed kind is invalid")
+	}
+	if value.SchemaVersion != v1.PreviewHostedDestroyedSchemaVersion {
+		return fmt.Errorf("preview hosted destroyed schema_version is unsupported")
+	}
+	for field, id := range map[string]string{
+		"preview_id":      value.PreviewID,
+		"organization_id": value.OrganizationID,
+		"project_id":      value.ProjectID,
+	} {
+		if err := ID(field, id); err != nil {
+			return err
+		}
+	}
+	if err := PreviewKey(value.PreviewKey); err != nil {
+		return err
+	}
+	if !previewDeployIdempotencyPattern.MatchString(value.IdempotencyKey) {
+		return fmt.Errorf("preview hosted destroyed idempotency_key is invalid")
+	}
+	if value.DestroyedAt.IsZero() {
+		return fmt.Errorf("preview hosted destroyed destroyed_at is required")
+	}
+	switch value.Reason {
+	case v1.PreviewHostedDestroyExpired, v1.PreviewHostedDestroyEmergencyStop, v1.PreviewHostedDestroyReconcileExpired:
+	default:
+		return fmt.Errorf("preview hosted destroyed reason is invalid")
+	}
+	switch value.Outcome {
+	case v1.PreviewHostedDestroyOutcomeDestroyed, v1.PreviewHostedDestroyOutcomeUncertain:
+	default:
+		return fmt.Errorf("preview hosted destroyed outcome is invalid")
+	}
+	return nil
+}
+
 func PreviewHostedLifecycleResultEvent(value v1.PreviewLifecycleResultEvent) error {
 	if value.Kind != v1.EventPreviewLifecycleResult {
 		return fmt.Errorf("preview lifecycle result kind is invalid")

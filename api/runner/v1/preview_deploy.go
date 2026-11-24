@@ -271,6 +271,7 @@ type PreviewHostedDestroyedSubject struct {
 	OrganizationID string
 	ProjectID      string
 	PreviewKey     string
+	IdempotencyKey string
 }
 
 type PreviewHostedDestroyedEvent struct {
@@ -280,6 +281,7 @@ type PreviewHostedDestroyedEvent struct {
 	OrganizationID string                      `json:"organization_id"`
 	ProjectID      string                      `json:"project_id"`
 	PreviewKey     string                      `json:"preview_key"`
+	IdempotencyKey string                      `json:"idempotency_key"`
 	DestroyedAt    time.Time                   `json:"destroyed_at"`
 	Reason         PreviewHostedDestroyReason  `json:"reason"`
 	Outcome        PreviewHostedDestroyOutcome `json:"outcome"`
@@ -294,13 +296,13 @@ func NewPreviewHostedDestroyedEvent(
 	return PreviewHostedDestroyedEvent{
 		Kind: EventPreviewHostedDestroyed, SchemaVersion: PreviewHostedDestroyedSchemaVersion,
 		PreviewID: subject.PreviewID, OrganizationID: subject.OrganizationID, ProjectID: subject.ProjectID,
-		PreviewKey: subject.PreviewKey, DestroyedAt: destroyedAt.UTC().Truncate(time.Millisecond),
-		Reason: reason, Outcome: outcome,
+		PreviewKey: subject.PreviewKey, IdempotencyKey: subject.IdempotencyKey,
+		DestroyedAt: destroyedAt.UTC().Truncate(time.Millisecond), Reason: reason, Outcome: outcome,
 	}
 }
 
-func PreviewHostedDestroyedEventID(previewID string) string {
-	digest := sha256.Sum256([]byte(previewID))
+func PreviewHostedDestroyedEventID(previewID, idempotencyKey string, outcome PreviewHostedDestroyOutcome) string {
+	digest := sha256.Sum256([]byte(previewID + "\x00" + idempotencyKey + "\x00" + string(outcome)))
 	return "preview-hosted-destroyed-" + hex.EncodeToString(digest[:])
 }
 

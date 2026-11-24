@@ -151,7 +151,7 @@ func (d *Daemon) resumePreviewDeploy(
 		return d.recoverInterruptedPreviewDeploy(ctx, commandMessageID, operation, host)
 	}
 	if len(host.Result) == 0 {
-		return d.reportUncertainPreviewDeploy(ctx, commandMessageID, operation)
+		return d.reportUncertainPreviewDeploy(ctx, commandMessageID, operation, false, false)
 	}
 	return d.resendStoredPreviewDeployResult(ctx, host.Result)
 }
@@ -160,34 +160,48 @@ func (d *Daemon) reportUncertainPreviewDeploy(
 	ctx context.Context,
 	commandMessageID string,
 	operation v1.PreviewDeployOperation,
+	proven bool,
+	claimed bool,
 ) error {
 	event := previewDeployResultEvent(operation, commandMessageID, previewDeployObservedAt(operation),
 		v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain})
 	raw, err := validatedPreviewDeployResult(event)
+	d.previewHostMu.Lock()
+	if claimed {
+		delete(d.previewHostRecovering, operation.IdempotencyKey)
+	}
 	if err != nil {
+		d.previewHostMu.Unlock()
 		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 	}
-	d.previewHostMu.Lock()
 	current, found, err := d.journal.PreviewHostByIdempotencyKey(ctx, operation.IdempotencyKey)
 	if err == nil && !found {
 		err = journal.ErrPreviewHostNotFound
 	}
-	if err == nil && len(current.Result) > 0 {
+	if err != nil {
 		d.previewHostMu.Unlock()
-		return d.resendStoredPreviewDeployResult(ctx, current.Result)
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 	}
-	if err == nil {
-		state := current.State
-		if state == journal.PreviewHostDeploying {
-			state = journal.PreviewHostUncertain
+	stored := current.Result
+	update := journal.PreviewHostUpdate{IdempotencyKey: operation.IdempotencyKey, State: current.State}
+	if current.State == journal.PreviewHostDeploying {
+		update.State = journal.PreviewHostUncertain
+		if proven {
+			update.State = journal.PreviewHostDestroyed
 		}
-		err = d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
-			IdempotencyKey: operation.IdempotencyKey, State: state, Result: raw,
-		})
+	}
+	if len(stored) == 0 {
+		update.Result = raw
+	}
+	if update.State != current.State || len(update.Result) > 0 {
+		err = d.journal.UpdatePreviewHost(ctx, update)
 	}
 	d.previewHostMu.Unlock()
 	if err != nil {
 		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if len(stored) > 0 {
+		return d.resendStoredPreviewDeployResult(ctx, stored)
 	}
 	return d.sendPreviewDeployResult(ctx, event)
 }

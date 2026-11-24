@@ -116,6 +116,7 @@ type Daemon struct {
 	previewHostEmergencyGeneration                        uint64
 	previewHostDeployCancels                              map[string]context.CancelFunc
 	previewHostSweeping                                   map[string]struct{}
+	previewHostRecovering                                 map[string]struct{}
 	previewHostWake                                       chan struct{}
 	hostMemory                                            func() uint64
 	reviewerIdentityVerifier                              reviewerIdentityVerifier

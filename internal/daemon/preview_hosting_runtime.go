@@ -9,6 +9,7 @@ import (
 	"github.com/example/app-runner/internal/capability"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/journal"
+	"github.com/example/app-runner/internal/validation"
 )
 
 const previewHostExpiryInterval = 30 * time.Second
@@ -61,7 +62,7 @@ func (d *Daemon) previewHostLeaseMax() time.Duration {
 }
 
 func (d *Daemon) previewHostDeadline(lease time.Time) time.Time {
-	limit := d.previewHostNow().Add(d.previewHostLeaseMax())
+	limit := time.Now().Add(d.previewHostLeaseMax())
 	if lease.After(limit) {
 		return limit
 	}
@@ -73,6 +74,21 @@ func previewHostExpired(host journal.PreviewHost, now time.Time) bool {
 		return true
 	}
 	return !host.ExpiresAt.After(now)
+}
+
+func (d *Daemon) previewHostInFlightLocked(idempotencyKey string) bool {
+	if _, deploying := d.previewHostDeployCancels[idempotencyKey]; deploying {
+		return true
+	}
+	_, recovering := d.previewHostRecovering[idempotencyKey]
+	return recovering
+}
+
+func (d *Daemon) claimPreviewHostRecoveryLocked(idempotencyKey string) {
+	if d.previewHostRecovering == nil {
+		d.previewHostRecovering = make(map[string]struct{})
+	}
+	d.previewHostRecovering[idempotencyKey] = struct{}{}
 }
 
 func (d *Daemon) admitPreviewDeploy(
@@ -195,12 +211,7 @@ func (d *Daemon) markPreviewHostsDestroyingLocked(
 	}
 	var errs []error
 	for _, host := range hosts {
-		if host.State == journal.PreviewHostDeploying {
-			if _, running := d.previewHostDeployCancels[host.IdempotencyKey]; running {
-				continue
-			}
-		}
-		if !selected(host) {
+		if d.previewHostInFlightLocked(host.IdempotencyKey) || !selected(host) {
 			continue
 		}
 		update := journal.PreviewHostUpdate{
@@ -220,10 +231,55 @@ func (d *Daemon) expirePreviewHosts(ctx context.Context, reason v1.PreviewHosted
 	if d.previewHostController == nil {
 		return nil
 	}
-	now := d.previewHostNow()
-	return d.destroySelectedPreviewHosts(ctx, reason, func(host journal.PreviewHost) bool {
-		return previewHostExpired(host, now)
+	now, leaseMax := d.previewHostNow(), d.previewHostLeaseMax()
+	destroyErr := d.destroySelectedPreviewHosts(ctx, reason, func(host journal.PreviewHost) bool {
+		if previewHostExpired(host, now) {
+			return true
+		}
+		return host.State == journal.PreviewHostDeploying && !host.CreatedAt.Add(leaseMax).After(now)
 	})
+	return errors.Join(destroyErr, d.proveUncertainPreviewDeploys(ctx))
+}
+
+func (d *Daemon) proveUncertainPreviewDeploys(ctx context.Context) error {
+	d.previewHostReapMu.Lock()
+	defer d.previewHostReapMu.Unlock()
+	d.previewHostMu.Lock()
+	hosts, err := d.journal.PreviewHostsInStates(ctx, journal.PreviewHostUncertain)
+	var claimed []journal.PreviewHost
+	for _, host := range hosts {
+		if host.DestroyReason != "" || d.previewHostInFlightLocked(host.IdempotencyKey) {
+			continue
+		}
+		d.claimPreviewHostRecoveryLocked(host.IdempotencyKey)
+		claimed = append(claimed, host)
+	}
+	d.previewHostMu.Unlock()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, host := range claimed {
+		recoverErr := d.previewHostController.Recover(ctx, host)
+		if recoverErr != nil {
+			d.logger.Warn("uncertain preview deploy teardown unproven", "preview_id", host.PreviewID, "err", recoverErr)
+		}
+		d.previewHostMu.Lock()
+		delete(d.previewHostRecovering, host.IdempotencyKey)
+		if recoverErr == nil {
+			current, found, err := d.journal.PreviewHostByIdempotencyKey(ctx, host.IdempotencyKey)
+			if err == nil && found && current.State == journal.PreviewHostUncertain && current.DestroyReason == "" {
+				err = d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
+					IdempotencyKey: host.IdempotencyKey, State: journal.PreviewHostDestroyed,
+				})
+			}
+			if err != nil {
+				errs = append(errs, err)
+			}
+		}
+		d.previewHostMu.Unlock()
+	}
+	return errors.Join(errs...)
 }
 
 func (d *Daemon) destroySelectedPreviewHosts(
@@ -260,6 +316,16 @@ func (d *Daemon) reapPreviewHosts(ctx context.Context) error {
 }
 
 func (d *Daemon) finishPreviewHostDestroy(ctx context.Context, host journal.PreviewHost) error {
+	alreadyDestroyed, err := d.journal.HasRecord(ctx,
+		v1.PreviewHostedDestroyedEventID(host.PreviewID, host.IdempotencyKey, v1.PreviewHostedDestroyOutcomeDestroyed))
+	if err != nil {
+		return err
+	}
+	if alreadyDestroyed {
+		return d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
+			IdempotencyKey: host.IdempotencyKey, State: journal.PreviewHostDestroyed,
+		})
+	}
 	recoverErr := d.previewHostController.Recover(ctx, host)
 	if recoverErr != nil && ctx.Err() != nil {
 		return errors.Join(ctx.Err(), recoverErr)
@@ -275,8 +341,13 @@ func (d *Daemon) finishPreviewHostDestroy(ctx context.Context, host journal.Prev
 	}
 	event := v1.NewPreviewHostedDestroyedEvent(v1.PreviewHostedDestroyedSubject{
 		PreviewID: host.PreviewID, OrganizationID: host.OrganizationID, ProjectID: host.ProjectID, PreviewKey: host.PreviewKey,
+		IdempotencyKey: host.IdempotencyKey,
 	}, time.Now(), reason, outcome)
-	if _, err := d.sendEventWithStableID(ctx, v1.PreviewHostedDestroyedEventID(host.PreviewID), event); err != nil {
+	if err := validation.PreviewHostedDestroyedEvent(event); err != nil {
+		return err
+	}
+	if _, err := d.sendEventWithStableID(ctx,
+		v1.PreviewHostedDestroyedEventID(host.PreviewID, host.IdempotencyKey, outcome), event); err != nil {
 		return err
 	}
 	return d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{IdempotencyKey: host.IdempotencyKey, State: state})
@@ -287,14 +358,12 @@ func (d *Daemon) reconcilePreviewHostsAtStartup(ctx context.Context) error {
 		return nil
 	}
 	sweepErr := d.sweepOrphanPreviewResources(ctx)
-	now, leaseMax := d.previewHostNow(), d.previewHostLeaseMax()
-	return errors.Join(sweepErr, d.destroySelectedPreviewHosts(ctx, v1.PreviewHostedDestroyReconcileExpired,
+	now := d.previewHostNow()
+	destroyErr := d.destroySelectedPreviewHosts(ctx, v1.PreviewHostedDestroyReconcileExpired,
 		func(host journal.PreviewHost) bool {
-			if previewHostExpired(host, now) {
-				return true
-			}
-			return host.State == journal.PreviewHostDeploying && !host.CreatedAt.Add(leaseMax).After(now)
-		}))
+			return host.State == journal.PreviewHostDeploying || previewHostExpired(host, now)
+		})
+	return errors.Join(sweepErr, destroyErr, d.proveUncertainPreviewDeploys(ctx))
 }
 
 func (d *Daemon) sweepOrphanPreviewResources(ctx context.Context) error {

@@ -398,3 +398,39 @@ func TestPreviewHostedLifecycleResultEvent(t *testing.T) {
 		t.Fatalf("hosted uncertain result rejected: %v", err)
 	}
 }
+
+func TestPreviewHostedDestroyedEventRequiresItsDeployKey(t *testing.T) {
+	valid := func() v1.PreviewHostedDestroyedEvent {
+		return v1.NewPreviewHostedDestroyedEvent(v1.PreviewHostedDestroyedSubject{
+			PreviewID: "preview-1", OrganizationID: "organization-1", ProjectID: "project-1",
+			PreviewKey: "abcdefghijklmnopqrstuvwxyz", IdempotencyKey: "preview-deploy-" + strings.Repeat("d", 64),
+		}, time.Now(), v1.PreviewHostedDestroyExpired, v1.PreviewHostedDestroyOutcomeDestroyed)
+	}
+	if err := PreviewHostedDestroyedEvent(valid()); err != nil {
+		t.Fatalf("valid destroyed event rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*v1.PreviewHostedDestroyedEvent){
+		"kind":               func(event *v1.PreviewHostedDestroyedEvent) { event.Kind = "preview_destroyed" },
+		"schema version":     func(event *v1.PreviewHostedDestroyedEvent) { event.SchemaVersion = 2 },
+		"preview id":         func(event *v1.PreviewHostedDestroyedEvent) { event.PreviewID = "" },
+		"organization id":    func(event *v1.PreviewHostedDestroyedEvent) { event.OrganizationID = "bad id" },
+		"project id":         func(event *v1.PreviewHostedDestroyedEvent) { event.ProjectID = "" },
+		"preview key":        func(event *v1.PreviewHostedDestroyedEvent) { event.PreviewKey = "short" },
+		"missing deploy key": func(event *v1.PreviewHostedDestroyedEvent) { event.IdempotencyKey = "" },
+		"lifecycle key": func(event *v1.PreviewHostedDestroyedEvent) {
+			event.IdempotencyKey = "preview-lifecycle-" + strings.Repeat("d", 64)
+		},
+		"uppercase deploy key": func(event *v1.PreviewHostedDestroyedEvent) {
+			event.IdempotencyKey = "preview-deploy-" + strings.Repeat("D", 64)
+		},
+		"zero destroyed at": func(event *v1.PreviewHostedDestroyedEvent) { event.DestroyedAt = time.Time{} },
+		"unknown reason":    func(event *v1.PreviewHostedDestroyedEvent) { event.Reason = "manual" },
+		"unknown outcome":   func(event *v1.PreviewHostedDestroyedEvent) { event.Outcome = "partial" },
+	} {
+		event := valid()
+		mutate(&event)
+		if err := PreviewHostedDestroyedEvent(event); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+}

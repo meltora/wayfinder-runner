@@ -180,20 +180,33 @@ func TestPreviewHostedDestroyedEventBuilder(t *testing.T) {
 	destroyedAt := time.Date(2030, 8, 14, 18, 0, 0, 123456789, time.FixedZone("x", 3600))
 	event := NewPreviewHostedDestroyedEvent(PreviewHostedDestroyedSubject{
 		PreviewID: "preview-1", OrganizationID: "organization-1", ProjectID: "project-1",
-		PreviewKey: "abcdefghijklmnopqrstuvwxyz",
+		PreviewKey: "abcdefghijklmnopqrstuvwxyz", IdempotencyKey: "preview-deploy-" + strings.Repeat("d", 64),
 	}, destroyedAt, PreviewHostedDestroyExpired, PreviewHostedDestroyOutcomeDestroyed)
 	raw, err := json.Marshal(event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := `{"kind":"preview_hosted_destroyed","schema_version":1,"preview_id":"preview-1","organization_id":"organization-1","project_id":"project-1","preview_key":"abcdefghijklmnopqrstuvwxyz","destroyed_at":"2030-08-14T17:00:00.123Z","reason":"expired","outcome":"destroyed"}`
+	expected := `{"kind":"preview_hosted_destroyed","schema_version":1,"preview_id":"preview-1","organization_id":"organization-1","project_id":"project-1","preview_key":"abcdefghijklmnopqrstuvwxyz","idempotency_key":"preview-deploy-dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","destroyed_at":"2030-08-14T17:00:00.123Z","reason":"expired","outcome":"destroyed"}`
 	if string(raw) != expected {
 		t.Fatalf("event=%s", raw)
 	}
-	if PreviewHostedDestroyedEventID("preview-1") != PreviewHostedDestroyedEventID("preview-1") ||
-		!strings.HasPrefix(PreviewHostedDestroyedEventID("preview-1"), "preview-hosted-destroyed-") ||
-		PreviewHostedDestroyedEventID("preview-1") == PreviewHostedDestroyedEventID("preview-2") {
-		t.Fatal("destroyed event ID is not stable per preview")
+}
+
+func TestPreviewHostedDestroyedEventIDCoversPreviewKeyAndOutcome(t *testing.T) {
+	key := "preview-deploy-" + strings.Repeat("d", 64)
+	vectors := map[PreviewHostedDestroyOutcome]string{
+		PreviewHostedDestroyOutcomeDestroyed: "preview-hosted-destroyed-9ce9e90218c07f0f7938bc08dd1cd6eb6b94e2ae0d558a973eb7e9dbf30b0be6",
+		PreviewHostedDestroyOutcomeUncertain: "preview-hosted-destroyed-269324349cd5e444f686744a4e0dcf371345dba92dba0043a887116f88a2766d",
+	}
+	for outcome, want := range vectors {
+		if got := PreviewHostedDestroyedEventID("preview-1", key, outcome); got != want {
+			t.Fatalf("%s id=%s want %s", outcome, got, want)
+		}
+	}
+	base := PreviewHostedDestroyedEventID("preview-1", key, PreviewHostedDestroyOutcomeDestroyed)
+	if base == PreviewHostedDestroyedEventID("preview-2", key, PreviewHostedDestroyOutcomeDestroyed) ||
+		base == PreviewHostedDestroyedEventID("preview-1", "preview-deploy-"+strings.Repeat("e", 64), PreviewHostedDestroyOutcomeDestroyed) {
+		t.Fatal("destroyed event ID does not separate previews and deploy keys")
 	}
 }
 

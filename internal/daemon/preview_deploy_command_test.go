@@ -653,6 +653,31 @@ func TestPreviewDeployCrashRedeliveryNeverRerunsTheEffect(t *testing.T) {
 	}
 }
 
+func TestPreviewDeployCrashRedeliveryWithProvenTeardownMarksTheHostDestroyed(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	command := validPreviewDeployCommand()
+	insertTestPreviewHost(t, d, *command.PreviewDeploy, journal.PreviewHostDeploying, nil)
+	controller := &fakePreviewHostController{deployOutcome: deployedPreviewOutcome()}
+	d.previewHostController = controller
+	events := capturePreviewDeployEvents(t, d)
+	if err := d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command); err != nil {
+		t.Fatal(err)
+	}
+	deploys, _, recovered := controller.counts()
+	if deploys != 0 || recovered != 1 || len(*events) != 1 || (*events)[0].Outcome.Kind != v1.PreviewDeployUncertain {
+		t.Fatalf("deploys=%d recovered=%d events=%+v", deploys, recovered, *events)
+	}
+	host, _, _ := d.journal.PreviewHostByIdempotencyKey(context.Background(), command.PreviewDeploy.IdempotencyKey)
+	if host.State != journal.PreviewHostDestroyed {
+		t.Fatalf("host state=%s", host.State)
+	}
+	var result v1.PreviewDeployResultEvent
+	if err := json.Unmarshal(host.Result, &result); err != nil || result.Outcome.Kind != v1.PreviewDeployUncertain {
+		t.Fatalf("stored result=%s err=%v", host.Result, err)
+	}
+}
+
 func TestPreviewDeployCrashRedeliveryWithoutRegistryRowRunsOnce(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	d := jr.d

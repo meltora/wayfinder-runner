@@ -6,7 +6,8 @@
     "envelope": "a full runner v1 envelope; compare it semantically, not byte-for-byte, because this file is indented and the wire omits zero milliseconds",
     "expected": "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
     "expected_outcome": "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",
-    "given": "none: no prior state; trusted_commit_set: the vector's own commit_set is recorded as trusted for its execution manifest; trusted_commit_set:<valid name>: that vector's commit_set is trusted; deployed:<valid name>: that deploy vector was accepted and its preview is live; the command message id used for the setup does not affect the outcome"
+    "given": "none: no prior state; trusted_commit_set: the vector's own commit_set is recorded as trusted for its execution manifest; trusted_commit_set:<valid name>: that vector's commit_set is trusted; deployed:<valid name>: that deploy vector was accepted and its preview is live; the command message id used for the setup does not affect the outcome",
+    "hosted_destroyed_event_id": "preview-hosted-destroyed- followed by hex sha256 of preview_id, NUL, the idempotency_key of the deploy named in given, NUL, and the outcome; vectors use outcome destroyed"
   },
   "valid": [
     {
@@ -514,7 +515,7 @@
         "operation_digest": "2aaf489f7b20c94783193958d18119555dee4670f97c132366c234725dea25af",
         "command_digest": "1f32757456857f0a0476f710edd68a577b748f48b786e921bde5a003c7a696d4",
         "result_event_id": "preview-lifecycle-result-06e9ca56931900580c93c5b01ef47f925dabfb4290fd1472fb3babba7b622a1e",
-        "hosted_destroyed_event_id": "preview-hosted-destroyed-3e355b4ab201ef57a88ac34d7c5c9cd92392afcfc29aef5087bc8ecc0015ca47"
+        "hosted_destroyed_event_id": "preview-hosted-destroyed-9ce9e90218c07f0f7938bc08dd1cd6eb6b94e2ae0d558a973eb7e9dbf30b0be6"
       }
     }
   ],
