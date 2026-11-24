@@ -33,10 +33,20 @@ type fakePreviewHostController struct {
 	lifecycleDeadline time.Time
 	started           chan struct{}
 	release           chan struct{}
+	capability        *v1.PreviewHostingCapability
 }
 
 func (controller *fakePreviewHostController) Capability() v1.PreviewHostingCapability {
-	return v1.PreviewHostingCapability{ProtocolVersion: v1.PreviewHostingProtocolVersion, MaxConcurrent: 3}
+	if controller.capability != nil {
+		return *controller.capability
+	}
+	maxExtension := uint64(7 * 24 * 60 * 60 * 1000)
+	return v1.PreviewHostingCapability{
+		ProtocolVersion: v1.PreviewHostingProtocolVersion,
+		MaxConcurrent:   3,
+		Actions:         []v1.PreviewLifecycleAction{"deploy", v1.PreviewLifecycleExtend, v1.PreviewLifecycleDestroy, "observe"},
+		MaxExtensionMS:  &maxExtension,
+	}
 }
 
 func (controller *fakePreviewHostController) Deploy(ctx context.Context, request previewhost.DeployRequest) previewhost.DeployResult {

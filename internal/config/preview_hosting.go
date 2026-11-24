@@ -12,10 +12,10 @@ const (
 	DefaultPreviewHostingMaxConcurrent       = 3
 	DefaultPreviewHostingLeaseMaxSeconds     = 45 * 60
 	DefaultPreviewHostingMaxExtensionSeconds = 7 * 24 * 60 * 60
-	maxPreviewHostingConcurrent              = 64
+	MaxPreviewHostingConcurrent              = 64
 	minPreviewHostingLeaseSeconds            = 60
 	maxPreviewHostingLeaseSeconds            = 6 * 60 * 60
-	maxPreviewHostingExtensionSeconds        = 30 * 24 * 60 * 60
+	MaxPreviewHostingExtensionSeconds        = 30 * 24 * 60 * 60
 	maxPreviewHostingTeardownSeconds         = 600
 )
 
@@ -74,8 +74,8 @@ func validatePreviewHosting(hosting PreviewHostingConfig, isolation string) erro
 	if hosting.Enabled && isolation != "docker" {
 		return fmt.Errorf("preview_hosting requires docker isolation")
 	}
-	if hosting.MaxConcurrent < 0 || hosting.MaxConcurrent > maxPreviewHostingConcurrent {
-		return fmt.Errorf("preview_hosting.max_concurrent must be between 1 and %d", maxPreviewHostingConcurrent)
+	if hosting.MaxConcurrent < 0 || hosting.MaxConcurrent > MaxPreviewHostingConcurrent {
+		return fmt.Errorf("preview_hosting.max_concurrent must be between 1 and %d", MaxPreviewHostingConcurrent)
 	}
 	if hosting.MemoryBudgetMB < 0 {
 		return fmt.Errorf("preview_hosting.memory_budget_mb must not be negative")
@@ -87,8 +87,8 @@ func validatePreviewHosting(hosting PreviewHostingConfig, isolation string) erro
 	if lease < minPreviewHostingLeaseSeconds || lease > maxPreviewHostingLeaseSeconds {
 		return fmt.Errorf("preview_hosting.lease_max_seconds must be between %d and %d", minPreviewHostingLeaseSeconds, maxPreviewHostingLeaseSeconds)
 	}
-	if hosting.MaxExtensionSeconds < 0 || hosting.MaxExtensionSeconds > maxPreviewHostingExtensionSeconds {
-		return fmt.Errorf("preview_hosting.max_extension_seconds must be between 1 and %d", maxPreviewHostingExtensionSeconds)
+	if hosting.MaxExtensionSeconds < 0 || hosting.MaxExtensionSeconds > MaxPreviewHostingExtensionSeconds {
+		return fmt.Errorf("preview_hosting.max_extension_seconds must be between 1 and %d", MaxPreviewHostingExtensionSeconds)
 	}
 	if hosting.TeardownTimeoutSeconds < 0 || hosting.TeardownTimeoutSeconds > maxPreviewHostingTeardownSeconds {
 		return fmt.Errorf("preview_hosting.teardown_timeout_seconds must be between 1 and %d", maxPreviewHostingTeardownSeconds)
