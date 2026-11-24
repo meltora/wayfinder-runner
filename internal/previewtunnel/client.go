@@ -121,7 +121,11 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		c.logger.Debug("preview tunnel disconnected", "error", err)
+		if errors.Is(err, ErrProtocol) || errors.Is(err, ErrOutboxOverflow) {
+			c.logger.Warn("preview tunnel disconnected", "error", err)
+		} else {
+			c.logger.Debug("preview tunnel disconnected", "error", err)
+		}
 		if !connectedAt.IsZero() && c.now().Sub(connectedAt) >= backoffResetAfter {
 			backoff = minReconnectBackoff
 		}
