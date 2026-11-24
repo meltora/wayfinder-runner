@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func installFakeDocker(t *testing.T, script string) string {
@@ -20,6 +21,15 @@ func installFakeDocker(t *testing.T, script string) string {
 	}
 	t.Setenv("PATH", dir+":/usr/bin:/bin")
 	return log
+}
+
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func readCalls(t *testing.T, log string) []string {
@@ -87,7 +97,7 @@ for arg do
 done
 echo started`)
 	t.Setenv("RUNNER_PRIVATE_SECRET", "do-not-forward")
-	cli := DockerCLI{TempDir: t.TempDir()}
+	cli := DockerCLI{TempDir: privateDir(t)}
 	if err := cli.RunDetached(context.Background(), testSpec()); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +125,7 @@ case "$1 $2" in
   "network ls") echo our-preview-0123456789ab ;;
   "volume ls") echo ;;
 esac`)
-	cli := DockerCLI{TempDir: t.TempDir()}
+	cli := DockerCLI{TempDir: privateDir(t)}
 	objects, err := cli.List(context.Background(), PreviewLabels(testRunnerID, testPreviewID))
 	if err != nil {
 		t.Fatal(err)
@@ -150,9 +160,76 @@ esac`)
 
 func TestDockerCLIRejectsInvalidListOutput(t *testing.T) {
 	installFakeDocker(t, `echo 'bad id; rm -rf /'`)
-	cli := DockerCLI{TempDir: t.TempDir()}
+	cli := DockerCLI{TempDir: privateDir(t)}
 	if _, err := cli.List(context.Background(), PreviewLabels(testRunnerID, testPreviewID)); err == nil {
 		t.Fatal("invalid docker output accepted")
+	}
+}
+
+func TestDockerCLIEnvFileIsPrivate(t *testing.T) {
+	log := installFakeDocker(t, `
+prev=
+for arg do
+  case "$prev" in --env-file) stat -c %a "$arg" > "$(dirname "$0")/env.mode"; stat -c %a "$(dirname "$arg")" > "$(dirname "$0")/dir.mode" ;; esac
+  prev=$arg
+done`)
+	parent := t.TempDir()
+	cli := DockerCLI{TempDir: filepath.Join(parent, "env")}
+	if err := cli.RunDetached(context.Background(), testSpec()); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"env.mode": "600", "dir.mode": "700"} {
+		mode, err := os.ReadFile(filepath.Join(filepath.Dir(log), name))
+		if err != nil || strings.TrimSpace(string(mode)) != want {
+			t.Fatalf("%s = %q %v, want %s", name, mode, err, want)
+		}
+	}
+	if err := (DockerCLI{}).RunDetached(context.Background(), testSpec()); err == nil {
+		t.Fatal("empty TempDir accepted")
+	}
+	if _, err := (DockerCLI{}).RunOnce(context.Background(), ContainerSpec{Name: "n", Image: "i", Network: "net"}); err == nil {
+		t.Fatal("empty TempDir accepted for a container without environment")
+	}
+	shared := filepath.Join(parent, "shared")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := (DockerCLI{TempDir: shared}).RunDetached(context.Background(), testSpec()); err == nil {
+		t.Fatal("group-accessible TempDir accepted")
+	}
+	link := filepath.Join(parent, "link")
+	if err := os.Symlink(cli.TempDir, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := (DockerCLI{TempDir: link}).RunDetached(context.Background(), testSpec()); err == nil {
+		t.Fatal("symlinked TempDir accepted")
+	}
+	if err := (DockerCLI{TempDir: "relative"}).RunDetached(context.Background(), testSpec()); err == nil {
+		t.Fatal("relative TempDir accepted")
+	}
+}
+
+func TestDockerCLICancelSendsSIGTERM(t *testing.T) {
+	log := installFakeDocker(t, `
+marker="$(dirname "$0")/term"
+sleep 30 >/dev/null 2>&1 &
+child=$!
+trap 'echo term > "$marker"; kill "$child"; exit 143' TERM
+wait "$child"`)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, err := (DockerCLI{TempDir: privateDir(t)}).RunOnce(ctx, ContainerSpec{Name: "n", Image: "i", Network: "net"}); err == nil {
+		t.Fatal("cancelled run reported success")
+	}
+	if elapsed := time.Since(started); elapsed > 4*time.Second {
+		t.Fatalf("cancelled run took %s", elapsed)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(log), "term")); err != nil {
+		t.Fatalf("docker run did not receive SIGTERM: %v", err)
 	}
 }
 

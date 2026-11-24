@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -104,6 +105,7 @@ type harness struct {
 	status     map[string]*atomic.Int32
 	controller *Docker
 	cfg        Config
+	ownership  *fakeOwnership
 }
 
 func newHarness(t *testing.T) *harness {
@@ -143,10 +145,14 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) build() *Docker {
 	h.t.Helper()
-	controller, err := New(h.cfg, Dependencies{
+	deps := Dependencies{
 		Engine: h.engine, Workspaces: h.workspaces,
 		Repositories: fakeRepositories{"repo-a": {URL: "https://git.example.com/a.git"}, "repo-b": {URL: "https://git.example.com/b.git"}},
-	})
+	}
+	if h.ownership != nil {
+		deps.Ownership = h.ownership
+	}
+	controller, err := New(h.cfg, deps)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -547,6 +553,121 @@ func TestDeployLeaseExpiryTearsDown(t *testing.T) {
 	defer cancel()
 	outcome := h.deploy(ctx, testContent(), testOperation())
 	assertFailedAndTornDown(t, h, outcome, v1.PreviewDeployPhaseLeaseExpired)
+	assertLeftoverRemoved(t, h, ResourcePrefix(testRunnerID, testPreviewID)+"-run-build-0")
+}
+
+func assertLeftoverRemoved(t *testing.T, h *harness, name string) {
+	t.Helper()
+	if !slices.Contains(h.engine.Leftovers(), name) {
+		t.Fatalf("interrupted one-shot %s was not left behind by the engine: %v", name, h.engine.Leftovers())
+	}
+	if _, exists := h.engine.containers[name]; exists {
+		t.Fatalf("interrupted one-shot %s survived teardown", name)
+	}
+}
+
+func TestDeployShutdownReportsRealPhase(t *testing.T) {
+	h := newHarness(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.engine.runOnce = func(runCtx context.Context, spec ContainerSpec) (string, error) {
+		if spec.Command[1] == "npm run build" {
+			cancel()
+			<-runCtx.Done()
+			return "interrupted", runCtx.Err()
+		}
+		return "ok", nil
+	}
+	assertFailedAndTornDown(t, h, h.deploy(ctx, testContent(), testOperation()), v1.PreviewDeployPhaseBuild)
+	assertLeftoverRemoved(t, h, ResourcePrefix(testRunnerID, testPreviewID)+"-run-build-0")
+}
+
+func TestDeployShutdownWithUnprovenTeardownIsUncertain(t *testing.T) {
+	h := newHarness(t)
+	h.engine.sticky = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.engine.runOnce = func(runCtx context.Context, _ ContainerSpec) (string, error) {
+		cancel()
+		<-runCtx.Done()
+		return "", runCtx.Err()
+	}
+	if outcome := h.deploy(ctx, testContent(), testOperation()); outcome.Kind != v1.PreviewDeployUncertain {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+}
+
+func TestDeployFailureBeforeLeaseExpiryKeepsRealPhase(t *testing.T) {
+	h := newHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	h.engine.runOnce = func(_ context.Context, spec ContainerSpec) (string, error) {
+		if spec.Command[1] == "npm run build" {
+			return "compile error", errors.New("exit status 1")
+		}
+		return "ok", nil
+	}
+	h.engine.removeHook = func() { <-ctx.Done() }
+	outcome := h.deploy(ctx, testContent(), testOperation())
+	h.engine.removeHook = nil
+	assertFailedAndTornDown(t, h, outcome, v1.PreviewDeployPhaseBuild)
+}
+
+func TestTeardownReclaimErrorIsUncertain(t *testing.T) {
+	h := newHarness(t)
+	h.ownership = &fakeOwnership{}
+	h.engine.runOnce = func(context.Context, ContainerSpec) (string, error) { return "", errors.New("exit status 1") }
+	operation := testOperation()
+	h.build()
+	h.ownership.reclaimErr = errors.New("chown refused")
+	if outcome := h.deploy(context.Background(), testContent(), operation); outcome.Kind != v1.PreviewDeployUncertain ||
+		outcome.Phase != "" || outcome.LogTail != "" {
+		t.Fatalf("deploy outcome = %+v", outcome)
+	}
+	if len(h.ownership.handOffs) != 1 || len(h.ownership.reclaims) == 0 {
+		t.Fatalf("ownership calls = %+v", h.ownership)
+	}
+	request := LifecycleRequest{Operation: lifecycleOperation(v1.PreviewLifecycleDestroy, operation.ExpiresAt, nil), Host: testHost(operation.ExpiresAt)}
+	if outcome := h.controller.ApplyLifecycle(context.Background(), request).Outcome; outcome.Kind != v1.PreviewLifecycleUncertain {
+		t.Fatalf("destroy outcome = %+v", outcome)
+	}
+	h.ownership.reclaimErr = nil
+	if outcome := h.controller.ApplyLifecycle(context.Background(), request).Outcome; outcome.Kind != v1.PreviewLifecycleSucceeded {
+		t.Fatalf("destroy after reclaim recovers = %+v", outcome)
+	}
+}
+
+func TestHealthProbeStaysOnLoopback(t *testing.T) {
+	for _, path := range []string{"@evil/x", "//evil/x"} {
+		t.Run(path, func(t *testing.T) {
+			h := newHarness(t)
+			h.cfg.PhaseTimeouts[v1.PreviewDeployPhaseHealth] = 100 * time.Millisecond
+			content := testContent()
+			content.App.HealthChecks = []v1.PreviewBlueprintHealthCheckV1{{ID: "evil", Path: path, ExpectedStatus: 200}}
+			var hosts []string
+			var mu sync.Mutex
+			h.build().client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				mu.Lock()
+				hosts = append(hosts, request.URL.Host)
+				mu.Unlock()
+				return http.DefaultTransport.RoundTrip(request)
+			})
+			assertFailedAndTornDown(t, h, h.deploy(context.Background(), content, testOperation()), v1.PreviewDeployPhaseHealth)
+			mu.Lock()
+			defer mu.Unlock()
+			for _, host := range hosts {
+				if hostname, _, err := net.SplitHostPort(host); err != nil || hostname != "127.0.0.1" {
+					t.Fatalf("probe reached %q", host)
+				}
+			}
+		})
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
 }
 
 func TestDeployLeaseExpiryWithUnprovenTeardownIsUncertain(t *testing.T) {
@@ -574,6 +695,7 @@ func TestPhaseTimeoutIsNotLeaseExpiry(t *testing.T) {
 		return "ok", nil
 	}
 	assertFailedAndTornDown(t, h, h.deploy(context.Background(), testContent(), testOperation()), v1.PreviewDeployPhaseInstall)
+	assertLeftoverRemoved(t, h, ResourcePrefix(testRunnerID, testPreviewID)+"-run-install-0")
 }
 
 func TestDeployLogTailIsRedactedAndBounded(t *testing.T) {
@@ -745,7 +867,20 @@ func TestRecoverTearsDownLabelledResources(t *testing.T) {
 	}
 }
 
+func uniformPhaseTimeouts(timeout time.Duration) map[v1.PreviewDeployPhase]time.Duration {
+	timeouts := map[v1.PreviewDeployPhase]time.Duration{}
+	for _, phase := range deployPhases {
+		timeouts[phase] = timeout
+	}
+	return timeouts
+}
+
 func TestConfigDefaultsAndValidation(t *testing.T) {
+	fits, err := Config{RunnerID: testRunnerID, StateDir: "/var/lib/runner", Lease: 20 * time.Minute,
+		TeardownTimeout: 5*time.Minute + 30*time.Second - logGrace/2, PhaseTimeouts: uniformPhaseTimeouts(time.Minute)}.normalized()
+	if err != nil || fits.Lease != 20*time.Minute {
+		t.Fatalf("budget that fits the lease refused: %v", err)
+	}
 	cfg, err := Config{RunnerID: testRunnerID, StateDir: "/var/lib/runner"}.normalized()
 	if err != nil {
 		t.Fatal(err)
@@ -761,8 +896,8 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 		}
 		sum += cfg.PhaseTimeouts[phase]
 	}
-	if sum > cfg.Lease {
-		t.Fatalf("default phase timeouts %s exceed lease %s", sum, cfg.Lease)
+	if budget := sum + 2*cfg.TeardownTimeout + logGrace; budget > cfg.Lease {
+		t.Fatalf("default deploy budget %s exceeds lease %s", budget, cfg.Lease)
 	}
 	for name, bad := range map[string]Config{
 		"no runner":    {StateDir: "/var/lib/runner"},
@@ -774,6 +909,8 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 		"unknown phase": {RunnerID: testRunnerID, StateDir: "/var/lib/runner",
 			PhaseTimeouts: map[v1.PreviewDeployPhase]time.Duration{v1.PreviewDeployPhaseLeaseExpired: time.Second}},
 		"root user": {RunnerID: testRunnerID, StateDir: "/var/lib/runner", JobUID: -1},
+		"teardown over lease": {RunnerID: testRunnerID, StateDir: "/var/lib/runner", Lease: 20 * time.Minute,
+			TeardownTimeout: 6 * time.Minute, PhaseTimeouts: uniformPhaseTimeouts(time.Minute)},
 	} {
 		if _, err := bad.normalized(); err == nil {
 			t.Fatalf("%s accepted", name)

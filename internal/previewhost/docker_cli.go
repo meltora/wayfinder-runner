@@ -8,10 +8,12 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/example/app-runner/internal/isolation"
@@ -37,7 +39,8 @@ func (cli DockerCLI) run(ctx context.Context, args ...string) (string, error) {
 	output := &tailBuffer{limit: dockerOutputLimit}
 	cmd.Stdout = output
 	cmd.Stderr = output
-	cmd.WaitDelay = 5 * time.Second
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 10 * time.Second
 	err := cmd.Run()
 	return output.String(), err
 }
@@ -87,10 +90,32 @@ func (cli DockerCLI) RunOnce(ctx context.Context, spec ContainerSpec) (string, e
 	return cli.runContainer(ctx, spec, false)
 }
 
+func (cli DockerCLI) privateTempDir() (string, error) {
+	if cli.TempDir == "" || !filepath.IsAbs(cli.TempDir) {
+		return "", errors.New("preview docker engine requires an absolute private temporary directory")
+	}
+	dir := filepath.Clean(cli.TempDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return "", errors.New("preview docker temporary directory must be a 0700 directory")
+	}
+	return dir, nil
+}
+
 func (cli DockerCLI) runContainer(ctx context.Context, spec ContainerSpec, detached bool) (string, error) {
+	dir, err := cli.privateTempDir()
+	if err != nil {
+		return "", err
+	}
 	envFile := ""
 	if len(spec.Env) > 0 {
-		path, err := cli.writeEnvFile(spec.Env)
+		path, err := writeEnvFile(dir, spec.Env)
 		if err != nil {
 			return "", err
 		}
@@ -100,7 +125,7 @@ func (cli DockerCLI) runContainer(ctx context.Context, spec ContainerSpec, detac
 	return cli.run(ctx, runArgs(spec, envFile, detached)...)
 }
 
-func (cli DockerCLI) writeEnvFile(env map[string]string) (string, error) {
+func writeEnvFile(dir string, env map[string]string) (string, error) {
 	var body strings.Builder
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
@@ -108,13 +133,6 @@ func (cli DockerCLI) writeEnvFile(env map[string]string) (string, error) {
 			return "", errors.New("container environment entry cannot be written to an env file")
 		}
 		body.WriteString(key + "=" + value + "\n")
-	}
-	dir := cli.TempDir
-	if dir == "" {
-		dir = os.TempDir()
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
 	}
 	file, err := os.CreateTemp(dir, "preview-env-*")
 	if err != nil {

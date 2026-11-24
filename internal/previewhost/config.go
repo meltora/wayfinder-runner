@@ -14,10 +14,11 @@ const (
 	DefaultLease           = 45 * time.Minute
 	DefaultMaxConcurrent   = 3
 	DefaultMaxExtension    = 7 * 24 * time.Hour
-	DefaultTeardownTimeout = 2 * time.Minute
+	DefaultTeardownTimeout = 90 * time.Second
 	DefaultHealthInterval  = time.Second
 	DefaultJobUID          = 10001
 	DefaultJobGID          = 10001
+	logGrace               = 10 * time.Second
 )
 
 var deployPhases = []v1.PreviewDeployPhase{
@@ -100,8 +101,8 @@ func (cfg Config) normalized() (Config, error) {
 	for _, timeout := range timeouts {
 		sum += timeout
 	}
-	if sum > cfg.Lease {
-		return Config{}, fmt.Errorf("preview host phase timeouts %s exceed the deploy lease %s", sum, cfg.Lease)
+	if budget := sum + 2*cfg.TeardownTimeout + logGrace; budget > cfg.Lease {
+		return Config{}, fmt.Errorf("preview host phase timeouts, teardown and log grace %s exceed the deploy lease %s", budget, cfg.Lease)
 	}
 	cfg.PhaseTimeouts = maps.Clone(timeouts)
 	return cfg, nil

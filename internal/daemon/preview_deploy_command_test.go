@@ -513,6 +513,39 @@ func TestPreviewDeployRedactsLogTailAndRefusesInvalidControllerOutcome(t *testin
 	}
 }
 
+func TestPreviewDeployChecksMatchUnsortedBlueprintByID(t *testing.T) {
+	content := v1.PreviewBlueprintContentV1{App: v1.PreviewBlueprintAppV1{HealthChecks: []v1.PreviewBlueprintHealthCheckV1{
+		{ID: "root", Path: "/", ExpectedStatus: 200},
+		{ID: "api", Path: "/api", ExpectedStatus: 204},
+	}}}
+	passed := func(ids ...string) []v1.PreviewObservationCheck {
+		checks := make([]v1.PreviewObservationCheck, 0, len(ids))
+		for _, id := range ids {
+			checks = append(checks, v1.PreviewObservationCheck{CheckID: id, Status: v1.PreviewObservationCheckPassed, HTTPStatus: 200})
+		}
+		return checks
+	}
+	sorted := sanitizePreviewDeployOutcome(v1.PreviewDeployOutcome{Kind: v1.PreviewDeployDeployed, Checks: passed("api", "root")}, content, "")
+	if sorted.Kind != v1.PreviewDeployDeployed || len(sorted.Checks) != 2 {
+		t.Fatalf("id-sorted checks of an unsorted blueprint = %+v", sorted)
+	}
+	for name, checks := range map[string][]v1.PreviewObservationCheck{
+		"blueprint order": passed("root", "api"),
+		"missing":         passed("api"),
+		"duplicate":       passed("api", "api"),
+		"extra":           passed("api", "other", "root"),
+		"foreign":         passed("api", "other"),
+	} {
+		outcome := sanitizePreviewDeployOutcome(v1.PreviewDeployOutcome{Kind: v1.PreviewDeployDeployed, Checks: checks}, content, "")
+		if outcome.Kind != v1.PreviewDeployUncertain {
+			t.Fatalf("%s: outcome = %+v", name, outcome)
+		}
+	}
+	if !slices.Equal([]string{content.App.HealthChecks[0].ID, content.App.HealthChecks[1].ID}, []string{"root", "api"}) {
+		t.Fatalf("blueprint checks were reordered: %+v", content.App.HealthChecks)
+	}
+}
+
 func TestPreviewDeployRedactsProviderCredentialFromLogTail(t *testing.T) {
 	redact.ForgetSecretsForTest()
 	t.Cleanup(redact.ForgetSecretsForTest)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -237,8 +238,13 @@ func previewDeployChecksMatchBlueprint(checks []v1.PreviewObservationCheck, cont
 	if len(checks) != len(content.App.HealthChecks) {
 		return false
 	}
-	for index, check := range content.App.HealthChecks {
-		if checks[index].CheckID != check.ID {
+	ids := make([]string, 0, len(content.App.HealthChecks))
+	for _, check := range content.App.HealthChecks {
+		ids = append(ids, check.ID)
+	}
+	slices.Sort(ids)
+	for index, id := range ids {
+		if checks[index].CheckID != id {
 			return false
 		}
 	}

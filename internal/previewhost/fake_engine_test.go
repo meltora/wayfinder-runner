@@ -27,6 +27,8 @@ type fakeEngine struct {
 	exec       func(ctx context.Context, container string, command []string) (string, error)
 	detached   func(spec ContainerSpec) error
 	removeErr  error
+	removeHook func()
+	leftovers  []string
 	sticky     bool
 	hostPort   int
 	stopped    map[string]bool
@@ -65,13 +67,25 @@ func (engine *fakeEngine) CreatedNetworks() []NetworkSpec {
 	return slices.Clone(engine.createdNet)
 }
 
-func (engine *fakeEngine) ImagePresent(_ context.Context, image string) (bool, error) {
+func (engine *fakeEngine) Leftovers() []string {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return slices.Clone(engine.leftovers)
+}
+
+func (engine *fakeEngine) ImagePresent(ctx context.Context, image string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	return engine.present[image], nil
 }
 
-func (engine *fakeEngine) Pull(_ context.Context, image string) (string, error) {
+func (engine *fakeEngine) Pull(ctx context.Context, image string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	engine.record("pull " + image)
@@ -82,7 +96,10 @@ func (engine *fakeEngine) Pull(_ context.Context, image string) (string, error) 
 	return "pulled " + image, nil
 }
 
-func (engine *fakeEngine) CreateNetwork(_ context.Context, spec NetworkSpec) error {
+func (engine *fakeEngine) CreateNetwork(ctx context.Context, spec NetworkSpec) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	engine.record("network " + spec.Name)
@@ -94,7 +111,10 @@ func (engine *fakeEngine) CreateNetwork(_ context.Context, spec NetworkSpec) err
 	return nil
 }
 
-func (engine *fakeEngine) RunDetached(_ context.Context, spec ContainerSpec) error {
+func (engine *fakeEngine) RunDetached(ctx context.Context, spec ContainerSpec) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	engine.mu.Lock()
 	engine.record("detached " + spec.Name)
 	engine.created = append(engine.created, spec)
@@ -115,18 +135,37 @@ func (engine *fakeEngine) RunDetached(_ context.Context, spec ContainerSpec) err
 }
 
 func (engine *fakeEngine) RunOnce(ctx context.Context, spec ContainerSpec) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	engine.mu.Lock()
 	engine.record("once " + strings.Join(spec.Command, " "))
 	engine.created = append(engine.created, spec)
+	if _, exists := engine.containers[spec.Name]; exists {
+		engine.mu.Unlock()
+		return "", fmt.Errorf("container %s already exists", spec.Name)
+	}
+	engine.containers[spec.Name] = spec
 	hook := engine.runOnce
 	engine.mu.Unlock()
+	output, err := "ran "+strings.Join(spec.Command, " "), error(nil)
 	if hook != nil {
-		return hook(ctx, spec)
+		output, err = hook(ctx, spec)
 	}
-	return "ran " + strings.Join(spec.Command, " "), nil
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if ctx.Err() != nil {
+		engine.leftovers = append(engine.leftovers, spec.Name)
+	} else {
+		delete(engine.containers, spec.Name)
+	}
+	return output, err
 }
 
 func (engine *fakeEngine) Exec(ctx context.Context, container string, command []string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	engine.mu.Lock()
 	engine.record("exec " + container + " " + strings.Join(command, " "))
 	hook := engine.exec
@@ -137,14 +176,20 @@ func (engine *fakeEngine) Exec(ctx context.Context, container string, command []
 	return "ok", nil
 }
 
-func (engine *fakeEngine) Running(_ context.Context, container string) (bool, error) {
+func (engine *fakeEngine) Running(ctx context.Context, container string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	_, exists := engine.containers[container]
 	return exists && !engine.stopped[container], nil
 }
 
-func (engine *fakeEngine) HostPort(_ context.Context, container string, port int) (int, error) {
+func (engine *fakeEngine) HostPort(ctx context.Context, container string, port int) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	spec, exists := engine.containers[container]
@@ -154,11 +199,17 @@ func (engine *fakeEngine) HostPort(_ context.Context, container string, port int
 	return engine.hostPort, nil
 }
 
-func (engine *fakeEngine) Logs(_ context.Context, container string) (string, error) {
+func (engine *fakeEngine) Logs(ctx context.Context, container string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return "logs of " + container, nil
 }
 
-func (engine *fakeEngine) List(_ context.Context, labels map[string]string) (Objects, error) {
+func (engine *fakeEngine) List(ctx context.Context, labels map[string]string) (Objects, error) {
+	if err := ctx.Err(); err != nil {
+		return Objects{}, err
+	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	if engine.listErr != nil {
@@ -178,7 +229,16 @@ func (engine *fakeEngine) List(_ context.Context, labels map[string]string) (Obj
 	return objects, nil
 }
 
-func (engine *fakeEngine) Remove(_ context.Context, objects Objects) error {
+func (engine *fakeEngine) Remove(ctx context.Context, objects Objects) error {
+	engine.mu.Lock()
+	hook := engine.removeHook
+	engine.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	engine.record("remove")
@@ -227,6 +287,27 @@ func (workspaces *fakeWorkspaces) CreateDetachedWorkspaceWithCredential(
 		return workspaces.err
 	}
 	return os.MkdirAll(dest, 0o700)
+}
+
+type fakeOwnership struct {
+	mu         sync.Mutex
+	handOffs   []string
+	reclaims   []string
+	reclaimErr error
+}
+
+func (ownership *fakeOwnership) HandOff(_ context.Context, dir string) error {
+	ownership.mu.Lock()
+	defer ownership.mu.Unlock()
+	ownership.handOffs = append(ownership.handOffs, dir)
+	return nil
+}
+
+func (ownership *fakeOwnership) Reclaim(_ context.Context, dir string) error {
+	ownership.mu.Lock()
+	defer ownership.mu.Unlock()
+	ownership.reclaims = append(ownership.reclaims, dir)
+	return ownership.reclaimErr
 }
 
 type fakeRepositories map[string]ResolvedRepository

@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -116,6 +118,7 @@ type phaseFailure struct {
 	phase  v1.PreviewDeployPhase
 	log    string
 	checks []v1.PreviewObservationCheck
+	cause  error
 }
 
 func (d *Docker) Deploy(ctx context.Context, request DeployRequest) DeployResult {
@@ -131,7 +134,7 @@ func (d *Docker) Deploy(ctx context.Context, request DeployRequest) DeployResult
 		return DeployResult{Outcome: v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain}}
 	}
 	outcome := v1.PreviewDeployOutcome{Kind: v1.PreviewDeployFailed, Phase: failure.phase, Checks: failure.checks}
-	if ctx.Err() != nil {
+	if errors.Is(failure.cause, context.DeadlineExceeded) {
 		outcome.Phase = v1.PreviewDeployPhaseLeaseExpired
 		outcome.Checks = nil
 	}
@@ -178,8 +181,9 @@ func (d *Docker) deploy(ctx context.Context, request DeployRequest) ([]v1.Previe
 		err := step.run(phaseCtx, run, log)
 		cancel()
 		if err != nil {
+			cause := ctx.Err()
 			_, _ = log.Write([]byte("error: " + redact.KnownSecretsError(err).Error() + "\n"))
-			return nil, &phaseFailure{phase: step.phase, log: log.String()}
+			return nil, &phaseFailure{phase: step.phase, log: log.String(), cause: cause}
 		}
 	}
 	phaseCtx, cancel := context.WithTimeout(ctx, d.cfg.PhaseTimeouts[v1.PreviewDeployPhaseHealth])
@@ -188,12 +192,13 @@ func (d *Docker) deploy(ctx context.Context, request DeployRequest) ([]v1.Previe
 	if passed {
 		return checks, nil
 	}
+	cause := ctx.Err()
 	log := &tailBuffer{limit: phaseLogLimit}
-	logsCtx, logsCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	logsCtx, logsCancel := context.WithTimeout(context.WithoutCancel(ctx), logGrace)
 	defer logsCancel()
 	logs, _ := d.engine.Logs(logsCtx, run.prefix+"-app")
 	_, _ = log.Write([]byte(logs))
-	return nil, &phaseFailure{phase: v1.PreviewDeployPhaseHealth, log: log.String(), checks: checks}
+	return nil, &phaseFailure{phase: v1.PreviewDeployPhaseHealth, log: log.String(), checks: checks, cause: cause}
 }
 
 func (d *Docker) checkout(ctx context.Context, run *deployment, _ *tailBuffer) error {
@@ -395,10 +400,14 @@ func allPassed(results []v1.PreviewObservationCheck) bool {
 func (d *Docker) probe(ctx context.Context, port int, checks []v1.PreviewBlueprintHealthCheckV1) ([]v1.PreviewObservationCheck, bool) {
 	results := make([]v1.PreviewObservationCheck, 0, len(checks))
 	for _, check := range checks {
+		if !strings.HasPrefix(check.Path, "/") || strings.HasPrefix(check.Path, "//") {
+			return nil, false
+		}
+		target := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), Path: check.Path}
 		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		started := time.Now()
-		request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(port)+check.Path, nil)
-		if err != nil {
+		request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, target.String(), nil)
+		if err != nil || request.URL.Hostname() != "127.0.0.1" {
 			cancel()
 			return nil, false
 		}
