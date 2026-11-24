@@ -12,8 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -166,10 +168,14 @@ func TestPreviewNetworksAreInternalAndEdge(t *testing.T) {
 	}
 	internal, edge := networks[0], networks[1]
 	if internal.Name != prefix || !internal.Internal ||
-		!maps.Equal(internal.Options, map[string]string{"com.docker.network.bridge.inhibit_ipv4": "true"}) {
+		!maps.Equal(internal.Options, map[string]string{
+			"com.docker.network.bridge.inhibit_ipv4": "true",
+			"com.docker.network.enable_ipv6":         "false",
+		}) {
 		t.Fatalf("preview network = %+v", internal)
 	}
-	if edge.Name != prefix+"-edge" || edge.Internal || len(edge.Options) != 0 ||
+	if edge.Name != prefix+"-edge" || edge.Internal ||
+		!maps.Equal(edge.Options, map[string]string{"com.docker.network.enable_ipv6": "false"}) ||
 		!maps.Equal(edge.Labels, PreviewLabels(testRunnerID, testPreviewID)) {
 		t.Fatalf("edge network = %+v", edge)
 	}
@@ -201,7 +207,8 @@ func TestGatewayContainerPolicyAndArguments(t *testing.T) {
 			gateway := specNamed(t, h.engine.Created(), prefix+"-gateway")
 			if gateway.User != "65534:65534" || !gateway.ReadOnly || len(gateway.CapAdd) != 0 || gateway.PidsLimit != 64 ||
 				gateway.MemoryMB != 64 || gateway.CPUs != 0.25 || gateway.PublishPort != 8080 || gateway.Entrypoint != "" ||
-				len(gateway.Env) != 0 || len(gateway.Mounts) != 0 || gateway.NetworkAlias != "" ||
+				!maps.Equal(gateway.Env, map[string]string{"GOMEMLIMIT": "48MiB"}) ||
+				len(gateway.Mounts) != 0 || gateway.NetworkAlias != "" ||
 				!maps.Equal(gateway.Labels, PreviewLabels(testRunnerID, testPreviewID)) ||
 				!strings.HasPrefix(gateway.Image, "our-preview-gateway:") {
 				t.Fatalf("gateway = %+v", gateway)
@@ -359,7 +366,11 @@ func TestDeployRefusesDockerOlderThan26(t *testing.T) {
 	}
 	h := newHarness(t)
 	h.engine.versionErr = errors.New("cannot connect to the docker daemon")
-	assertFailedAndTornDown(t, h, h.deploy(context.Background(), testContent(), testOperation()), v1.PreviewDeployPhaseValidate)
+	unreachable := h.deploy(context.Background(), testContent(), testOperation())
+	assertFailedAndTornDown(t, h, unreachable, v1.PreviewDeployPhaseCheckout)
+	if strings.Contains(unreachable.LogTail, "Docker Engine 26") || len(h.workspaces.calls) != 0 {
+		t.Fatalf("unreachable daemon was reported as too old or continued: %+v", unreachable)
+	}
 	h.engine.versionErr = nil
 	h.engine.version = "26.0.0"
 	for attempt := 0; attempt < 2; attempt++ {
@@ -384,6 +395,63 @@ func TestDeployRefusesReservedServiceNames(t *testing.T) {
 				t.Fatalf("log tail = %q", outcome.LogTail)
 			}
 		})
+	}
+}
+
+func TestGatewayExecutableDefaultsToTheRunningProcess(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		if path, err := defaultSelfExecutable(); err != nil || path != "/proc/self/exe" {
+			t.Fatalf("default self executable = %q %v", path, err)
+		}
+	}
+	h := newHarness(t)
+	self := staticRunnerFixture(t)
+	want, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.cfg.GatewayExecutable = ""
+	h.build()
+	var asked atomic.Int32
+	h.controller.selfExecutable = func() (string, error) {
+		asked.Add(1)
+		return self, nil
+	}
+	if outcome := h.deploy(context.Background(), testContent(), testOperation()); outcome.Kind != v1.PreviewDeployDeployed {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	imports := h.engine.Imports()
+	if asked.Load() == 0 || len(imports) != 1 {
+		t.Fatalf("self executable asked %d times, imports = %d", asked.Load(), len(imports))
+	}
+	archive := tar.NewReader(bytes.NewReader(imports[0].archive))
+	if _, err := archive.Next(); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := io.ReadAll(archive); err != nil || !bytes.Equal(body, want) {
+		t.Fatalf("archive body differs from the running process image: %v", err)
+	}
+}
+
+func TestGatewayAttachFailureTearsEverythingDown(t *testing.T) {
+	h := newHarness(t)
+	h.engine.connectErr = errors.New("network connect refused")
+	outcome := h.deploy(context.Background(), testContent(), testOperation())
+	assertFailedAndTornDown(t, h, outcome, v1.PreviewDeployPhaseServices)
+	prefix := ResourcePrefix(testRunnerID, testPreviewID)
+	for _, name := range []string{prefix, prefix + "-edge"} {
+		if !slices.ContainsFunc(h.engine.CreatedNetworks(), func(spec NetworkSpec) bool { return spec.Name == name }) {
+			t.Fatalf("network %s was never created", name)
+		}
+	}
+	if specNamed(t, h.engine.Created(), prefix+"-gateway").Name == "" {
+		t.Fatal("gateway was never started")
+	}
+	if live := h.live(); len(live.Containers) != 0 || len(live.Networks) != 0 {
+		t.Fatalf("resources survived the attach failure: %+v", live)
+	}
+	if slices.ContainsFunc(h.engine.Created(), func(spec ContainerSpec) bool { return spec.Name == prefix+"-app" }) {
+		t.Fatal("app started after the gateway failed to attach")
 	}
 }
 

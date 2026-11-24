@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -403,6 +404,117 @@ func TestPlainHTTPForwardStripsHopByHopHeaders(t *testing.T) {
 	}
 	if dialed := h.dialer.Dialed(); !slices.Equal(dialed, []string{"93.184.216.34:80"}) {
 		t.Fatalf("dialed = %v", dialed)
+	}
+}
+
+type rawUpstream struct {
+	addr     string
+	mu       sync.Mutex
+	requests []*http.Request
+}
+
+func startRawUpstream(t *testing.T, response string) *rawUpstream {
+	t.Helper()
+	listener := listen(t)
+	t.Cleanup(func() { _ = listener.Close() })
+	upstream := &rawUpstream{addr: listener.Addr().String()}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			request, err := http.ReadRequest(bufio.NewReader(conn))
+			if err == nil {
+				upstream.mu.Lock()
+				upstream.requests = append(upstream.requests, request)
+				upstream.mu.Unlock()
+				_, _ = io.WriteString(conn, response)
+			}
+			_ = conn.Close()
+		}
+	}()
+	return upstream
+}
+
+func (upstream *rawUpstream) Requests() []*http.Request {
+	upstream.mu.Lock()
+	defer upstream.mu.Unlock()
+	return slices.Clone(upstream.requests)
+}
+
+func TestPlainHTTPForwardStripsResponseHeadersNamedInConnection(t *testing.T) {
+	for name, response := range map[string]string{
+		"close with token": "HTTP/1.1 200 OK\r\nConnection: close, X-Upstream-Hop\r\nX-Upstream-Hop: 1\r\nX-Kept: yes\r\nContent-Length: 2\r\n\r\nok",
+		"repeated header":  "HTTP/1.1 200 OK\r\nConnection: close\r\nConnection: X-Upstream-Hop\r\nX-Upstream-Hop: 1\r\nX-Kept: yes\r\nContent-Length: 2\r\n\r\nok",
+		"bare line feeds":  "HTTP/1.1 200 OK\nConnection: close, X-Upstream-Hop\nX-Upstream-Hop: 1\nX-Kept: yes\nContent-Length: 2\n\nok",
+		"after continue":   "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nConnection: close, X-Upstream-Hop\r\nX-Upstream-Hop: 1\r\nX-Kept: yes\r\nContent-Length: 2\r\n\r\nok",
+	} {
+		t.Run(name, func(t *testing.T) {
+			upstream := startRawUpstream(t, response)
+			h := startGateway(t, Config{Allow: []string{"api.example.com"}}, upstream.addr, [][]netip.Addr{public("93.184.216.34")}, 0)
+			got := proxyRequest(t, h.egress, "GET http://api.example.com/ HTTP/1.1\r\nHost: api.example.com\r\n\r\n")
+			body, _ := io.ReadAll(got.Body)
+			if got.StatusCode != http.StatusOK || string(body) != "ok" || got.Header.Get("X-Kept") != "yes" {
+				t.Fatalf("response = %d %q %v", got.StatusCode, body, got.Header)
+			}
+			if got.Header.Get("X-Upstream-Hop") != "" {
+				t.Fatalf("header named in Connection leaked: %v", got.Header)
+			}
+		})
+	}
+}
+
+func TestPlainHTTPForwardAddsNoUserAgentOrCompression(t *testing.T) {
+	upstream := startRawUpstream(t, "HTTP/1.1 204 No Content\r\n\r\n")
+	h := startGateway(t, Config{Allow: []string{"api.example.com"}}, upstream.addr, [][]netip.Addr{public("93.184.216.34")}, 0)
+	proxyRequest(t, h.egress, "GET http://api.example.com/a HTTP/1.1\r\nHost: api.example.com\r\n\r\n")
+	proxyRequest(t, h.egress, "GET http://api.example.com/b HTTP/1.1\r\nHost: api.example.com\r\nUser-Agent: npm/10\r\nAccept-Encoding: br\r\n\r\n")
+	requests := upstream.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d", len(requests))
+	}
+	bare, explicit := requests[0], requests[1]
+	if _, set := bare.Header["User-Agent"]; set {
+		t.Fatalf("gateway added a User-Agent: %v", bare.Header)
+	}
+	if _, set := bare.Header["Accept-Encoding"]; set {
+		t.Fatalf("gateway added an Accept-Encoding: %v", bare.Header)
+	}
+	if explicit.Header.Get("User-Agent") != "npm/10" || explicit.Header.Get("Accept-Encoding") != "br" {
+		t.Fatalf("client headers were not forwarded: %v", explicit.Header)
+	}
+}
+
+func TestPlainHTTPForwardIgnoresProxyEnvironment(t *testing.T) {
+	trap := listen(t)
+	t.Cleanup(func() { _ = trap.Close() })
+	var trapped atomic.Int32
+	go func() {
+		for {
+			conn, err := trap.Accept()
+			if err != nil {
+				return
+			}
+			trapped.Add(1)
+			_ = conn.Close()
+		}
+	}()
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		t.Setenv(key, "http://"+trap.Addr().String())
+	}
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+	upstream := startRawUpstream(t, "HTTP/1.1 204 No Content\r\n\r\n")
+	h := startGateway(t, Config{Allow: []string{"api.example.com"}}, upstream.addr, [][]netip.Addr{public("93.184.216.34")}, 0)
+	if response := proxyRequest(t, h.egress, "GET http://api.example.com/ HTTP/1.1\r\nHost: api.example.com\r\n\r\n"); response.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	if dialed := h.dialer.Dialed(); !slices.Equal(dialed, []string{"93.184.216.34:80"}) {
+		t.Fatalf("dialed = %v", dialed)
+	}
+	if len(upstream.Requests()) != 1 || trapped.Load() != 0 {
+		t.Fatalf("upstream requests = %d trapped = %d", len(upstream.Requests()), trapped.Load())
 	}
 }
 

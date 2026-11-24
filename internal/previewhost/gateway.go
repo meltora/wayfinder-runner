@@ -31,6 +31,7 @@ const (
 	gatewayImageLabel    = "com.ourplatform.preview-gateway"
 	gatewayUser          = "65534:65534"
 	gatewayMemoryMB      = 64
+	gatewayMemoryLimit   = "48MiB"
 	gatewayCPUs          = 0.25
 	gatewayPidsLimit     = 64
 	minimumDockerMajor   = 26
@@ -62,7 +63,7 @@ func (d *Docker) checkDockerVersion(ctx context.Context) error {
 	}
 	version, err := d.engine.ServerVersion(ctx)
 	if err != nil {
-		return validationError{fmt.Errorf("read docker server version: %w", err)}
+		return fmt.Errorf("read docker server version: %w", err)
 	}
 	majorText, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(version), "v"), ".")
 	major, err := strconv.Atoi(majorText)
@@ -116,6 +117,13 @@ func checkStaticExecutable(file io.ReaderAt) error {
 func (d *Docker) gatewayExecutable() (string, error) {
 	if d.cfg.GatewayExecutable != "" {
 		return d.cfg.GatewayExecutable, nil
+	}
+	return d.selfExecutable()
+}
+
+func defaultSelfExecutable() (string, error) {
+	if runtime.GOOS == "linux" {
+		return "/proc/self/exe", nil
 	}
 	return os.Executable()
 }
@@ -219,11 +227,16 @@ func (d *Docker) gatewaySpec(run *deployment, image string) ContainerSpec {
 		Name: gatewayName(run.prefix), Image: image, Network: edgeName(run.prefix), Labels: run.labels,
 		User: gatewayUser, ReadOnly: true, MemoryMB: gatewayMemoryMB, CPUs: gatewayCPUs,
 		PidsLimit: gatewayPidsLimit, PublishPort: gatewayIngressPort, Command: command,
+		Env: map[string]string{"GOMEMLIMIT": gatewayMemoryLimit},
 	}
 }
 
 func (d *Docker) startGateway(ctx context.Context, run *deployment) error {
-	if err := d.engine.CreateNetwork(ctx, NetworkSpec{Name: edgeName(run.prefix), Labels: run.labels}); err != nil {
+	edge := NetworkSpec{
+		Name: edgeName(run.prefix), Labels: run.labels,
+		Options: map[string]string{"com.docker.network.enable_ipv6": "false"},
+	}
+	if err := d.engine.CreateNetwork(ctx, edge); err != nil {
 		return err
 	}
 	image, err := d.ensureGatewayImage(ctx)

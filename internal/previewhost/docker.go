@@ -65,15 +65,16 @@ type Dependencies struct {
 }
 
 type Docker struct {
-	cfg          Config
-	engine       Engine
-	workspaces   WorkspaceCreator
-	repositories RepositoryResolver
-	ownership    WorkspaceOwnership
-	lookup       func(context.Context, string) ([]netip.Addr, error)
-	random       func() (string, error)
-	dial         func(context.Context, string, string) (net.Conn, error)
-	client       *http.Client
+	cfg            Config
+	engine         Engine
+	workspaces     WorkspaceCreator
+	repositories   RepositoryResolver
+	ownership      WorkspaceOwnership
+	lookup         func(context.Context, string) ([]netip.Addr, error)
+	random         func() (string, error)
+	dial           func(context.Context, string, string) (net.Conn, error)
+	selfExecutable func() (string, error)
+	client         *http.Client
 
 	versionMu      sync.Mutex
 	versionChecked bool
@@ -93,6 +94,7 @@ func New(cfg Config, deps Dependencies) (*Docker, error) {
 		cfg: normalized, engine: deps.Engine, workspaces: deps.Workspaces,
 		repositories: deps.Repositories, ownership: deps.Ownership,
 		lookup: defaultLookup, random: randomSecret, dial: (&net.Dialer{}).DialContext,
+		selfExecutable: defaultSelfExecutable,
 		client: &http.Client{
 			Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -291,7 +293,10 @@ func (d *Docker) baseSpec(run *deployment, image string) ContainerSpec {
 func (d *Docker) services(ctx context.Context, run *deployment, log *tailBuffer) error {
 	network := NetworkSpec{
 		Name: run.prefix, Labels: run.labels, Internal: true,
-		Options: map[string]string{"com.docker.network.bridge.inhibit_ipv4": "true"},
+		Options: map[string]string{
+			"com.docker.network.bridge.inhibit_ipv4": "true",
+			"com.docker.network.enable_ipv6":         "false",
+		},
 	}
 	if err := d.engine.CreateNetwork(ctx, network); err != nil {
 		return err

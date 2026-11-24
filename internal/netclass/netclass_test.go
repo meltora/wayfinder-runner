@@ -42,6 +42,8 @@ func TestPublicRefusesEveryDeniedClass(t *testing.T) {
 		"2002::1":                false,
 		"::ffff:10.0.0.1":        false,
 		"::ffff:169.254.169.254": false,
+		"::ffff:100.64.0.1":      false,
+		"::ffff:127.0.0.1":       false,
 		"::ffff:93.184.216.34":   true,
 	} {
 		if got := Public(netip.MustParseAddr(address)); got != want {

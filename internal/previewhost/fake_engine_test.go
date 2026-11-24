@@ -40,6 +40,7 @@ type fakeEngine struct {
 	versions   int
 	imports    []fakeImport
 	connects   []fakeConnect
+	connectErr error
 	hostPorts  []string
 }
 
@@ -95,6 +96,9 @@ func (engine *fakeEngine) ConnectNetwork(ctx context.Context, network, container
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	engine.record("connect " + network + " " + container + " " + alias)
+	if engine.connectErr != nil {
+		return engine.connectErr
+	}
 	if _, exists := engine.networks[network]; !exists {
 		return fmt.Errorf("network %s does not exist", network)
 	}

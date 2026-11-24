@@ -60,17 +60,25 @@ func staticRunner(t *testing.T) string {
 
 func networkGateway(t *testing.T, ctx context.Context, network string) string {
 	t.Helper()
+	address, found := optionalNetworkGateway(t, ctx, network)
+	if !found {
+		t.Fatalf("network %s has no IPv4 gateway", network)
+	}
+	return address
+}
+
+func optionalNetworkGateway(t *testing.T, ctx context.Context, network string) (string, bool) {
+	t.Helper()
 	output, err := exec.CommandContext(ctx, "docker", "network", "inspect", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}", network).CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker network inspect %s: %v: %s", network, err, output)
 	}
 	for _, field := range strings.Fields(string(output)) {
 		if address, err := netip.ParseAddr(field); err == nil && address.Is4() {
-			return address.String()
+			return address.String(), true
 		}
 	}
-	t.Fatalf("network %s has no IPv4 gateway: %q", network, output)
-	return ""
+	return "", false
 }
 
 func probeFromPreviewNetwork(ctx context.Context, cli DockerCLI, prefix, previewID, image, name string, command ...string) (string, error) {
@@ -184,12 +192,26 @@ func TestRealDockerDeployAndDestroy(t *testing.T) {
 		"edge gateway":   "http://" + net.JoinHostPort(networkGateway(t, ctx, prefix+"-edge"), hostPort) + "/",
 		"bridge gateway": "http://" + net.JoinHostPort(networkGateway(t, ctx, "bridge"), hostPort) + "/",
 	}
+	if own, found := optionalNetworkGateway(t, ctx, prefix); found {
+		targets["preview gateway"] = "http://" + net.JoinHostPort(own, hostPort) + "/"
+	}
 	for name, target := range targets {
 		output, err := probeFromPreviewNetwork(ctx, cli, prefix, operation.PreviewID, image, strings.ReplaceAll(name, " ", "-"),
 			"wget", "-q", "-T", "5", "-O", "-", target)
 		if err == nil || strings.Contains(output, "host listener") {
 			t.Fatalf("%s %s reachable from the preview network: %q", name, target, output)
 		}
+	}
+	for name, host := range map[string]string{
+		"dns-random": "preview-" + strconv.FormatInt(time.Now().UnixNano(), 36) + ".example.com",
+		"dns-public": "example.com",
+	} {
+		if output, err := probeFromPreviewNetwork(ctx, cli, prefix, operation.PreviewID, image, name, "nslookup", host); err == nil {
+			t.Fatalf("%s resolved from the preview network: %q", host, output)
+		}
+	}
+	if output, err := probeFromPreviewNetwork(ctx, cli, prefix, operation.PreviewID, image, "ipv6-route", "ip", "-6", "route", "show"); err == nil && strings.TrimSpace(output) != "" {
+		t.Fatalf("the preview network carries IPv6 routes: %q", output)
 	}
 	destroy := v1.PreviewLifecycleOperation{PreviewID: operation.PreviewID}
 	destroy.Action = v1.PreviewLifecycleDestroy
