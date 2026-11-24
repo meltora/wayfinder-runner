@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -16,26 +17,24 @@ import (
 	"github.com/example/app-runner/internal/repo"
 )
 
-const previewEgressUnavailable = "preview egress enforcement is not available yet"
-
 var previewHostDirPattern = regexp.MustCompile(`^[0-9a-f]{12}$`)
-
-type egressGuardedPreviewHost struct {
-	*previewhost.Docker
-}
-
-func (egressGuardedPreviewHost) Deploy(context.Context, previewhost.DeployRequest) previewhost.DeployResult {
-	return previewhost.DeployResult{Outcome: v1.PreviewDeployOutcome{
-		Kind: v1.PreviewDeployFailed, Phase: v1.PreviewDeployPhaseValidate, LogTail: previewEgressUnavailable,
-	}}
-}
 
 func previewHostSeconds(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+func (d *Daemon) previewHostPlatform() string {
+	if d.previewHostGOOS != nil {
+		return d.previewHostGOOS()
+	}
+	return runtime.GOOS
+}
+
 func (d *Daemon) newPreviewHostController() (previewhost.Controller, error) {
 	hosting := d.cfg.PreviewHosting
+	if d.previewHostPlatform() != "linux" {
+		return nil, errors.New("preview hosting needs a Linux runner host")
+	}
 	if d.previewHostMemoryBudgetMB() <= 0 {
 		return nil, errors.New("host memory is unknown; set preview_hosting.memory_budget_mb")
 	}
@@ -62,7 +61,7 @@ func (d *Daemon) newPreviewHostController() (previewhost.Controller, error) {
 	if err != nil {
 		return nil, err
 	}
-	return egressGuardedPreviewHost{Docker: docker}, nil
+	return docker, nil
 }
 
 func (d *Daemon) previewHostRepositoryManager() *repo.Manager {

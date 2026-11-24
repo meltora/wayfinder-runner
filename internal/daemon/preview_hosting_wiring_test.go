@@ -23,26 +23,34 @@ func previewHostingWiringDaemon(t *testing.T) *Daemon {
 	d.runnerID = "runner-1"
 	d.cfg.PreviewHosting = config.PreviewHostingConfig{Enabled: true, MaxConcurrent: 2, MemoryBudgetMB: 4096}
 	d.hostMemory = func() uint64 { return 8 << 30 }
+	d.previewHostGOOS = func() string { return "linux" }
 	return d
 }
 
-func TestPreviewHostControllerWiringRefusesDeployUntilEgressIsEnforced(t *testing.T) {
+func TestPreviewHostControllerWiringReturnsTheDockerController(t *testing.T) {
 	d := previewHostingWiringDaemon(t)
 	controller, err := d.newPreviewHostController()
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, docker := controller.(*previewhost.Docker); !docker {
+		t.Fatalf("production controller = %T, want *previewhost.Docker", controller)
+	}
 	if capability := controller.Capability(); capability.MaxConcurrent != 2 {
 		t.Fatalf("capability=%+v", capability)
 	}
-	command := validPreviewDeployCommand()
-	result := controller.Deploy(context.Background(), previewhost.DeployRequest{Operation: *command.PreviewDeploy})
-	if result.Outcome.Kind != v1.PreviewDeployFailed || result.Outcome.Phase != v1.PreviewDeployPhaseValidate ||
-		!strings.Contains(result.Outcome.LogTail, "egress") {
-		t.Fatalf("outcome=%+v", result.Outcome)
-	}
 	if _, listing := controller.(previewHostIDLister); !listing {
 		t.Fatal("production controller does not list hosted preview ids for the orphan sweep")
+	}
+}
+
+func TestPreviewHostControllerWiringRefusesNonLinuxHosts(t *testing.T) {
+	for _, goos := range []string{"darwin", "windows", "freebsd"} {
+		d := previewHostingWiringDaemon(t)
+		d.previewHostGOOS = func() string { return goos }
+		if _, err := d.newPreviewHostController(); err == nil || err.Error() != "preview hosting needs a Linux runner host" {
+			t.Fatalf("%s: err=%v", goos, err)
+		}
 	}
 }
 

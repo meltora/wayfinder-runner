@@ -119,6 +119,7 @@ type Daemon struct {
 	previewHostRecovering                                 map[string]uint64
 	previewHostWake                                       chan struct{}
 	hostMemory                                            func() uint64
+	previewHostGOOS                                       func() string
 	reviewerIdentityVerifier                              reviewerIdentityVerifier
 	reviewerIdentityVerificationCommandMu                 sync.Mutex
 	reviewerIdentityVerificationCommandActive             map[string]struct{}
