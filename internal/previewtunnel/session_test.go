@@ -94,6 +94,12 @@ func (c *fakeConn) closeCode() int {
 	return c.code
 }
 
+func (c *fakeConn) closeReason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reason
+}
+
 func waitFor(t *testing.T, what string, condition func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(waitTimeout)
@@ -106,8 +112,10 @@ func waitFor(t *testing.T, what string, condition func() bool) {
 }
 
 type halfConn struct {
-	reader *io.PipeReader
-	writer *io.PipeWriter
+	reader        *io.PipeReader
+	writer        *io.PipeWriter
+	mu            sync.Mutex
+	writeDeadline time.Time
 }
 
 func duplexPipe() (*halfConn, *halfConn) {
@@ -124,11 +132,22 @@ func (c *halfConn) Close() error {
 	c.reader.CloseWithError(net.ErrClosed)
 	return nil
 }
-func (c *halfConn) LocalAddr() net.Addr              { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
-func (c *halfConn) RemoteAddr() net.Addr             { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
-func (c *halfConn) SetDeadline(time.Time) error      { return nil }
-func (c *halfConn) SetReadDeadline(time.Time) error  { return nil }
-func (c *halfConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *halfConn) LocalAddr() net.Addr             { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+func (c *halfConn) RemoteAddr() net.Addr            { return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)} }
+func (c *halfConn) SetDeadline(time.Time) error     { return nil }
+func (c *halfConn) SetReadDeadline(time.Time) error { return nil }
+func (c *halfConn) SetWriteDeadline(deadline time.Time) error {
+	c.mu.Lock()
+	c.writeDeadline = deadline
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *halfConn) lastWriteDeadline() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.writeDeadline
+}
 
 type fakeResolver struct {
 	previews map[string]fakePreview
@@ -169,6 +188,7 @@ type harness struct {
 	conn      *fakeConn
 	session   *Session
 	upstreams chan *halfConn
+	locals    chan *halfConn
 	dialed    chan string
 	ticks     chan time.Time
 	clock     *fakeClock
@@ -188,6 +208,7 @@ func newHarness(t *testing.T, previews ...string) *harness {
 		t:         t,
 		conn:      newFakeConn(),
 		upstreams: make(chan *halfConn, 1024),
+		locals:    make(chan *halfConn, 1024),
 		dialed:    make(chan string, 1024),
 		ticks:     make(chan time.Time),
 		clock:     &fakeClock{now: time.Unix(1_800_000_000, 0)},
@@ -200,6 +221,7 @@ func newHarness(t *testing.T, previews ...string) *harness {
 			return nil, h.dialErr
 		}
 		local, remote := duplexPipe()
+		h.locals <- local
 		h.upstreams <- remote
 		return local, nil
 	}
@@ -616,6 +638,7 @@ func TestStreamLimitsResetLimit(t *testing.T) {
 	id += 2
 	first := uint32(1)
 	h.deliver(FrameReset, first, []byte{byte(ResetRefused)})
+	waitFor(t, "the reset stream to be released", func() bool { return h.snapshot().live == StreamsPerTunnel-1 })
 	h.open(id, "e")
 	h.expectQuiet()
 	id += 2
@@ -784,4 +807,170 @@ func TestConnFailureStopsSession(t *testing.T) {
 		t.Fatal("session did not stop")
 	}
 	expectUpstreamClosed(t, upstream)
+}
+
+type sessionSnapshot struct {
+	open          int
+	live          int
+	perPreview    map[string]int
+	unconsumed    int64
+	outboxData    int64
+	outboxControl int64
+}
+
+func (h *harness) snapshot() sessionSnapshot {
+	h.session.mu.Lock()
+	defer h.session.mu.Unlock()
+	perPreview := map[string]int{}
+	for preview, count := range h.session.perPreview {
+		perPreview[preview] = count
+	}
+	return sessionSnapshot{
+		open:          len(h.session.streams),
+		live:          len(h.session.live),
+		perPreview:    perPreview,
+		unconsumed:    h.session.unconsumed,
+		outboxData:    h.session.outboxData,
+		outboxControl: h.session.outboxControl,
+	}
+}
+
+func (h *harness) openBothEndedBlocked(streamID uint32, preview string) *halfConn {
+	h.t.Helper()
+	upstream := h.openUpstream(streamID, preview)
+	if err := upstream.CloseWrite(); err != nil {
+		h.t.Fatal(err)
+	}
+	h.expectFrame(FrameEnd, streamID, nil)
+	h.deliver(FrameData, streamID, bytes.Repeat([]byte{'q'}, MaxPayload))
+	h.deliver(FrameEnd, streamID, nil)
+	return upstream
+}
+
+func (h *harness) expectReclaimed() {
+	h.t.Helper()
+	waitFor(h.t, "the blocked stream to be reclaimed", func() bool {
+		snapshot := h.snapshot()
+		return snapshot.live == 0 && len(snapshot.perPreview) == 0 && snapshot.unconsumed == 0
+	})
+}
+
+func TestBothEndedBlockedStreamStillCounts(t *testing.T) {
+	h := newHarness(t, "a")
+	h.start()
+	h.openBothEndedBlocked(1, "a")
+	snapshot := h.snapshot()
+	if snapshot.open != 0 || snapshot.live != 1 || snapshot.perPreview["a"] != 1 || snapshot.unconsumed != MaxPayload {
+		t.Fatalf("snapshot = %+v, want the closed stream still live and counted", snapshot)
+	}
+	id := uint32(3)
+	for range StreamsPerPreview - 1 {
+		h.open(id, "a")
+		id += 2
+	}
+	h.open(id, "a")
+	h.expectReset(id, ResetLimit)
+	h.deliver(FrameEnd, 1, nil)
+	h.expectQuiet()
+}
+
+func TestResetPreviewReclaimsBothEndedBlockedStream(t *testing.T) {
+	h := newHarness(t, "a")
+	h.start()
+	h.openBothEndedBlocked(1, "a")
+	h.session.ResetPreview("a")
+	h.expectReclaimed()
+	h.expectQuiet()
+}
+
+func TestIdleSweepReclaimsBothEndedBlockedStream(t *testing.T) {
+	h := newHarness(t, "a")
+	h.start()
+	h.openBothEndedBlocked(1, "a")
+	h.clock.Advance(IdleTimeout - time.Second)
+	h.tick()
+	if snapshot := h.snapshot(); snapshot.live != 1 {
+		t.Fatalf("snapshot = %+v, reclaimed before the idle timeout", snapshot)
+	}
+	h.clock.Advance(time.Second)
+	h.tick()
+	h.expectReclaimed()
+	h.expectQuiet()
+}
+
+func TestUpstreamWritesHaveDeadline(t *testing.T) {
+	h := newHarness(t, "a")
+	h.start()
+	upstream := h.openUpstream(1, "a")
+	local := <-h.locals
+	before := time.Now()
+	h.deliver(FrameData, 1, []byte("x"))
+	readUpstream(t, upstream, 1)
+	deadline := local.lastWriteDeadline()
+	if deadline.Before(before.Add(IdleTimeout)) || deadline.After(time.Now().Add(IdleTimeout)) {
+		t.Fatalf("write deadline %v is not IdleTimeout after the write", deadline)
+	}
+}
+
+func TestOutboxBoundedWhenGatewayStopsReading(t *testing.T) {
+	h := newHarness(t, "a")
+	h.conn.out = make(chan []byte, 16)
+	h.start()
+	upstream := h.openUpstream(1, "a")
+	h.deliver(FrameWindow, 1, creditFrame(MaxWindow-InitialWindow))
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		chunk := bytes.Repeat([]byte{'z'}, 1<<20)
+		for range 64 {
+			if _, err := upstream.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+	waitFor(t, "the outbox to fill", func() bool { return h.snapshot().outboxData >= OutboxDataLimit })
+	time.Sleep(20 * time.Millisecond)
+	if data := h.snapshot().outboxData; data > OutboxDataLimit+MaxMessage {
+		t.Fatalf("outbox holds %d data bytes, want at most %d", data, OutboxDataLimit+MaxMessage)
+	}
+	select {
+	case <-written:
+		t.Fatal("the upstream wrote 64 MiB while the gateway was not reading")
+	default:
+	}
+}
+
+func TestControlBacklogOverflowCloses1008(t *testing.T) {
+	h := newHarness(t)
+	h.conn.out = make(chan []byte)
+	h.session.controlLimit = 60
+	h.start()
+	for id := uint32(1); ; id += 2 {
+		message := rawFrame(byte(FrameOpen), id, []byte(`{"preview_id":"x","preview_key":"y"}`))
+		select {
+		case h.conn.in <- message:
+			continue
+		case err := <-h.result:
+			if !errors.Is(err, ErrOutboxOverflow) {
+				t.Fatalf("Run error = %v, want ErrOutboxOverflow", err)
+			}
+			h.result <- err
+		case <-time.After(waitTimeout):
+			t.Fatal("session did not close")
+		}
+		break
+	}
+	if code, reason := h.conn.closeCode(), h.conn.closeReason(); code != 1008 || reason != "outbox overflow" {
+		t.Fatalf("close = %d %q, want 1008 \"outbox overflow\"", code, reason)
+	}
+}
+
+func TestProtocolCloseReasonIsFixed(t *testing.T) {
+	h := newHarness(t, "a")
+	h.start()
+	h.deliverFinal(FrameOpen, 1, []byte(`{"preview_id":"évil","preview_key":"k","x":1}`))
+	h.expectClosed1002()
+	if reason := h.conn.closeReason(); reason != "protocol error" {
+		t.Fatalf("close reason = %q, want a fixed reason", reason)
+	}
 }

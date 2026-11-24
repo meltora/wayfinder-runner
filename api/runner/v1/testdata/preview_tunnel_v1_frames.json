@@ -11,12 +11,13 @@
     "open": "present for OPEN: the strictly parsed preview_id and preview_key",
     "receiver": "frames are judged as received by the runner; a gateway receiving OPEN closes 1002 regardless of payload",
     "reset_code": "present for RESET: the code name the receiver acts on; an unknown code decodes ok and maps to protocol",
-    "sequence_expect": "ok: the runner accepts the message and the tunnel stays open; drop: the message names an odd stream id at or below the highest opened id that is not open (closed, reset, or skipped by the gateway), it is ignored without any reply or state change; close_1002: the runner closes the tunnel with close code 1002 and sends nothing more; close_1002 is always the last step",
-    "sequence_replies": "replies_hex lists, in order, every message the runner sends because of that step before the next step is delivered, including replies that depend on the upstream such as RESET after a failed lookup, END after the upstream closes, or WINDOW after bytes reach the upstream; a replayer waits for exactly these and then for silence before delivering the next step; when a sequence ends without close_1002 the gateway closes the tunnel",
+    "sequence_expect": "ok: the runner accepts the message and the tunnel stays open; drop: the message names an odd stream id at or below the highest opened id that is not open (closed, reset, or skipped by the gateway), it is ignored without any reply or state change; close_1002: the runner closes the tunnel with close code 1002 and sends nothing more; close_1002 is always the last step; a second END is drop once both ENDs have closed the stream and close_1002 while the stream is still open",
+    "sequence_replies": "replies_hex is the complete, ordered list of messages the runner sends because of that step, including replies that depend on the upstream such as RESET after a failed lookup, END after the upstream closes, or WINDOW after bytes reach the upstream; the runner sends nothing else; a replayer waits for exactly these replies, then waits for 50 ms of silence before delivering the next step; the 50 ms is advisory for replay only and is not a protocol timing rule; when a sequence ends without close_1002 the gateway closes the tunnel",
     "sequence_step": "from is always gateway: hex, expanded with fill_byte and fill_count exactly as for frames and checked against length, is one websocket binary message the runner receives",
     "sequence_upstream": "upstream is how the local upstream behind every known preview behaves: discard reads and discards all bytes and never writes or closes, ignoring the runner's half-close; close_on_eof reads and discards and closes its side once it reads EOF, so the runner sends END; stall accepts the connection and never reads, writes or closes, so gateway DATA stays queued and unconsumed",
     "sequences": "stateful replays from the runner's point of view; each sequence starts on a fresh tunnel; known_previews are the hosted previews the runner owns, all deployed and unexpired; an OPEN naming any other preview_id, or a known preview_id with a different preview_key, is answered with RESET not_found and nothing is dialed; steps run in order",
     "stream_id_rule": "every frame needs an odd, non-zero stream id; even ids are a protocol error in both directions",
+    "upstream_checks": "optional per step: upstream_receives_hex is the complete byte string, in lowercase hex, that the upstream of the step's stream id must have received from the runner since that stream was opened, by the end of the step (an empty string means nothing); upstream_eof true means that upstream has read the runner's half-close by then, false means it has not; each is absent when not asserted, and neither appears in stall sequences",
     "window_credit": "present for WINDOW: the uint32 big-endian credit",
     "window_policy": "runner policy, not protocol: credit is granted only after bytes are written to the upstream, as one WINDOW per stream once at least 131072 written bytes are ungranted, never while 16777216 or more received bytes are unconsumed across the tunnel, and withheld credit is sent once the total drops below that; a gateway must not rely on grant size or timing beyond the spec"
   },
@@ -591,7 +592,9 @@
           "hex": "020000000168656c6c6f",
           "length": 10,
           "expect": "ok",
-          "replies_hex": []
+          "replies_hex": [],
+          "upstream_receives_hex": "68656c6c6f",
+          "upstream_eof": false
         },
         {
           "from": "gateway",
@@ -600,12 +603,22 @@
           "expect": "ok",
           "replies_hex": [
             "0300000001"
-          ]
+          ],
+          "upstream_receives_hex": "68656c6c6f",
+          "upstream_eof": true
         },
         {
           "from": "gateway",
           "hex": "02000000016c617465",
           "length": 9,
+          "expect": "drop",
+          "replies_hex": [],
+          "upstream_receives_hex": "68656c6c6f"
+        },
+        {
+          "from": "gateway",
+          "hex": "0300000001",
+          "length": 5,
           "expect": "drop",
           "replies_hex": []
         }
@@ -895,7 +908,8 @@
           "hex": "020000000178",
           "length": 6,
           "expect": "drop",
-          "replies_hex": []
+          "replies_hex": [],
+          "upstream_receives_hex": ""
         },
         {
           "from": "gateway",
@@ -944,7 +958,9 @@
           "hex": "020000000579",
           "length": 6,
           "expect": "ok",
-          "replies_hex": []
+          "replies_hex": [],
+          "upstream_receives_hex": "79",
+          "upstream_eof": false
         }
       ]
     },

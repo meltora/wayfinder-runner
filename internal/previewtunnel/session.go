@@ -16,10 +16,16 @@ import (
 const (
 	IdleTimeout          = 5 * time.Minute
 	CloseProtocolError   = 1002
+	CloseOutboxOverflow  = 1008
+	OutboxDataLimit      = 4 << 20
+	OutboxControlLimit   = 1 << 20
 	creditGrantThreshold = InitialWindow / 2
 	idleSweepInterval    = 15 * time.Second
-	maxCloseReason       = 123
+	protocolCloseReason  = "protocol error"
+	outboxOverflowReason = "outbox overflow"
 )
+
+var ErrOutboxOverflow = errors.New("preview tunnel outbox overflow")
 
 type Conn interface {
 	ReadMessage(ctx context.Context) ([]byte, error)
@@ -34,26 +40,36 @@ type Resolver interface {
 type DialFunc func(ctx context.Context, address string) (net.Conn, error)
 
 type Session struct {
-	conn      Conn
-	resolver  Resolver
-	dial      DialFunc
-	logger    *slog.Logger
-	now       func() time.Time
-	idleTicks <-chan time.Time
+	conn         Conn
+	resolver     Resolver
+	dial         DialFunc
+	logger       *slog.Logger
+	now          func() time.Time
+	idleTicks    <-chan time.Time
+	controlLimit int64
 
-	mu         sync.Mutex
-	outCond    *sync.Cond
-	outbox     [][]byte
-	ctx        context.Context
-	done       bool
-	writeErr   error
-	streams    map[uint32]*stream
-	live       map[uint32]*stream
-	perPreview map[string]int
-	highest    uint32
-	unconsumed int64
-	toClose    []net.Conn
-	wg         sync.WaitGroup
+	mu            sync.Mutex
+	outCond       *sync.Cond
+	outbox        []outboundMessage
+	outboxData    int64
+	outboxControl int64
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          bool
+	overflowed    bool
+	writeErr      error
+	streams       map[uint32]*stream
+	live          map[uint32]*stream
+	perPreview    map[string]int
+	highest       uint32
+	unconsumed    int64
+	toClose       []net.Conn
+	wg            sync.WaitGroup
+}
+
+type outboundMessage struct {
+	message []byte
+	data    bool
 }
 
 type stream struct {
@@ -87,14 +103,15 @@ func NewSession(conn Conn, resolver Resolver, dial DialFunc, logger *slog.Logger
 		now = time.Now
 	}
 	s := &Session{
-		conn:       conn,
-		resolver:   resolver,
-		dial:       dial,
-		logger:     logger,
-		now:        now,
-		streams:    map[uint32]*stream{},
-		live:       map[uint32]*stream{},
-		perPreview: map[string]int{},
+		conn:         conn,
+		resolver:     resolver,
+		dial:         dial,
+		logger:       logger,
+		now:          now,
+		controlLimit: OutboxControlLimit,
+		streams:      map[uint32]*stream{},
+		live:         map[uint32]*stream{},
+		perPreview:   map[string]int{},
 	}
 	s.outCond = sync.NewCond(&s.mu)
 	return s
@@ -105,21 +122,29 @@ func (s *Session) Run(ctx context.Context) error {
 	defer cancel()
 	s.mu.Lock()
 	s.ctx = ctx
+	s.cancel = cancel
 	s.mu.Unlock()
 	s.wg.Add(2)
-	go s.writeLoop(ctx, cancel)
+	go s.writeLoop(ctx)
 	go s.idleLoop(ctx)
 	err := s.readLoop(ctx)
 	s.shutdown()
-	if errors.Is(err, ErrProtocol) {
-		_ = s.conn.Close(CloseProtocolError, closeReason(err))
+	s.mu.Lock()
+	overflowed := s.overflowed
+	s.mu.Unlock()
+	switch {
+	case errors.Is(err, ErrProtocol):
+		_ = s.conn.Close(CloseProtocolError, protocolCloseReason)
+	case overflowed:
+		_ = s.conn.Close(CloseOutboxOverflow, outboxOverflowReason)
+		err = ErrOutboxOverflow
 	}
 	cancel()
 	s.wg.Wait()
 	s.mu.Lock()
 	writeErr := s.writeErr
 	s.mu.Unlock()
-	if writeErr != nil && !errors.Is(err, ErrProtocol) {
+	if writeErr != nil && !errors.Is(err, ErrProtocol) && !overflowed {
 		return writeErr
 	}
 	return err
@@ -128,24 +153,16 @@ func (s *Session) Run(ctx context.Context) error {
 func (s *Session) ResetPreview(previewID string) {
 	s.mu.Lock()
 	ids := make([]uint32, 0)
-	for id, st := range s.streams {
+	for id, st := range s.live {
 		if st.previewID == previewID {
 			ids = append(ids, id)
 		}
 	}
 	sortIDs(ids)
 	for _, id := range ids {
-		s.resetLocked(s.streams[id], ResetNotFound)
+		s.resetLocked(s.live[id], ResetNotFound)
 	}
 	s.unlockAndClose()
-}
-
-func closeReason(err error) string {
-	reason := err.Error()
-	if len(reason) > maxCloseReason {
-		reason = reason[:maxCloseReason]
-	}
-	return reason
 }
 
 func sortIDs(ids []uint32) {
@@ -162,10 +179,25 @@ func (s *Session) unlockAndClose() {
 }
 
 func (s *Session) sendLocked(frame Frame) {
-	if s.done {
+	if s.done || s.overflowed {
 		return
 	}
-	s.outbox = append(s.outbox, EncodeFrame(frame))
+	message := EncodeFrame(frame)
+	size := int64(len(message))
+	data := frame.Type == FrameData
+	if data {
+		s.outboxData += size
+	} else {
+		if s.outboxControl+size > s.controlLimit {
+			s.overflowed = true
+			if s.cancel != nil {
+				s.cancel()
+			}
+			return
+		}
+		s.outboxControl += size
+	}
+	s.outbox = append(s.outbox, outboundMessage{message: message, data: data})
 	s.outCond.Signal()
 }
 
@@ -179,7 +211,7 @@ func windowFrame(id uint32, credit int64) Frame {
 	return Frame{Type: FrameWindow, StreamID: id, Payload: payload}
 }
 
-func (s *Session) writeLoop(ctx context.Context, cancel context.CancelFunc) {
+func (s *Session) writeLoop(ctx context.Context) {
 	defer s.wg.Done()
 	for {
 		s.mu.Lock()
@@ -191,15 +223,28 @@ func (s *Session) writeLoop(ctx context.Context, cancel context.CancelFunc) {
 			s.mu.Unlock()
 			return
 		}
-		message := s.outbox[0]
-		s.outbox[0] = nil
+		next := s.outbox[0]
+		s.outbox[0] = outboundMessage{}
 		s.outbox = s.outbox[1:]
+		size := int64(len(next.message))
+		if next.data {
+			before := s.outboxData
+			s.outboxData -= size
+			if before >= OutboxDataLimit && s.outboxData < OutboxDataLimit {
+				for _, st := range s.live {
+					st.cond.Broadcast()
+				}
+			}
+		} else {
+			s.outboxControl -= size
+		}
 		s.mu.Unlock()
-		if err := s.conn.WriteMessage(ctx, message); err != nil {
+		if err := s.conn.WriteMessage(ctx, next.message); err != nil {
 			s.mu.Lock()
 			if s.writeErr == nil {
 				s.writeErr = err
 			}
+			cancel := s.cancel
 			s.mu.Unlock()
 			cancel()
 			return
@@ -229,14 +274,14 @@ func (s *Session) sweepIdle() {
 	s.mu.Lock()
 	now := s.now()
 	ids := make([]uint32, 0)
-	for id, st := range s.streams {
-		if now.Sub(st.lastData) >= IdleTimeout {
+	for id, st := range s.live {
+		if !st.closed && now.Sub(st.lastData) >= IdleTimeout {
 			ids = append(ids, id)
 		}
 	}
 	sortIDs(ids)
 	for _, id := range ids {
-		s.resetLocked(s.streams[id], ResetIdle)
+		s.resetLocked(s.live[id], ResetIdle)
 	}
 	s.unlockAndClose()
 }
@@ -305,7 +350,7 @@ func (s *Session) openLocked(frame Frame) error {
 	if s.done {
 		return nil
 	}
-	if len(s.streams) >= StreamsPerTunnel || s.perPreview[request.PreviewID] >= StreamsPerPreview {
+	if len(s.live) >= StreamsPerTunnel || s.perPreview[request.PreviewID] >= StreamsPerPreview {
 		s.sendLocked(resetFrame(frame.StreamID, ResetLimit))
 		return nil
 	}
@@ -363,10 +408,6 @@ func (s *Session) closeProtocolLocked(st *stream) {
 	}
 	st.open = false
 	delete(s.streams, st.id)
-	s.perPreview[st.previewID]--
-	if s.perPreview[st.previewID] == 0 {
-		delete(s.perPreview, st.previewID)
-	}
 }
 
 func (s *Session) dropLocked(st *stream) {
@@ -419,11 +460,7 @@ func (s *Session) grantLocked(st *stream) {
 
 func (s *Session) serve(st *stream, request OpenRequest) {
 	defer s.wg.Done()
-	defer func() {
-		s.mu.Lock()
-		delete(s.live, st.id)
-		s.mu.Unlock()
-	}()
+	defer s.release(st)
 	address, ok := s.resolver.Resolve(st.ctx, request)
 	if !ok {
 		s.reset(st, ResetNotFound)
@@ -455,6 +492,17 @@ func (s *Session) serve(st *stream, request OpenRequest) {
 	_ = upstream.Close()
 }
 
+func (s *Session) release(st *stream) {
+	s.mu.Lock()
+	s.dropLocked(st)
+	delete(s.live, st.id)
+	s.perPreview[st.previewID]--
+	if s.perPreview[st.previewID] <= 0 {
+		delete(s.perPreview, st.previewID)
+	}
+	s.unlockAndClose()
+}
+
 func (s *Session) reset(st *stream, code ResetCode) {
 	s.mu.Lock()
 	s.resetLocked(st, code)
@@ -465,7 +513,7 @@ func (s *Session) copyFromUpstream(st *stream) {
 	buffer := make([]byte, MaxPayload)
 	for {
 		s.mu.Lock()
-		for st.sendWindow == 0 && !st.closed {
+		for (st.sendWindow == 0 || s.outboxData >= OutboxDataLimit) && !st.closed {
 			st.cond.Wait()
 		}
 		if st.closed {
@@ -523,6 +571,7 @@ func (s *Session) copyToUpstream(st *stream) {
 		st.queue[0] = nil
 		st.queue = st.queue[1:]
 		s.mu.Unlock()
+		_ = st.upstream.SetWriteDeadline(time.Now().Add(IdleTimeout))
 		_, err := st.upstream.Write(chunk)
 		s.mu.Lock()
 		if st.closed {

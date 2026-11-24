@@ -3,6 +3,7 @@ package previewtunnel
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -65,13 +67,27 @@ type PreviewTunnelSequence struct {
 }
 
 type PreviewTunnelSequenceStep struct {
-	From       string   `json:"from"`
-	Hex        string   `json:"hex"`
-	FillByte   string   `json:"fill_byte,omitempty"`
-	FillCount  int      `json:"fill_count,omitempty"`
-	Length     int      `json:"length"`
-	Expect     string   `json:"expect"`
-	RepliesHex []string `json:"replies_hex"`
+	From                string   `json:"from"`
+	Hex                 string   `json:"hex"`
+	FillByte            string   `json:"fill_byte,omitempty"`
+	FillCount           int      `json:"fill_count,omitempty"`
+	Length              int      `json:"length"`
+	Expect              string   `json:"expect"`
+	RepliesHex          []string `json:"replies_hex"`
+	UpstreamReceivesHex *string  `json:"upstream_receives_hex,omitempty"`
+	UpstreamEOF         *bool    `json:"upstream_eof,omitempty"`
+}
+
+func expectUpstream(step PreviewTunnelSequenceStep, received string) PreviewTunnelSequenceStep {
+	receivedHex := hex.EncodeToString([]byte(received))
+	step.UpstreamReceivesHex = &receivedHex
+	return step
+}
+
+func expectUpstreamEOF(step PreviewTunnelSequenceStep, received string, eof bool) PreviewTunnelSequenceStep {
+	step = expectUpstream(step, received)
+	step.UpstreamEOF = &eof
+	return step
 }
 
 const (
@@ -147,9 +163,10 @@ func buildSequences() []PreviewTunnelSequence {
 	return []PreviewTunnelSequence{
 		sequence("open_data_end_half_closes", upstreamCloseOnEOF,
 			sequenceStep(expectOK, openKnown(1)),
-			sequenceStep(expectOK, dataMessage(1, []byte("hello"))),
-			sequenceStep(expectOK, endMessage(1), endMessage(1)),
-			sequenceStep(expectDrop, dataMessage(1, []byte("late"))),
+			expectUpstreamEOF(sequenceStep(expectOK, dataMessage(1, []byte("hello"))), "hello", false),
+			expectUpstreamEOF(sequenceStep(expectOK, endMessage(1), endMessage(1)), "hello", true),
+			expectUpstream(sequenceStep(expectDrop, dataMessage(1, []byte("late"))), "hello"),
+			sequenceStep(expectDrop, endMessage(1)),
 		),
 		sequence("unknown_preview_resets_not_found", upstreamDiscard,
 			sequenceStep(expectOK, openMessage(1, sequenceUnknownID, sequencePreviewKey), resetMessage(1, byte(ResetNotFound))),
@@ -187,14 +204,14 @@ func buildSequences() []PreviewTunnelSequence {
 		sequence("closed_stream_frames_dropped", upstreamDiscard,
 			sequenceStep(expectOK, openKnown(1)),
 			sequenceStep(expectOK, resetMessage(1, byte(ResetRefused))),
-			sequenceStep(expectDrop, dataMessage(1, []byte("x"))),
+			expectUpstream(sequenceStep(expectDrop, dataMessage(1, []byte("x"))), ""),
 			sequenceStep(expectDrop, endMessage(1)),
 			sequenceStep(expectDrop, endMessage(1)),
 			sequenceStep(expectDrop, windowMessage(1, MaxWindow)),
 			sequenceStep(expectDrop, resetMessage(1, byte(ResetIdle))),
 			sequenceStep(expectOK, openKnown(5)),
 			sequenceStep(expectDrop, dataMessage(3, []byte("x"))),
-			sequenceStep(expectOK, dataMessage(5, []byte("y"))),
+			expectUpstreamEOF(sequenceStep(expectOK, dataMessage(5, []byte("y"))), "y", false),
 		),
 		sequence("reset_code_7_closes_stream_only", upstreamDiscard,
 			sequenceStep(expectOK, openKnown(1)),
@@ -363,8 +380,9 @@ func BuildPreviewTunnelVectorFile() PreviewTunnelVectorFile {
 			"frames":            "stateless decoding only; stream ordering, windows and limits are covered by sequences",
 			"sequences":         "stateful replays from the runner's point of view; each sequence starts on a fresh tunnel; known_previews are the hosted previews the runner owns, all deployed and unexpired; an OPEN naming any other preview_id, or a known preview_id with a different preview_key, is answered with RESET not_found and nothing is dialed; steps run in order",
 			"sequence_step":     "from is always gateway: hex, expanded with fill_byte and fill_count exactly as for frames and checked against length, is one websocket binary message the runner receives",
-			"sequence_expect":   "ok: the runner accepts the message and the tunnel stays open; drop: the message names an odd stream id at or below the highest opened id that is not open (closed, reset, or skipped by the gateway), it is ignored without any reply or state change; close_1002: the runner closes the tunnel with close code 1002 and sends nothing more; close_1002 is always the last step",
-			"sequence_replies":  "replies_hex lists, in order, every message the runner sends because of that step before the next step is delivered, including replies that depend on the upstream such as RESET after a failed lookup, END after the upstream closes, or WINDOW after bytes reach the upstream; a replayer waits for exactly these and then for silence before delivering the next step; when a sequence ends without close_1002 the gateway closes the tunnel",
+			"sequence_expect":   "ok: the runner accepts the message and the tunnel stays open; drop: the message names an odd stream id at or below the highest opened id that is not open (closed, reset, or skipped by the gateway), it is ignored without any reply or state change; close_1002: the runner closes the tunnel with close code 1002 and sends nothing more; close_1002 is always the last step; a second END is drop once both ENDs have closed the stream and close_1002 while the stream is still open",
+			"sequence_replies":  "replies_hex is the complete, ordered list of messages the runner sends because of that step, including replies that depend on the upstream such as RESET after a failed lookup, END after the upstream closes, or WINDOW after bytes reach the upstream; the runner sends nothing else; a replayer waits for exactly these replies, then waits for 50 ms of silence before delivering the next step; the 50 ms is advisory for replay only and is not a protocol timing rule; when a sequence ends without close_1002 the gateway closes the tunnel",
+			"upstream_checks":   "optional per step: upstream_receives_hex is the complete byte string, in lowercase hex, that the upstream of the step's stream id must have received from the runner since that stream was opened, by the end of the step (an empty string means nothing); upstream_eof true means that upstream has read the runner's half-close by then, false means it has not; each is absent when not asserted, and neither appears in stall sequences",
 			"sequence_upstream": "upstream is how the local upstream behind every known preview behaves: discard reads and discards all bytes and never writes or closes, ignoring the runner's half-close; close_on_eof reads and discards and closes its side once it reads EOF, so the runner sends END; stall accepts the connection and never reads, writes or closes, so gateway DATA stays queued and unconsumed",
 			"window_policy":     "runner policy, not protocol: credit is granted only after bytes are written to the upstream, as one WINDOW per stream once at least 131072 written bytes are ungranted, never while 16777216 or more received bytes are unconsumed across the tunnel, and withheld credit is sent once the total drops below that; a gateway must not rely on grant size or timing beyond the spec",
 			"stream_id_rule":    "every frame needs an odd, non-zero stream id; even ids are a protocol error in both directions",
@@ -611,13 +629,70 @@ func TestPreviewTunnelV1SequenceVectorsReplay(t *testing.T) {
 	}
 }
 
-func driveSequenceUpstream(mode string, upstream *halfConn) {
-	switch mode {
-	case upstreamDiscard:
-		_, _ = io.Copy(io.Discard, upstream)
-	case upstreamCloseOnEOF:
-		_, _ = io.Copy(io.Discard, upstream)
+const sequenceSilence = 50 * time.Millisecond
+
+type upstreamRecorder struct {
+	mu       sync.Mutex
+	received []byte
+	eof      bool
+}
+
+func (r *upstreamRecorder) state() ([]byte, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return bytes.Clone(r.received), r.eof
+}
+
+func driveSequenceUpstream(mode string, upstream *halfConn, recorder *upstreamRecorder) {
+	if mode == upstreamStall {
+		return
+	}
+	buffer := make([]byte, MaxPayload)
+	for {
+		n, err := upstream.Read(buffer)
+		recorder.mu.Lock()
+		recorder.received = append(recorder.received, buffer[:n]...)
+		if errors.Is(err, io.EOF) {
+			recorder.eof = true
+		}
+		recorder.mu.Unlock()
+		if err != nil {
+			break
+		}
+	}
+	if mode == upstreamCloseOnEOF {
 		_ = upstream.Close()
+	}
+}
+
+func assertSequenceUpstream(t *testing.T, index int, step PreviewTunnelSequenceStep, recorder *upstreamRecorder) {
+	t.Helper()
+	if step.UpstreamReceivesHex == nil && step.UpstreamEOF == nil {
+		return
+	}
+	if recorder == nil {
+		t.Fatalf("step %d: upstream checks on a stream without an upstream", index)
+	}
+	want := []byte{}
+	if step.UpstreamReceivesHex != nil {
+		decoded, err := hex.DecodeString(*step.UpstreamReceivesHex)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = decoded
+	}
+	deadline := time.Now().Add(waitTimeout)
+	for {
+		received, eof := recorder.state()
+		receivedOK := step.UpstreamReceivesHex == nil || bytes.Equal(received, want)
+		eofOK := step.UpstreamEOF == nil || eof == *step.UpstreamEOF
+		if receivedOK && eofOK {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("step %d: upstream received %x eof %v, want %x eof %v", index, received, eof, want, step.UpstreamEOF != nil && *step.UpstreamEOF)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -634,14 +709,18 @@ func replaySequence(t *testing.T, vector PreviewTunnelSequence) {
 		resolver.previews[preview.PreviewID] = fakePreview{key: preview.PreviewKey, address: address}
 		addresses[address] = true
 	}
+	dialed := make(chan *upstreamRecorder, 1024)
 	dial := func(_ context.Context, address string) (net.Conn, error) {
 		if !addresses[address] {
 			return nil, errors.New("unknown upstream address")
 		}
 		local, remote := duplexPipe()
-		go driveSequenceUpstream(vector.Upstream, remote)
+		recorder := &upstreamRecorder{}
+		go driveSequenceUpstream(vector.Upstream, remote, recorder)
+		dialed <- recorder
 		return local, nil
 	}
+	recorders := map[uint32]*upstreamRecorder{}
 	h := &harness{t: t, conn: newFakeConn(), result: make(chan error, 1)}
 	h.session = NewSession(h.conn, resolver, dial, nil, nil)
 	h.session.idleTicks = make(chan time.Time)
@@ -664,7 +743,7 @@ func replaySequence(t *testing.T, vector PreviewTunnelSequence) {
 			}
 			h.conn.in <- message
 			h.expectClosed1002()
-			h.expectQuietFor(5 * time.Millisecond)
+			h.expectQuietFor(sequenceSilence)
 			return
 		case expectDrop:
 			if len(step.RepliesHex) != 0 {
@@ -689,7 +768,22 @@ func replaySequence(t *testing.T, vector PreviewTunnelSequence) {
 				t.Fatalf("step %d: runner did not send %s", index, replyHex)
 			}
 		}
-		h.expectQuietFor(5 * time.Millisecond)
+		if message[0] == byte(FrameOpen) && step.Expect == expectOK && len(step.RepliesHex) == 0 {
+			select {
+			case recorder := <-dialed:
+				recorders[binary.BigEndian.Uint32(message[1:5])] = recorder
+			case <-time.After(waitTimeout):
+				t.Fatalf("step %d: accepted OPEN was not dialed", index)
+			}
+		}
+		h.expectQuietFor(sequenceSilence)
+		if vector.Upstream == upstreamStall && (step.UpstreamReceivesHex != nil || step.UpstreamEOF != nil) {
+			t.Fatalf("step %d: upstream checks in a stall sequence", index)
+		}
+		assertSequenceUpstream(t, index, step, recorders[binary.BigEndian.Uint32(message[1:5])])
+	}
+	if len(dialed) != 0 {
+		t.Fatal("the runner dialed an upstream for an OPEN it answered")
 	}
 	close(h.conn.in)
 	select {

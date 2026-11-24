@@ -66,6 +66,7 @@ Stream-level errors reset only that stream, with RESET `protocol`:
 Races:
 - DATA, END, WINDOW or RESET for an odd, already closed stream id at or below the highest opened id is dropped silently.
 - A RESET with an unknown code closes that stream as `protocol`; the tunnel stays open.
+- A second END after both ENDs have closed the stream is dropped like any frame for a closed stream; while the stream is still open, a second END is a protocol error (1002).
 - The same frames for an id above the highest opened id are a protocol error (1002).
 
 ## T3 Stream semantics
@@ -83,6 +84,7 @@ Races:
 - A stream with no DATA in either direction for 5 minutes gets RESET `idle`. An open websocket (HMR) stream stays alive as long as DATA flows in either direction.
 - The edge enforces the 25 MB request body cap and the rate limits.
 - When a preview is destroyed or expires, the runner sends RESET `not_found` on all of its streams.
+- If the runner's pending outbound control frames exceed 1 MiB because the gateway does not read, the runner closes the tunnel with 1008.
 
 ## T5 Capability
 
