@@ -104,6 +104,7 @@ type Daemon struct {
 	previewLifecycleController                            previewLifecycleController
 	previewLifecycleCommandMu                             sync.Mutex
 	previewLifecycleCommandActive                         map[string]struct{}
+	previewLifecycleKeyActive                             map[string]struct{}
 	previewLifecycleCommands                              sync.WaitGroup
 	previewHostController                                 previewhost.Controller
 	previewDeployCommandMu                                sync.Mutex

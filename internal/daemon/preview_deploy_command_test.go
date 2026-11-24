@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -307,8 +308,10 @@ func insertTestPreviewHost(t *testing.T, d *Daemon, operation v1.PreviewDeployOp
 	if _, inserted, err := d.journal.InsertPreviewHost(context.Background(), journal.PreviewHost{
 		PreviewID: operation.PreviewID, PreviewKey: operation.PreviewKey, IdempotencyKey: operation.IdempotencyKey,
 		OperationDigest: operation.OperationDigest, OrganizationID: operation.OrganizationID, ProjectID: operation.ProjectID,
-		BlueprintID: operation.Blueprint.BlueprintID, BlueprintVersion: operation.Blueprint.Version,
-		BlueprintDigest: operation.Blueprint.Digest, MemoryMB: 1024, ExpiresAt: operation.ExpiresAt,
+		ExecutionManifestID: operation.ExecutionManifestID, ExecutionManifestDigest: operation.ExecutionManifestDigest,
+		CommitSetDigest: operation.CommitSetDigest, BlueprintID: operation.Blueprint.BlueprintID,
+		BlueprintVersion: operation.Blueprint.Version, BlueprintDigest: operation.Blueprint.Digest, MemoryMB: 1024,
+		OriginalExpiresAt: operation.ExpiresAt, ExpiresAt: operation.ExpiresAt,
 		State: state, Result: result,
 	}); err != nil || !inserted {
 		t.Fatalf("insert host inserted=%v err=%v", inserted, err)
@@ -478,6 +481,41 @@ func TestPreviewDeployRedactsLogTailAndRefusesInvalidControllerOutcome(t *testin
 	}
 	if len(*invalid) != 1 || (*invalid)[0].Outcome.Kind != v1.PreviewDeployUncertain {
 		t.Fatalf("checks that do not match the blueprint must become uncertain: %+v", *invalid)
+	}
+}
+
+func TestPreviewDeployRedactsProviderCredentialFromLogTail(t *testing.T) {
+	redact.ForgetSecretsForTest()
+	t.Cleanup(redact.ForgetSecretsForTest)
+	token := "ghs_previewdeployprovidercredential0123456789"
+	jr, _ := testJobRunner(t)
+	command := validPreviewDeployCommand()
+	trustPreviewDeployCommits(t, jr.d, *command.PreviewDeploy)
+	jr.d.previewHostController = &fakePreviewHostController{deployOutcome: v1.PreviewDeployOutcome{
+		Kind: v1.PreviewDeployFailed, Phase: v1.PreviewDeployPhaseBuild,
+		LogTail: "clone https://x-access-token:" + token + "@github.com/acme/web\nauth " + token + "\n",
+	}}
+	events := capturePreviewDeployEvents(t, jr.d)
+	envelope := v1.Envelope{ID: previewDeployCommandID("1"), ProviderCredential: &v1.ProviderCredential{
+		Kind: v1.ProviderCredentialGitHubInstallationToken, Token: token,
+		ExpiresAt: time.Now().Add(time.Hour), RepositoryIDs: []string{"web"},
+	}}
+	if err := jr.d.executeCommand(context.Background(), envelope, command); err != nil {
+		t.Fatal(err)
+	}
+	if len(*events) != 1 || (*events)[0].Outcome.LogTail == "" {
+		t.Fatalf("events=%+v", *events)
+	}
+	raw, _ := json.Marshal((*events)[0])
+	if strings.Contains(string(raw), token) {
+		t.Fatalf("result carries the provider credential: %s", raw)
+	}
+	host, _, _ := jr.d.journal.PreviewHostByIdempotencyKey(context.Background(), command.PreviewDeploy.IdempotencyKey)
+	if strings.Contains(string(host.Result), token) {
+		t.Fatal("stored result carries the provider credential")
+	}
+	if !slices.Contains(redact.RememberedSecrets(), token) {
+		t.Fatal("provider credential was not registered for redaction")
 	}
 }
 

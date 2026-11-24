@@ -566,13 +566,13 @@ echo '{"type":"result","status":"success"}'
 		t.Fatal(err)
 	}
 	defer func() { _ = ledger.Close() }()
-	trusted, found, err := ledger.TrustedCommitSet(ctx, job.ManifestID, job.ManifestDigest)
-	if err != nil || !found || len(trusted) != 2 {
-		t.Fatalf("trusted=%v found=%v err=%v", trusted, found, err)
+	pushed := []v1.PreviewObservationCommit{
+		{RepositoryID: "primary", CommitSHA: commitSet["primary"]},
+		{RepositoryID: "secondary", CommitSHA: commitSet["secondary"]},
 	}
-	for _, commit := range trusted {
-		if commitSet[commit.RepositoryID] != commit.CommitSHA {
-			t.Fatalf("trusted commit %+v does not match pushed commit set %v", commit, commitSet)
-		}
+	trusted, err := ledger.TrustedCommitSetRecorded(ctx, job.ManifestID, job.ManifestDigest,
+		v1.PreviewLifecycleCommitSetDigest(pushed), pushed)
+	if err != nil || !trusted {
+		t.Fatalf("pushed commit set %v trusted=%v err=%v", commitSet, trusted, err)
 	}
 }

@@ -42,6 +42,7 @@ func (jr *jobRunner) finalizeBuild(
 		}
 	}
 	extra["commit_set"] = commitSet
+	jr.recordTrustedCommitSet(ctx, commitSet)
 
 	checksPassed := jr.runRequiredChecks(ctx, commitSet, results)
 
@@ -58,7 +59,6 @@ func (jr *jobRunner) finalizeBuild(
 			}
 		}
 		extra["pushed"] = true
-		jr.recordTrustedCommitSet(ctx, commitSet)
 	}
 	if !checksPassed {
 		extra["error"] = "required checks failed"

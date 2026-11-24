@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
@@ -21,6 +22,17 @@ func (d *Daemon) executeHostedPreviewLifecycle(
 	if err := validation.PreviewLifecycleCommandMessageID(commandMessageID); err != nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
 	}
+	if !d.previewLifecycleKeyStart(operation.IdempotencyKey) {
+		return nil
+	}
+	defer d.previewLifecycleKeyFinish(operation.IdempotencyKey)
+	stored, found, err := d.journal.PreviewHostedLifecycleResultByKey(ctx, operation.IdempotencyKey)
+	if err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if found {
+		return d.replayHostedPreviewLifecycle(ctx, operation, stored)
+	}
 	now := time.Now()
 	if !operation.LeaseExpiresAt.After(now) ||
 		(operation.Action == v1.PreviewLifecycleExtend && !operation.CurrentEffectiveExpiresAt.After(now)) {
@@ -30,7 +42,10 @@ func (d *Daemon) executeHostedPreviewLifecycle(
 	if err != nil {
 		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 	}
-	outcome, apply := hostedPreviewLifecyclePrecheck(operation, host, found)
+	outcome, apply, err := hostedPreviewLifecyclePrecheck(operation, host, found)
+	if err != nil {
+		return err
+	}
 	if apply {
 		lifecycleCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
 		outcome = d.previewHostController.ApplyLifecycle(lifecycleCtx, previewhost.LifecycleRequest{
@@ -71,12 +86,44 @@ func (d *Daemon) executeHostedPreviewLifecycle(
 			return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 		}
 	}
-	if apply {
-		if err := d.recordHostedPreviewLifecycle(ctx, operation, host, event.Outcome); err != nil {
+	eventID := previewLifecycleResultEventID(commandMessageID)
+	if event.Outcome.Kind != v1.PreviewLifecycleRetryable {
+		raw, err := json.Marshal(event)
+		if err != nil {
+			return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+		}
+		var update *journal.PreviewHostUpdate
+		if apply {
+			update = hostedPreviewLifecycleHostUpdate(operation, host, event.Outcome)
+		}
+		record := journal.PreviewHostedLifecycleResult{
+			IdempotencyKey: operation.IdempotencyKey, OperationDigest: operation.OperationDigest,
+			EventID: eventID, Result: raw,
+		}
+		if _, _, err := d.journal.RecordPreviewHostedLifecycleResult(ctx, record, update); err != nil {
 			return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 		}
 	}
-	_, err = d.sendEventWithStableID(ctx, previewLifecycleResultEventID(commandMessageID), event)
+	_, err = d.sendEventWithStableID(ctx, eventID, event)
+	return err
+}
+
+func (d *Daemon) replayHostedPreviewLifecycle(
+	ctx context.Context,
+	operation v1.PreviewLifecycleOperation,
+	stored journal.PreviewHostedLifecycleResult,
+) error {
+	if stored.OperationDigest != operation.OperationDigest {
+		return rejectCommand(v1.CommandAckReasonCommandConflict, nil)
+	}
+	var event v1.PreviewLifecycleResultEvent
+	if err := json.Unmarshal(stored.Result, &event); err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if err := validation.PreviewHostedLifecycleResultEvent(event); err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	_, err := d.sendEventWithStableID(ctx, stored.EventID, event)
 	return err
 }
 
@@ -84,7 +131,7 @@ func hostedPreviewLifecyclePrecheck(
 	operation v1.PreviewLifecycleOperation,
 	host journal.PreviewHost,
 	found bool,
-) (v1.PreviewLifecycleResultOutcome, bool) {
+) (v1.PreviewLifecycleResultOutcome, bool, error) {
 	absent := !found || host.State == journal.PreviewHostDestroyed || host.State == journal.PreviewHostFailed
 	if absent {
 		if operation.Action == v1.PreviewLifecycleDestroy {
@@ -93,37 +140,47 @@ func hostedPreviewLifecyclePrecheck(
 				ResourceState: &v1.PreviewLifecycleResourceState{
 					Kind: v1.PreviewLifecycleResourceDestroyed, Disposition: v1.PreviewLifecycleAlreadyAbsent,
 				},
-			}, false
+			}, false, nil
 		}
-		return v1.PreviewLifecycleResultOutcome{Kind: v1.PreviewLifecyclePermanent, Code: v1.PreviewLifecycleResourceNotFound}, false
+		return v1.PreviewLifecycleResultOutcome{Kind: v1.PreviewLifecyclePermanent, Code: v1.PreviewLifecycleResourceNotFound}, false, nil
 	}
-	if host.PreviewKey != operation.PreviewKey || host.OrganizationID != operation.OrganizationID ||
-		host.ProjectID != operation.ProjectID || host.BlueprintID != operation.Blueprint.BlueprintID ||
-		host.BlueprintVersion != operation.Blueprint.Version || host.BlueprintDigest != operation.Blueprint.Digest {
+	if !hostedPreviewHostBindingMatches(operation, host) {
 		return v1.PreviewLifecycleResultOutcome{
 			Kind: v1.PreviewLifecyclePermanent, Code: v1.PreviewLifecycleResourceBindingMismatch,
-		}, false
+		}, false, nil
 	}
 	switch host.State {
 	case journal.PreviewHostDeployed:
-		return v1.PreviewLifecycleResultOutcome{}, true
+		if operation.Action == v1.PreviewLifecycleExtend && !operation.CurrentEffectiveExpiresAt.Equal(host.ExpiresAt) {
+			return v1.PreviewLifecycleResultOutcome{}, false, rejectCommand(v1.CommandAckReasonCommandConflict, nil)
+		}
+		return v1.PreviewLifecycleResultOutcome{}, true, nil
 	case journal.PreviewHostUncertain:
 		if operation.Action == v1.PreviewLifecycleDestroy {
-			return v1.PreviewLifecycleResultOutcome{}, true
+			return v1.PreviewLifecycleResultOutcome{}, true, nil
 		}
-		return v1.PreviewLifecycleResultOutcome{Kind: v1.PreviewLifecyclePermanent, Code: v1.PreviewLifecycleResourceNotFound}, false
+		return v1.PreviewLifecycleResultOutcome{Kind: v1.PreviewLifecyclePermanent, Code: v1.PreviewLifecycleResourceNotFound}, false, nil
 	}
 	return v1.PreviewLifecycleResultOutcome{
 		Kind: v1.PreviewLifecycleRetryable, Code: v1.PreviewLifecycleTransientResourceConflict,
-	}, false
+	}, false, nil
 }
 
-func (d *Daemon) recordHostedPreviewLifecycle(
-	ctx context.Context,
+func hostedPreviewHostBindingMatches(operation v1.PreviewLifecycleOperation, host journal.PreviewHost) bool {
+	return host.PreviewKey == operation.PreviewKey && host.OrganizationID == operation.OrganizationID &&
+		host.ProjectID == operation.ProjectID && host.BlueprintID == operation.Blueprint.BlueprintID &&
+		host.BlueprintVersion == operation.Blueprint.Version && host.BlueprintDigest == operation.Blueprint.Digest &&
+		host.ExecutionManifestID == operation.ExecutionManifestID &&
+		host.ExecutionManifestDigest == operation.ExecutionManifestDigest &&
+		host.CommitSetDigest == operation.CommitSetDigest &&
+		host.OriginalExpiresAt.Equal(operation.OriginalExpiresAt)
+}
+
+func hostedPreviewLifecycleHostUpdate(
 	operation v1.PreviewLifecycleOperation,
 	host journal.PreviewHost,
 	outcome v1.PreviewLifecycleResultOutcome,
-) error {
+) *journal.PreviewHostUpdate {
 	update := journal.PreviewHostUpdate{IdempotencyKey: host.IdempotencyKey}
 	switch {
 	case outcome.Kind == v1.PreviewLifecycleSucceeded && operation.Action == v1.PreviewLifecycleDestroy:
@@ -136,5 +193,24 @@ func (d *Daemon) recordHostedPreviewLifecycle(
 	default:
 		return nil
 	}
-	return d.journal.UpdatePreviewHost(ctx, update)
+	return &update
+}
+
+func (d *Daemon) previewLifecycleKeyStart(idempotencyKey string) bool {
+	d.previewLifecycleCommandMu.Lock()
+	defer d.previewLifecycleCommandMu.Unlock()
+	if d.previewLifecycleKeyActive == nil {
+		d.previewLifecycleKeyActive = make(map[string]struct{})
+	}
+	if _, active := d.previewLifecycleKeyActive[idempotencyKey]; active {
+		return false
+	}
+	d.previewLifecycleKeyActive[idempotencyKey] = struct{}{}
+	return true
+}
+
+func (d *Daemon) previewLifecycleKeyFinish(idempotencyKey string) {
+	d.previewLifecycleCommandMu.Lock()
+	delete(d.previewLifecycleKeyActive, idempotencyKey)
+	d.previewLifecycleCommandMu.Unlock()
 }

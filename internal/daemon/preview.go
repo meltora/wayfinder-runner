@@ -152,5 +152,6 @@ func (jr *jobRunner) previewCommitSet(ctx context.Context) (map[string]string, e
 		}
 		commitSet[repository.ID] = result.commit
 	}
+	jr.recordTrustedCommitSet(ctx, commitSet)
 	return commitSet, nil
 }

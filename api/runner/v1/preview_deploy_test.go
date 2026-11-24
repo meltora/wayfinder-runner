@@ -40,7 +40,7 @@ func goldenPreviewDeployOperation() PreviewDeployOperation {
 	}
 }
 
-func TestPreviewDeployDigestsMatchAppCanonicalChecksum(t *testing.T) {
+func TestPreviewDeployDigestsMatchPinnedCanonicalVectors(t *testing.T) {
 	operation := goldenPreviewDeployOperation()
 	operation.CommitSetDigest = PreviewLifecycleCommitSetDigest(operation.CommitSet)
 	if operation.CommitSetDigest != "e830a1a3a3babcad9157ee58ea049d39d4c05e506af12d577e9230f200e03415" {
@@ -226,7 +226,7 @@ func goldenHostedLifecycleOperation() PreviewLifecycleOperation {
 	}
 }
 
-func TestPreviewHostedLifecycleDigestsMatchAppCanonicalChecksum(t *testing.T) {
+func TestPreviewHostedLifecycleDigestsMatchPinnedCanonicalVectors(t *testing.T) {
 	operation := goldenHostedLifecycleOperation()
 	if !operation.Hosted() {
 		t.Fatal("hosted variant not recognized")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -47,6 +46,11 @@ func (d *Daemon) executePreviewDeploy(
 	operation v1.PreviewDeployOperation,
 	credential *v1.ProviderCredential,
 ) error {
+	credentialToken := ""
+	if credential != nil {
+		credentialToken = credential.Token
+		redact.RememberSecret(credentialToken)
+	}
 	if d.previewHostController == nil {
 		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}
@@ -80,8 +84,10 @@ func (d *Daemon) executePreviewDeploy(
 	host := journal.PreviewHost{
 		PreviewID: operation.PreviewID, PreviewKey: operation.PreviewKey, IdempotencyKey: operation.IdempotencyKey,
 		OperationDigest: operation.OperationDigest, OrganizationID: operation.OrganizationID, ProjectID: operation.ProjectID,
-		BlueprintID: operation.Blueprint.BlueprintID, BlueprintVersion: operation.Blueprint.Version,
-		BlueprintDigest: operation.Blueprint.Digest, MemoryMB: content.Limits.MemoryMB, ExpiresAt: operation.ExpiresAt,
+		ExecutionManifestID: operation.ExecutionManifestID, ExecutionManifestDigest: operation.ExecutionManifestDigest,
+		CommitSetDigest: operation.CommitSetDigest, BlueprintID: operation.Blueprint.BlueprintID,
+		BlueprintVersion: operation.Blueprint.Version, BlueprintDigest: operation.Blueprint.Digest, MemoryMB: content.Limits.MemoryMB,
+		OriginalExpiresAt: operation.ExpiresAt, ExpiresAt: operation.ExpiresAt,
 		State: journal.PreviewHostDeploying,
 	}
 	trusted, err := d.previewDeployCommitSetTrusted(ctx, operation)
@@ -121,7 +127,7 @@ func (d *Daemon) executePreviewDeploy(
 			outcome = v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain}
 		}
 	}
-	outcome = sanitizePreviewDeployOutcome(outcome, content)
+	outcome = sanitizePreviewDeployOutcome(outcome, content, credentialToken)
 	event := previewDeployResultEvent(operation, commandMessageID, observedAt, outcome)
 	raw, err := validatedPreviewDeployResult(event)
 	if err != nil {
@@ -161,15 +167,8 @@ func (d *Daemon) resumePreviewDeploy(
 }
 
 func (d *Daemon) previewDeployCommitSetTrusted(ctx context.Context, operation v1.PreviewDeployOperation) (bool, error) {
-	trusted, found, err := d.journal.TrustedCommitSet(ctx, operation.ExecutionManifestID, operation.ExecutionManifestDigest)
-	if err != nil || !found {
-		return false, err
-	}
-	requested := append([]v1.PreviewObservationCommit(nil), operation.CommitSet...)
-	slices.SortFunc(requested, func(left, right v1.PreviewObservationCommit) int {
-		return strings.Compare(left.RepositoryID, right.RepositoryID)
-	})
-	return slices.Equal(trusted, requested), nil
+	return d.journal.TrustedCommitSetRecorded(ctx, operation.ExecutionManifestID, operation.ExecutionManifestDigest,
+		operation.CommitSetDigest, operation.CommitSet)
 }
 
 func previewHostInsertRejection(err error) error {
@@ -214,7 +213,11 @@ func (d *Daemon) sendPreviewDeployResult(ctx context.Context, event v1.PreviewDe
 	return err
 }
 
-func sanitizePreviewDeployOutcome(outcome v1.PreviewDeployOutcome, content v1.PreviewBlueprintContentV1) v1.PreviewDeployOutcome {
+func sanitizePreviewDeployOutcome(
+	outcome v1.PreviewDeployOutcome,
+	content v1.PreviewBlueprintContentV1,
+	credentialToken string,
+) v1.PreviewDeployOutcome {
 	switch outcome.Kind {
 	case v1.PreviewDeployDeployed:
 		if !previewDeployChecksMatchBlueprint(outcome.Checks, content) {
@@ -226,7 +229,7 @@ func sanitizePreviewDeployOutcome(outcome v1.PreviewDeployOutcome, content v1.Pr
 	default:
 		return v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain}
 	}
-	outcome.LogTail = boundPreviewDeployLogTail(redact.KnownSecrets(outcome.LogTail))
+	outcome.LogTail = boundPreviewDeployLogTail(redact.Token(redact.KnownSecrets(outcome.LogTail), credentialToken))
 	return outcome
 }
 
