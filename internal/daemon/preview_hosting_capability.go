@@ -48,7 +48,11 @@ func (d *Daemon) previewHostingCapability() *v1.PreviewHostingCapability {
 	}
 	hosting := d.previewHostController.Capability()
 	if !validPreviewHostingCapability(hosting) {
-		d.logger.Warn("omit preview hosting capability: invalid capability", "protocol_version", hosting.ProtocolVersion, "max_concurrent", hosting.MaxConcurrent, "actions", hosting.Actions)
+		var maxExtension any
+		if hosting.MaxExtensionMS != nil {
+			maxExtension = *hosting.MaxExtensionMS
+		}
+		d.logger.Warn("omit preview hosting capability: invalid capability", "protocol_version", hosting.ProtocolVersion, "max_concurrent", hosting.MaxConcurrent, "actions", hosting.Actions, "max_extension_ms", maxExtension)
 		return nil
 	}
 	return &hosting

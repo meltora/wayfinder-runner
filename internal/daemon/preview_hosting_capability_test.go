@@ -100,6 +100,7 @@ func TestPublishCapabilityDropsAnInvalidPreviewHostingCapability(t *testing.T) {
 		"zero max concurrent":        {with(func(c *v1.PreviewHostingCapability) { c.MaxConcurrent = 0 }), false},
 		"max concurrent above cap":   {with(func(c *v1.PreviewHostingCapability) { c.MaxConcurrent = config.MaxPreviewHostingConcurrent + 1 }), false},
 		"no actions":                 {with(func(c *v1.PreviewHostingCapability) { c.Actions = nil }), false},
+		"empty actions":              {with(func(c *v1.PreviewHostingCapability) { c.Actions = []v1.PreviewLifecycleAction{} }), false},
 		"duplicate action":           {with(func(c *v1.PreviewHostingCapability) { c.Actions = []v1.PreviewLifecycleAction{"deploy", "deploy"} }), false},
 		"unknown action":             {with(func(c *v1.PreviewHostingCapability) { c.Actions = []v1.PreviewLifecycleAction{"deploy", "restart"} }), false},
 		"zero max extension":         {with(func(c *v1.PreviewHostingCapability) { c.MaxExtensionMS = &zero }), false},
