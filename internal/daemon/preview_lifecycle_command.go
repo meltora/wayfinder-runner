@@ -25,13 +25,18 @@ func validatePreviewLifecycleCommandBoundary(command v1.CommandPayload) error {
 	if command.PreviewLifecycle == nil || command.SourcePublication != nil || command.ProviderReviewerAssignment != nil ||
 		command.ProviderReviewerAssignmentReconciliation != nil || command.ProviderReviewObservation != nil ||
 		command.ProviderReviewFeedbackContent != nil || command.ReviewFeedbackContinuation != nil ||
-		command.PreviewObservation != nil || command.ReviewerIdentityVerification != nil || command.Job != nil ||
+		command.PreviewObservation != nil || command.PreviewDeploy != nil ||
+		command.ReviewerIdentityVerification != nil || command.Job != nil ||
 		command.JobID != "" || command.AttemptID != "" || command.FencingToken != 0 || !command.LeaseExpiresAt.IsZero() ||
 		command.Reason != "" || command.QuestionID != "" || command.Decision != "" || command.DecidedBy != "" ||
 		command.UpdateID != "" || command.DrainDeadline != nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
 	}
-	if err := validation.PreviewLifecycleOperation(*command.PreviewLifecycle); err != nil {
+	validate := validation.PreviewLifecycleOperation
+	if command.PreviewLifecycle.Hosted() {
+		validate = validation.PreviewHostedLifecycleOperation
+	}
+	if err := validate(*command.PreviewLifecycle); err != nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
 	}
 	return nil
@@ -42,6 +47,9 @@ func (d *Daemon) executePreviewLifecycle(
 	commandMessageID string,
 	operation v1.PreviewLifecycleOperation,
 ) error {
+	if operation.Hosted() {
+		return d.executeHostedPreviewLifecycle(ctx, commandMessageID, operation)
+	}
 	if d.previewLifecycleController == nil {
 		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
 	}

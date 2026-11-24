@@ -45,6 +45,8 @@ type PreviewLifecycleOperationAuthority struct {
 
 type PreviewLifecycleOperation struct {
 	PreviewLifecycleOperationAuthority
+	PreviewID                 string                      `json:"preview_id,omitempty"`
+	PreviewKey                string                      `json:"preview_key,omitempty"`
 	Blueprint                 PreviewObservationBlueprint `json:"blueprint"`
 	PreviewURL                string                      `json:"preview_url"`
 	CommitSet                 []PreviewObservationCommit  `json:"commit_set"`
@@ -159,6 +161,8 @@ func previewLifecycleCanonicalDigest(value any) string {
 
 type PreviewLifecycleResultAuthority struct {
 	PreviewLifecycleOperationAuthority
+	PreviewID                 string                      `json:"preview_id,omitempty"`
+	PreviewKey                string                      `json:"preview_key,omitempty"`
 	Blueprint                 PreviewObservationBlueprint `json:"blueprint"`
 	PreviewURL                string                      `json:"preview_url"`
 	CommitSet                 []PreviewObservationCommit  `json:"commit_set"`
@@ -171,6 +175,8 @@ type PreviewLifecycleResultAuthority struct {
 func PreviewLifecycleResultAuthorityFromOperation(operation PreviewLifecycleOperation) PreviewLifecycleResultAuthority {
 	return PreviewLifecycleResultAuthority{
 		PreviewLifecycleOperationAuthority: operation.PreviewLifecycleOperationAuthority,
+		PreviewID:                          operation.PreviewID,
+		PreviewKey:                         operation.PreviewKey,
 		Blueprint:                          operation.Blueprint,
 		PreviewURL:                         operation.PreviewURL,
 		CommitSet:                          append([]PreviewObservationCommit(nil), operation.CommitSet...),

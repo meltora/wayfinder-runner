@@ -31,6 +31,7 @@ type Envelope struct {
 	Payload   any         `json:"payload,omitempty"`
 
 	ProviderCredential *ProviderCredential `json:"provider_credential,omitempty"`
+	PreviewSecrets     PreviewSecrets      `json:"preview_secrets,omitempty"`
 }
 
 type HelloPayload struct {

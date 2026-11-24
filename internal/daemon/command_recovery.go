@@ -5,6 +5,7 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/validation"
 )
@@ -63,4 +64,27 @@ func leaseMatchesJobAuthority(current *lease.Lease, job v1.JobSpec) bool {
 
 func timesEqual(left, right time.Time) bool {
 	return !left.IsZero() && left.Equal(right)
+}
+
+func (d *Daemon) recoverInterruptedPreviewDeploy(
+	ctx context.Context,
+	commandMessageID string,
+	operation v1.PreviewDeployOperation,
+	host journal.PreviewHost,
+) error {
+	if err := d.previewHostController.Recover(ctx, host); err != nil {
+		d.logger.Warn("interrupted preview deploy teardown unproven", "preview_id", host.PreviewID, "err", err)
+	}
+	event := previewDeployResultEvent(operation, commandMessageID, previewDeployObservedAt(operation),
+		v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain})
+	raw, err := validatedPreviewDeployResult(event)
+	if err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if err := d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
+		IdempotencyKey: host.IdempotencyKey, State: journal.PreviewHostUncertain, Result: raw,
+	}); err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	return d.sendPreviewDeployResult(ctx, event)
 }

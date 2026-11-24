@@ -14,6 +14,7 @@ import (
 	"github.com/example/app-runner/internal/collector"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/daemon"
+	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/mockcp"
 )
 
@@ -551,10 +552,27 @@ echo '{"type":"result","status":"success"}'
 	if !discoveredRepositories["primary"] || !discoveredRepositories["secondary"] {
 		t.Fatalf("discovered repositories = %v", discoveredRepositories)
 	}
-	for _, origin := range []string{primaryOrigin, secondaryOrigin} {
+	commitSet := map[string]string{}
+	for repositoryID, origin := range map[string]string{"primary": primaryOrigin, "secondary": secondaryOrigin} {
 		cmd := exec.Command("git", "--git-dir", origin, "rev-parse", "job/multi-1/att-1")
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("branch not pushed to %s: %v\n%s", origin, err, out)
+		}
+		commitSet[repositoryID] = strings.TrimSpace(string(out))
+	}
+	ledger, err := journal.Open(filepath.Join(stateDir, "journal.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ledger.Close() }()
+	trusted, found, err := ledger.TrustedCommitSet(ctx, job.ManifestID, job.ManifestDigest)
+	if err != nil || !found || len(trusted) != 2 {
+		t.Fatalf("trusted=%v found=%v err=%v", trusted, found, err)
+	}
+	for _, commit := range trusted {
+		if commitSet[commit.RepositoryID] != commit.CommitSHA {
+			t.Fatalf("trusted commit %+v does not match pushed commit set %v", commit, commitSet)
 		}
 	}
 }

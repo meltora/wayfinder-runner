@@ -22,6 +22,7 @@ func commandContentDigest(payload any) (string, error) {
 // routing/fence fields needed to audit the paid-call fence and stable result.
 func durableCommandRecordPayload(envelope v1.Envelope, contentDigest string) ([]byte, error) {
 	envelope.ProviderCredential = nil
+	envelope.PreviewSecrets = nil
 	rawPayload, err := json.Marshal(envelope.Payload)
 	if err != nil {
 		return nil, err

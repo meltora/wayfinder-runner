@@ -162,6 +162,9 @@ func (j *Journal) migrate() error {
 	if err := j.ensureEventRejectionSchema(); err != nil {
 		return err
 	}
+	if err := j.ensurePreviewHostingSchema(); err != nil {
+		return err
+	}
 	return j.ensureActiveLeaseAuthorityColumns()
 }
 

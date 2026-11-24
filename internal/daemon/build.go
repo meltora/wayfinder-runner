@@ -58,6 +58,7 @@ func (jr *jobRunner) finalizeBuild(
 			}
 		}
 		extra["pushed"] = true
+		jr.recordTrustedCommitSet(ctx, commitSet)
 	}
 	if !checksPassed {
 		extra["error"] = "required checks failed"
@@ -69,6 +70,16 @@ func (jr *jobRunner) finalizeBuild(
 		}
 	}
 	return "succeeded", extra, nil
+}
+
+func (jr *jobRunner) recordTrustedCommitSet(ctx context.Context, commitSet map[string]string) {
+	commits := make([]v1.PreviewObservationCommit, 0, len(commitSet))
+	for repositoryID, sha := range commitSet {
+		commits = append(commits, v1.PreviewObservationCommit{RepositoryID: repositoryID, CommitSHA: sha})
+	}
+	if err := jr.d.journal.RecordTrustedCommitSet(ctx, jr.job.ManifestID, jr.job.ManifestDigest, commits, time.Now()); err != nil {
+		jr.logger.Error("record trusted commit set", "manifest_id", jr.job.ManifestID, "err", err)
+	}
 }
 
 func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string]string, results map[string]agentResult) bool {

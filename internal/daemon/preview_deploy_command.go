@@ -1,0 +1,330 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"slices"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/journal"
+	"github.com/example/app-runner/internal/previewhost"
+	"github.com/example/app-runner/internal/redact"
+	"github.com/example/app-runner/internal/validation"
+)
+
+func validatePreviewDeployCommandBoundary(command v1.CommandPayload) error {
+	if command.Command != v1.CmdPreviewDeploy {
+		if command.PreviewDeploy != nil {
+			return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
+		}
+		return nil
+	}
+	if command.PreviewDeploy == nil {
+		return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
+	}
+	rest := command
+	rest.Command = ""
+	rest.PreviewDeploy = nil
+	if rest != (v1.CommandPayload{}) {
+		return rejectCommand(v1.CommandAckReasonInvalidCommand, nil)
+	}
+	if err := validation.PreviewDeployOperation(*command.PreviewDeploy); err != nil {
+		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
+	}
+	if _, err := validation.PreviewDeployBlueprintContent(command.PreviewDeploy.Blueprint); err != nil {
+		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
+	}
+	return nil
+}
+
+func (d *Daemon) executePreviewDeploy(
+	ctx context.Context,
+	commandMessageID string,
+	operation v1.PreviewDeployOperation,
+	credential *v1.ProviderCredential,
+) error {
+	if d.previewHostController == nil {
+		return rejectCommand(v1.CommandAckReasonUnsupportedCommand, nil)
+	}
+	if err := validation.PreviewDeployCommandMessageID(commandMessageID); err != nil {
+		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
+	}
+	if !d.previewDeployKeyStart(operation.IdempotencyKey) {
+		return nil
+	}
+	defer d.previewDeployKeyFinish(operation.IdempotencyKey)
+	existing, found, err := d.journal.PreviewHostByIdempotencyKey(ctx, operation.IdempotencyKey)
+	if err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if found {
+		if existing.OperationDigest != operation.OperationDigest {
+			return rejectCommand(v1.CommandAckReasonCommandConflict, nil)
+		}
+		return d.resumePreviewDeploy(ctx, commandMessageID, operation, existing)
+	}
+	if d.Paused() {
+		return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
+	}
+	if !operation.LeaseExpiresAt.After(time.Now()) {
+		return rejectCommand(v1.CommandAckReasonLeaseRejected, nil)
+	}
+	content, err := validation.PreviewDeployBlueprintContent(operation.Blueprint)
+	if err != nil {
+		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
+	}
+	host := journal.PreviewHost{
+		PreviewID: operation.PreviewID, PreviewKey: operation.PreviewKey, IdempotencyKey: operation.IdempotencyKey,
+		OperationDigest: operation.OperationDigest, OrganizationID: operation.OrganizationID, ProjectID: operation.ProjectID,
+		BlueprintID: operation.Blueprint.BlueprintID, BlueprintVersion: operation.Blueprint.Version,
+		BlueprintDigest: operation.Blueprint.Digest, MemoryMB: content.Limits.MemoryMB, ExpiresAt: operation.ExpiresAt,
+		State: journal.PreviewHostDeploying,
+	}
+	trusted, err := d.previewDeployCommitSetTrusted(ctx, operation)
+	if err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if !trusted {
+		event := previewDeployResultEvent(operation, commandMessageID, previewDeployObservedAt(operation),
+			v1.PreviewDeployOutcome{Kind: v1.PreviewDeployFailed, Phase: v1.PreviewDeployPhaseCommitSet})
+		raw, err := validatedPreviewDeployResult(event)
+		if err != nil {
+			return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+		}
+		host.State = journal.PreviewHostFailed
+		host.Result = raw
+		if _, _, err := d.journal.InsertPreviewHost(ctx, host); err != nil {
+			return previewHostInsertRejection(err)
+		}
+		return d.sendPreviewDeployResult(ctx, event)
+	}
+	if _, inserted, err := d.journal.InsertPreviewHost(ctx, host); err != nil || !inserted {
+		if err == nil {
+			return rejectCommand(v1.CommandAckReasonCommandConflict, nil)
+		}
+		return previewHostInsertRejection(err)
+	}
+	deployCtx, cancel := context.WithDeadline(ctx, operation.LeaseExpiresAt)
+	result := d.previewHostController.Deploy(deployCtx, previewhost.DeployRequest{
+		Operation: operation, Content: content, Credential: credential,
+	})
+	cancel()
+	observedAt := time.Now().UTC().Truncate(time.Millisecond)
+	outcome := result.Outcome
+	if observedAt.After(operation.LeaseExpiresAt) {
+		observedAt = operation.LeaseExpiresAt
+		if outcome.Kind != v1.PreviewDeployFailed || outcome.Phase != v1.PreviewDeployPhaseLeaseExpired {
+			outcome = v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain}
+		}
+	}
+	outcome = sanitizePreviewDeployOutcome(outcome, content)
+	event := previewDeployResultEvent(operation, commandMessageID, observedAt, outcome)
+	raw, err := validatedPreviewDeployResult(event)
+	if err != nil {
+		event.Outcome = v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain}
+		if raw, err = validatedPreviewDeployResult(event); err != nil {
+			return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+		}
+	}
+	if err := d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
+		IdempotencyKey: operation.IdempotencyKey, State: previewHostStateForOutcome(event.Outcome.Kind), Result: raw,
+	}); err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	return d.sendPreviewDeployResult(ctx, event)
+}
+
+func (d *Daemon) resumePreviewDeploy(
+	ctx context.Context,
+	commandMessageID string,
+	operation v1.PreviewDeployOperation,
+	host journal.PreviewHost,
+) error {
+	if host.State == journal.PreviewHostDeploying {
+		return d.recoverInterruptedPreviewDeploy(ctx, commandMessageID, operation, host)
+	}
+	if len(host.Result) == 0 {
+		return nil
+	}
+	var stored v1.PreviewDeployResultEvent
+	if err := json.Unmarshal(host.Result, &stored); err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if err := validation.PreviewDeployResultEvent(stored); err != nil {
+		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	return d.sendPreviewDeployResult(ctx, stored)
+}
+
+func (d *Daemon) previewDeployCommitSetTrusted(ctx context.Context, operation v1.PreviewDeployOperation) (bool, error) {
+	trusted, found, err := d.journal.TrustedCommitSet(ctx, operation.ExecutionManifestID, operation.ExecutionManifestDigest)
+	if err != nil || !found {
+		return false, err
+	}
+	requested := append([]v1.PreviewObservationCommit(nil), operation.CommitSet...)
+	slices.SortFunc(requested, func(left, right v1.PreviewObservationCommit) int {
+		return strings.Compare(left.RepositoryID, right.RepositoryID)
+	})
+	return slices.Equal(trusted, requested), nil
+}
+
+func previewHostInsertRejection(err error) error {
+	if errors.Is(err, journal.ErrPreviewHostConflict) {
+		return rejectCommand(v1.CommandAckReasonCommandConflict, err)
+	}
+	return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+}
+
+func previewDeployObservedAt(operation v1.PreviewDeployOperation) time.Time {
+	observedAt := time.Now().UTC().Truncate(time.Millisecond)
+	if observedAt.After(operation.LeaseExpiresAt) {
+		return operation.LeaseExpiresAt
+	}
+	return observedAt
+}
+
+func previewDeployResultEvent(
+	operation v1.PreviewDeployOperation,
+	commandMessageID string,
+	observedAt time.Time,
+	outcome v1.PreviewDeployOutcome,
+) v1.PreviewDeployResultEvent {
+	return v1.PreviewDeployResultEvent{
+		Kind:                         v1.EventPreviewDeployResult,
+		PreviewDeployResultAuthority: v1.PreviewDeployResultAuthorityFromOperation(operation),
+		CommandMessageID:             commandMessageID,
+		ObservedAt:                   observedAt,
+		Outcome:                      outcome,
+	}
+}
+
+func validatedPreviewDeployResult(event v1.PreviewDeployResultEvent) ([]byte, error) {
+	if err := validation.PreviewDeployResultEvent(event); err != nil {
+		return nil, err
+	}
+	return json.Marshal(event)
+}
+
+func (d *Daemon) sendPreviewDeployResult(ctx context.Context, event v1.PreviewDeployResultEvent) error {
+	_, err := d.sendEventWithStableID(ctx, v1.PreviewDeployResultEventID(event.IdempotencyKey), event)
+	return err
+}
+
+func sanitizePreviewDeployOutcome(outcome v1.PreviewDeployOutcome, content v1.PreviewBlueprintContentV1) v1.PreviewDeployOutcome {
+	switch outcome.Kind {
+	case v1.PreviewDeployDeployed:
+		if !previewDeployChecksMatchBlueprint(outcome.Checks, content) {
+			return v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain}
+		}
+	case v1.PreviewDeployFailed:
+	case v1.PreviewDeployCapacityExhausted, v1.PreviewDeployUncertain:
+		return v1.PreviewDeployOutcome{Kind: outcome.Kind}
+	default:
+		return v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain}
+	}
+	outcome.LogTail = boundPreviewDeployLogTail(redact.KnownSecrets(outcome.LogTail))
+	return outcome
+}
+
+func previewDeployChecksMatchBlueprint(checks []v1.PreviewObservationCheck, content v1.PreviewBlueprintContentV1) bool {
+	if len(checks) != len(content.App.HealthChecks) {
+		return false
+	}
+	for index, check := range content.App.HealthChecks {
+		if checks[index].CheckID != check.ID {
+			return false
+		}
+	}
+	return true
+}
+
+func boundPreviewDeployLogTail(value string) string {
+	value = strings.ToValidUTF8(value, "�")
+	if len(value) > v1.PreviewDeployLogTailMaxBytes {
+		value = value[len(value)-v1.PreviewDeployLogTailMaxBytes:]
+		for len(value) > 0 && !utf8.RuneStart(value[0]) {
+			value = value[1:]
+		}
+	}
+	lines := strings.SplitAfter(value, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) > v1.PreviewDeployLogTailMaxLines {
+		value = strings.Join(lines[len(lines)-v1.PreviewDeployLogTailMaxLines:], "")
+	}
+	return value
+}
+
+func previewHostStateForOutcome(kind v1.PreviewDeployOutcomeKind) journal.PreviewHostState {
+	switch kind {
+	case v1.PreviewDeployDeployed:
+		return journal.PreviewHostDeployed
+	case v1.PreviewDeployFailed, v1.PreviewDeployCapacityExhausted:
+		return journal.PreviewHostFailed
+	}
+	return journal.PreviewHostUncertain
+}
+
+func (d *Daemon) completePreviewDeployCommand(
+	ctx context.Context,
+	envelope v1.Envelope,
+	command v1.CommandPayload,
+	claimOwner string,
+	effectMayHaveRun bool,
+) {
+	defer d.previewDeployCommands.Done()
+	defer d.previewDeployCommandFinish(envelope.ID)
+	if err := d.completeClaimedCommand(ctx, envelope, command, nil, claimOwner, effectMayHaveRun); err != nil {
+		d.logger.Error("complete preview deploy command", "id", envelope.ID, "err", err)
+	}
+}
+
+func (d *Daemon) previewDeployCommandIsActive(commandID string) bool {
+	d.previewDeployCommandMu.Lock()
+	defer d.previewDeployCommandMu.Unlock()
+	_, active := d.previewDeployCommandActive[commandID]
+	return active
+}
+
+func (d *Daemon) previewDeployCommandStart(commandID string) bool {
+	d.previewDeployCommandMu.Lock()
+	defer d.previewDeployCommandMu.Unlock()
+	if d.previewDeployCommandActive == nil {
+		d.previewDeployCommandActive = make(map[string]struct{})
+	}
+	if _, active := d.previewDeployCommandActive[commandID]; active {
+		return false
+	}
+	d.previewDeployCommandActive[commandID] = struct{}{}
+	return true
+}
+
+func (d *Daemon) previewDeployCommandFinish(commandID string) {
+	d.previewDeployCommandMu.Lock()
+	delete(d.previewDeployCommandActive, commandID)
+	d.previewDeployCommandMu.Unlock()
+}
+
+func (d *Daemon) previewDeployKeyStart(idempotencyKey string) bool {
+	d.previewDeployCommandMu.Lock()
+	defer d.previewDeployCommandMu.Unlock()
+	if d.previewDeployKeyActive == nil {
+		d.previewDeployKeyActive = make(map[string]struct{})
+	}
+	if _, active := d.previewDeployKeyActive[idempotencyKey]; active {
+		return false
+	}
+	d.previewDeployKeyActive[idempotencyKey] = struct{}{}
+	return true
+}
+
+func (d *Daemon) previewDeployKeyFinish(idempotencyKey string) {
+	d.previewDeployCommandMu.Lock()
+	delete(d.previewDeployKeyActive, idempotencyKey)
+	d.previewDeployCommandMu.Unlock()
+}

@@ -249,6 +249,9 @@ func (c *Client) readLoop(ctx context.Context) error {
 		if env.ProviderCredential != nil && env.Type != v1.TypeCommand {
 			return fmt.Errorf("%s envelope cannot carry a provider credential", env.Type)
 		}
+		if env.PreviewSecrets != nil && env.Type != v1.TypeCommand {
+			return fmt.Errorf("%s envelope cannot carry preview secrets", env.Type)
+		}
 		switch env.Type {
 		case v1.TypeCommand:
 			if err := c.handler.OnCommand(ctx, env); err != nil {
@@ -293,7 +296,7 @@ func (c *Client) recordRejection(ctx context.Context, env v1.Envelope) {
 func (c *Client) SendEvent(ctx context.Context, envelope v1.Envelope) error {
 	if envelope.Version != v1.ProtocolVersion || envelope.Type != v1.TypeEvent ||
 		envelope.ID == "" || envelope.SentAt.IsZero() || envelope.RunnerID != c.runnerID ||
-		envelope.InReplyTo != "" || envelope.ProviderCredential != nil {
+		envelope.InReplyTo != "" || envelope.ProviderCredential != nil || envelope.PreviewSecrets != nil {
 		return fmt.Errorf("invalid outbound event envelope")
 	}
 	return c.send(ctx, envelope)

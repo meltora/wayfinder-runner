@@ -28,6 +28,7 @@ import (
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/lease"
+	"github.com/example/app-runner/internal/previewhost"
 	"github.com/example/app-runner/internal/previewlifecycle"
 	"github.com/example/app-runner/internal/previewobserver"
 	"github.com/example/app-runner/internal/repo"
@@ -104,6 +105,11 @@ type Daemon struct {
 	previewLifecycleCommandMu                             sync.Mutex
 	previewLifecycleCommandActive                         map[string]struct{}
 	previewLifecycleCommands                              sync.WaitGroup
+	previewHostController                                 previewhost.Controller
+	previewDeployCommandMu                                sync.Mutex
+	previewDeployCommandActive                            map[string]struct{}
+	previewDeployKeyActive                                map[string]struct{}
+	previewDeployCommands                                 sync.WaitGroup
 	reviewerIdentityVerifier                              reviewerIdentityVerifier
 	reviewerIdentityVerificationCommandMu                 sync.Mutex
 	reviewerIdentityVerificationCommandActive             map[string]struct{}
@@ -446,6 +452,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.sourcePublicationCommands.Wait()
 		d.previewObservationCommands.Wait()
 		d.previewLifecycleCommands.Wait()
+		d.previewDeployCommands.Wait()
 		d.reviewerIdentityVerificationCommands.Wait()
 		d.providerReviewerAssignmentCommands.Wait()
 		d.providerReviewerAssignmentReconciliationCommands.Wait()
@@ -892,6 +899,7 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 	asyncPreviewObservation :=
 		decodeErr == nil && cmd.Command == v1.CmdPreviewObservation
 	asyncPreviewLifecycle := decodeErr == nil && cmd.Command == v1.CmdPreviewLifecycle
+	asyncPreviewDeploy := decodeErr == nil && cmd.Command == v1.CmdPreviewDeploy
 	asyncReviewerIdentityVerification :=
 		decodeErr == nil && cmd.Command == v1.CmdReviewerIdentityVerification
 	asyncProviderReviewerAssignment :=
@@ -908,6 +916,9 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		return nil
 	}
 	if asyncPreviewLifecycle && d.previewLifecycleCommandIsActive(env.ID) {
+		return nil
+	}
+	if asyncPreviewDeploy && d.previewDeployCommandIsActive(env.ID) {
 		return nil
 	}
 	if asyncReviewerIdentityVerification && d.reviewerIdentityVerificationCommandIsActive(env.ID) {
@@ -999,6 +1010,14 @@ func (d *Daemon) OnCommand(ctx context.Context, env v1.Envelope) error {
 		}
 		d.previewLifecycleCommands.Add(1)
 		go d.completePreviewLifecycleCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
+		return nil
+	}
+	if asyncPreviewDeploy {
+		if !d.previewDeployCommandStart(env.ID) {
+			return nil
+		}
+		d.previewDeployCommands.Add(1)
+		go d.completePreviewDeployCommand(ctx, env, cmd, claimOwner, effectMayHaveRun)
 		return nil
 	}
 	if asyncReviewerIdentityVerification {
@@ -1182,6 +1201,9 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 	if err := validatePreviewLifecycleCommandBoundary(cmd); err != nil {
 		return err
 	}
+	if err := validatePreviewDeployCommandBoundary(cmd); err != nil {
+		return err
+	}
 	if err := validateReviewerIdentityVerificationCommandBoundary(cmd); err != nil {
 		return err
 	}
@@ -1302,6 +1324,8 @@ func (d *Daemon) executeCommand(ctx context.Context, env v1.Envelope, cmd v1.Com
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 		}
 		return d.executePreviewLifecycle(ctx, env.ID, *cmd.PreviewLifecycle)
+	case v1.CmdPreviewDeploy:
+		return d.executePreviewDeploy(ctx, env.ID, *cmd.PreviewDeploy, env.ProviderCredential)
 	case v1.CmdReviewerIdentityVerification:
 		if d.Paused() {
 			return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
@@ -1328,6 +1352,9 @@ func (d *Daemon) validateCommandEnvelope(env v1.Envelope) error {
 	}
 	if env.InReplyTo != "" {
 		return fmt.Errorf("command cannot reply to another message")
+	}
+	if env.PreviewSecrets != nil {
+		return fmt.Errorf("preview secrets are not accepted before P5c")
 	}
 	return nil
 }

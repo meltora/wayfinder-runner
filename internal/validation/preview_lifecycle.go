@@ -21,20 +21,34 @@ var (
 	previewLifecycleCommandIDPattern   = regexp.MustCompile(`^preview-lifecycle-command-[0-9a-f]{64}$`)
 )
 
-func previewLifecycleAuthority(value v1.PreviewLifecycleOperationAuthority) error {
+func previewLifecycleAuthority(value v1.PreviewLifecycleOperationAuthority, hosted bool) error {
 	if value.SchemaVersion != v1.PreviewLifecycleSchemaVersion {
 		return fmt.Errorf("preview lifecycle schema_version is unsupported")
 	}
-	for field, id := range map[string]string{
+	ids := map[string]string{
 		"preview_lifecycle_effect_id": value.PreviewLifecycleEffectID,
 		"organization_id":             value.OrganizationID,
 		"project_id":                  value.ProjectID,
 		"workflow_run_id":             value.WorkflowRunID,
-		"preview_evidence_id":         value.PreviewEvidenceID,
-		"preview_observation_id":      value.PreviewObservationID,
 		"execution_manifest_id":       value.ExecutionManifestID,
 		"lease_id":                    value.LeaseID,
-	} {
+	}
+	digests := map[string]string{
+		"execution_manifest_digest": value.ExecutionManifestDigest,
+		"resource_binding_digest":   value.ResourceBindingDigest,
+		"operation_digest":          value.OperationDigest,
+		"command_digest":            value.CommandDigest,
+	}
+	if hosted {
+		if value.PreviewEvidenceID != "" || value.PreviewObservationID != "" || value.PreviewObservationDigest != "" {
+			return fmt.Errorf("hosted preview lifecycle forbids external target authority")
+		}
+	} else {
+		ids["preview_evidence_id"] = value.PreviewEvidenceID
+		ids["preview_observation_id"] = value.PreviewObservationID
+		digests["preview_observation_digest"] = value.PreviewObservationDigest
+	}
+	for field, id := range ids {
 		if err := ID(field, id); err != nil {
 			return err
 		}
@@ -45,13 +59,7 @@ func previewLifecycleAuthority(value v1.PreviewLifecycleOperationAuthority) erro
 	if !previewLifecycleOperationIDPattern.MatchString(value.PreviewLifecycleOperationID) {
 		return fmt.Errorf("preview_lifecycle_operation_id is invalid")
 	}
-	for field, digest := range map[string]string{
-		"preview_observation_digest": value.PreviewObservationDigest,
-		"execution_manifest_digest":  value.ExecutionManifestDigest,
-		"resource_binding_digest":    value.ResourceBindingDigest,
-		"operation_digest":           value.OperationDigest,
-		"command_digest":             value.CommandDigest,
-	} {
+	for field, digest := range digests {
 		if err := SHA256Digest(field, digest); err != nil {
 			return err
 		}
@@ -80,6 +88,7 @@ func previewLifecycleBinding(
 	currentEffectiveExpiresAt time.Time,
 	desiredExpiresAt *time.Time,
 	action v1.PreviewLifecycleAction,
+	hosted bool,
 ) error {
 	if err := ID("blueprint_id", blueprint.BlueprintID); err != nil {
 		return err
@@ -90,7 +99,11 @@ func previewLifecycleBinding(
 	if err := SHA256Digest("blueprint digest", blueprint.Digest); err != nil {
 		return err
 	}
-	if err := previewObservationURL(previewURL); err != nil {
+	if hosted {
+		if previewURL != "" {
+			return fmt.Errorf("hosted preview lifecycle forbids preview_url")
+		}
+	} else if err := previewObservationURL(previewURL); err != nil {
 		return err
 	}
 	if err := validatePreviewObservationCommits(commitSet); err != nil {
@@ -122,12 +135,15 @@ func previewLifecycleBinding(
 }
 
 func PreviewLifecycleOperation(value v1.PreviewLifecycleOperation) error {
-	if err := previewLifecycleAuthority(value.PreviewLifecycleOperationAuthority); err != nil {
+	if value.PreviewID != "" || value.PreviewKey != "" {
+		return fmt.Errorf("external preview lifecycle forbids hosted preview identity")
+	}
+	if err := previewLifecycleAuthority(value.PreviewLifecycleOperationAuthority, false); err != nil {
 		return err
 	}
 	if err := previewLifecycleBinding(
 		value.Blueprint, value.PreviewURL, value.CommitSet, value.CommitSetDigest,
-		value.OriginalExpiresAt, value.CurrentEffectiveExpiresAt, value.DesiredExpiresAt, value.Action,
+		value.OriginalExpiresAt, value.CurrentEffectiveExpiresAt, value.DesiredExpiresAt, value.Action, false,
 	); err != nil {
 		return err
 	}
@@ -149,7 +165,8 @@ func PreviewLifecycleOperation(value v1.PreviewLifecycleOperation) error {
 func previewLifecycleOperationFromResult(value v1.PreviewLifecycleResultAuthority) v1.PreviewLifecycleOperation {
 	return v1.PreviewLifecycleOperation{
 		PreviewLifecycleOperationAuthority: value.PreviewLifecycleOperationAuthority,
-		Blueprint:                          value.Blueprint, PreviewURL: value.PreviewURL,
+		PreviewID:                          value.PreviewID, PreviewKey: value.PreviewKey,
+		Blueprint: value.Blueprint, PreviewURL: value.PreviewURL,
 		CommitSet:       append([]v1.PreviewObservationCommit(nil), value.CommitSet...),
 		CommitSetDigest: value.CommitSetDigest, OriginalExpiresAt: value.OriginalExpiresAt,
 		CurrentEffectiveExpiresAt: value.CurrentEffectiveExpiresAt, DesiredExpiresAt: value.DesiredExpiresAt,
