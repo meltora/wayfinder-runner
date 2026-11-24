@@ -202,9 +202,13 @@ func sealVectorLifecycle(operation PreviewLifecycleOperation) PreviewLifecycleOp
 }
 
 func vectorEnvelope(id string, payload CommandPayload) json.RawMessage {
+	return vectorEnvelopeSentAt(id, "2099-01-01T00:00:00Z", payload)
+}
+
+func vectorEnvelopeSentAt(id, sentAt string, payload CommandPayload) json.RawMessage {
 	raw, err := json.Marshal(Envelope{
 		Version: ProtocolVersion, Type: TypeCommand, ID: id,
-		SentAt: vectorTime("2099-01-01T00:00:00Z"), RunnerID: "runner-1", Payload: payload,
+		SentAt: vectorTime(sentAt), RunnerID: "runner-1", Payload: payload,
 	})
 	if err != nil {
 		panic(err)
@@ -264,7 +268,7 @@ func validLifecycleVector(name, description, id string, operation PreviewLifecyc
 }
 
 func hostedResultVector(
-	name, description, given, controller, commandID string,
+	name, description, given, controller, commandID, commandSentAt string,
 	operation PreviewLifecycleOperation,
 	observedAt, sentAt string,
 	outcome PreviewLifecycleResultOutcome,
@@ -290,7 +294,8 @@ func hostedResultVector(
 	}
 	return PreviewHostedResultVector{
 		Name: name, Description: description, Given: given, Controller: controller,
-		CommandEnvelope: vectorLifecycleEnvelope(commandID, operation), ResultEnvelope: result,
+		CommandEnvelope: vectorEnvelopeSentAt(commandID, commandSentAt, CommandPayload{Command: CmdPreviewLifecycle, PreviewLifecycle: &operation}),
+		ResultEnvelope:  result,
 		Expected: PreviewHostedResultWant{
 			ResultEventID: eventID, OutcomeKind: outcome.Kind, OutcomeCode: outcome.Code,
 			ResourceBindingDigest: operation.ResourceBindingDigest, OperationDigest: operation.OperationDigest,
@@ -309,7 +314,7 @@ func hostedResultVectors(extend, destroy PreviewLifecycleOperation) []PreviewHos
 	})
 	return []PreviewHostedResultVector{
 		hostedResultVector("hosted_extend_succeeded", "the command of hosted_extend_with_desired_expiry; the runner fills resource_binding_digest and computes controller_receipt_digest",
-			"deployed:deploy_two_repositories", "extends", vectorLifecycleCommandID("1"), extend,
+			"deployed:deploy_two_repositories", "extends", vectorLifecycleCommandID("1"), "2099-01-01T00:00:00Z", extend,
 			"2099-01-01T00:00:01.234Z", "2099-01-01T00:00:01.240Z",
 			PreviewLifecycleResultOutcome{
 				Kind: PreviewLifecycleSucceeded,
@@ -319,7 +324,7 @@ func hostedResultVectors(extend, destroy PreviewLifecycleOperation) []PreviewHos
 				},
 			}),
 		hostedResultVector("hosted_destroy_already_absent", "the command of hosted_destroy_without_desired_expiry for a preview the runner does not host",
-			"none", "not_called", vectorLifecycleCommandID("2"), destroy,
+			"none", "not_called", vectorLifecycleCommandID("2"), "2099-01-01T00:00:00Z", destroy,
 			"2099-01-01T00:00:01.5Z", "2099-01-01T00:00:01.501Z",
 			PreviewLifecycleResultOutcome{
 				Kind: PreviewLifecycleSucceeded,
@@ -328,11 +333,11 @@ func hostedResultVectors(extend, destroy PreviewLifecycleOperation) []PreviewHos
 				},
 			}),
 		hostedResultVector("hosted_extend_policy_denied", "extend to current_effective_expires_at plus 8 days, beyond the default 7 day max_extension_ms",
-			"deployed:deploy_two_repositories", "denies", vectorLifecycleCommandID("6"), overlong,
+			"deployed:deploy_two_repositories", "denies", vectorLifecycleCommandID("6"), "2099-01-01T00:00:00Z", overlong,
 			"2099-01-01T00:00:02Z", "2099-01-01T00:00:02.001Z",
 			PreviewLifecycleResultOutcome{Kind: PreviewLifecyclePermanent, Code: PreviewLifecyclePolicyDenied}),
 		hostedResultVector("hosted_destroy_controller_timeout", "the operation of hosted_destroy_without_desired_expiry under a new command id; the controller outlives the lease, so observed_at is clamped to lease_expires_at",
-			"deployed:deploy_two_repositories", "outlives_lease", vectorLifecycleCommandID("7"), destroy,
+			"deployed:deploy_two_repositories", "outlives_lease", vectorLifecycleCommandID("7"), "2099-01-01T11:30:00Z", destroy,
 			"2099-01-01T12:00:00Z", "2099-01-01T12:00:00.003Z",
 			PreviewLifecycleResultOutcome{Kind: PreviewLifecycleUncertain, Code: PreviewLifecycleControllerTimeout}),
 	}
@@ -418,8 +423,8 @@ func BuildPreviewDeployVectorFile() PreviewDeployVectorFile {
 			"expected_outcome":          "invalid_command and command_conflict are command ack reason codes and publish no result; failed:<phase> means the command is accepted and one preview_deploy_result with outcome failed at that phase is published",
 			"expected":                  "digests and event ids computed by the runner; each recomputes from the envelope, so a mismatch localises an encoder bug",
 			"hosted_destroyed_event_id": "preview-hosted-destroyed- followed by hex sha256 of preview_id, NUL, the idempotency_key of the deploy named in given, NUL, and the outcome; vectors use outcome destroyed",
-			"hosted_lifecycle_results":  "each vector is a hosted preview_lifecycle command_envelope and the preview_lifecycle_result event envelope the runner publishes for it given that state and controller; the result envelope id is result_event_id and its payload carries the command authority unchanged; sent_at and observed_at are runner wall-clock times, so compare them only as observed_at <= lease_expires_at, except that a controller_timeout sets observed_at to lease_expires_at; expected.resource_binding_digest, operation_digest and command_digest recompute from the command; on success the outcome repeats resource_binding_digest and controller_receipt_digest is the canonical digest of operation_digest, resource_binding_digest, resource_kind, disposition and, when present, expires_at of resource_state",
-			"controller":                "what the preview host controller does in a hosted_lifecycle_results vector: extends: returns an active resource_state at desired_expires_at without a receipt; not_called: the runner answers without the controller; denies: returns permanent policy_denied, as the runner's controller does for an extension beyond max_extension_ms; outlives_lease: does not answer before lease_expires_at",
+			"hosted_lifecycle_results":  "each vector is a hosted preview_lifecycle command_envelope and the preview_lifecycle_result event envelope the runner publishes for it given that state and controller; the result envelope id is result_event_id and its payload carries the command authority unchanged; sent_at and observed_at are runner wall-clock times, so compare them only as observed_at <= lease_expires_at, except that a controller_timeout sets observed_at to lease_expires_at; a real runner sets the result sent_at from its local clock in its local time zone with nanosecond precision, so its offset and sub-second digits can differ from the vector's and consumers must compare sent_at as an instant, never as a string; expected.resource_binding_digest, operation_digest and command_digest recompute from the command; on success the outcome repeats resource_binding_digest and controller_receipt_digest is PreviewCanonicalDigest: the lowercase hex sha256 of the canonical JSON (object keys sorted by UTF-16 code units, no whitespace, ECMAScript string escaping) of an object with operation_digest and resource_binding_digest of the command, resource_kind of resource_state, disposition of resource_state always present and the empty string for an active state, and expires_at only when resource_state has one, encoded by previewLifecycleCanonicalTime as UTC with exactly three fractional digits and a Z suffix (YYYY-MM-DDTHH:MM:SS.sssZ)",
+			"controller":                "what the preview host controller does in a hosted_lifecycle_results vector: extends: returns an active resource_state at desired_expires_at without a receipt; not_called: the runner answers without the controller; denies: returns permanent policy_denied, as the runner's controller does for an extension beyond max_extension_ms; outlives_lease: does not answer before lease_expires_at, which the runner can observe only when the lease remaining at receipt is at most lease_max (default 45 minutes), because the runner caps the controller deadline at now plus lease_max and publishes the controller's answer if that cap ends first",
 		},
 		Valid: []PreviewDeployValidVector{
 			validDeployVector("deploy_two_repositories", "two repositories, millisecond expires_at, empty edge_host", vectorDeployCommandID("1"), deploy),
@@ -562,16 +567,29 @@ func TestPreviewDeployV1VectorDigestsArePinned(t *testing.T) {
 	if len(pins) != 0 {
 		t.Fatalf("pinned vectors missing: %v", pins)
 	}
-	const extendReceipt = "c9d91d8440426aa7bf985f9e7141fe337cf27cf462fa064bd400222a77c02979"
-	for _, vector := range file.HostedResults {
-		if vector.Name == "hosted_extend_succeeded" {
-			if vector.Expected.ControllerReceiptDigest != extendReceipt {
-				t.Fatalf("hosted_extend_succeeded receipt moved: %s", vector.Expected.ControllerReceiptDigest)
-			}
-			return
-		}
+	hostedPins := map[string]PreviewHostedResultWant{
+		"hosted_extend_succeeded":       {ControllerReceiptDigest: "c9d91d8440426aa7bf985f9e7141fe337cf27cf462fa064bd400222a77c02979"},
+		"hosted_destroy_already_absent": {ControllerReceiptDigest: "9dc059ef45a2f0f2e056e0b6d9205d4c52c5f10f8631fb3eabc6f305f25e0676"},
+		"hosted_extend_policy_denied": {
+			OperationDigest: "84d62af5188e9f07c9455fce489e8715b01d08d2ea060da473000fdf3aee17a5",
+			CommandDigest:   "9c0014f805764012a2da67290e5b29fde1eaea9bf52028ccfe34c2ad7880823c",
+		},
 	}
-	t.Fatal("pinned vector hosted_extend_succeeded missing")
+	for _, vector := range file.HostedResults {
+		pin, ok := hostedPins[vector.Name]
+		if !ok {
+			continue
+		}
+		if (pin.ControllerReceiptDigest != "" && vector.Expected.ControllerReceiptDigest != pin.ControllerReceiptDigest) ||
+			(pin.OperationDigest != "" && vector.Expected.OperationDigest != pin.OperationDigest) ||
+			(pin.CommandDigest != "" && vector.Expected.CommandDigest != pin.CommandDigest) {
+			t.Fatalf("%s digests moved: operation=%s command=%s receipt=%s", vector.Name, vector.Expected.OperationDigest, vector.Expected.CommandDigest, vector.Expected.ControllerReceiptDigest)
+		}
+		delete(hostedPins, vector.Name)
+	}
+	if len(hostedPins) != 0 {
+		t.Fatalf("pinned hosted vectors missing: %v", hostedPins)
+	}
 }
 
 func vectorGivenDeployKey(t *testing.T, file PreviewDeployVectorFile, given string) string {

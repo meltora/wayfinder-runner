@@ -345,9 +345,6 @@ func TestSharedHostedLifecycleResultVectorsAreWhatTheDaemonPublishes(t *testing.
 					ResourceState: &v1.PreviewLifecycleResourceState{Kind: v1.PreviewLifecycleResourceDestroyed, Disposition: v1.PreviewLifecycleDestroyed},
 				}
 				jr.d.previewHostController = leaseOutlivingPreviewHostController{controller}
-				operation.LeaseExpiresAt = time.Now().UTC().Truncate(time.Millisecond).Add(200 * time.Millisecond)
-				sealHostedPreviewLifecycle(&operation)
-				command.PreviewLifecycle = &operation
 			default:
 				t.Fatalf("controller=%q", vector.Controller)
 			}
@@ -355,6 +352,11 @@ func TestSharedHostedLifecycleResultVectorsAreWhatTheDaemonPublishes(t *testing.
 				insertHostedPreviewHost(t, jr.d, givenVectorDeploy(t, deploys, vector.Given, "deployed:"), nil)
 			}
 			events := captureLifecycleEvents(jr.d)
+			if vector.Controller == "outlives_lease" {
+				operation.LeaseExpiresAt = time.Now().UTC().Truncate(time.Millisecond).Add(time.Second)
+				sealHostedPreviewLifecycle(&operation)
+				command.PreviewLifecycle = &operation
+			}
 			if err := jr.d.executeCommand(ctx, envelope, command); err != nil {
 				t.Fatal(err)
 			}
