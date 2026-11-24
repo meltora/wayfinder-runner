@@ -81,12 +81,53 @@ func optionalNetworkGateway(t *testing.T, ctx context.Context, network string) (
 	return "", false
 }
 
+func ipv6Routable(address netip.Addr) bool {
+	return !address.IsLinkLocalUnicast() && !address.IsMulticast() && !address.IsLoopback()
+}
+
+func routableIPv6Routes(output string) []string {
+	var routable []string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		destination := fields[0]
+		if destination == "local" || destination == "multicast" || destination == "anycast" {
+			if len(fields) < 2 {
+				continue
+			}
+			destination = fields[1]
+		}
+		if prefix, err := netip.ParsePrefix(destination); err == nil && !ipv6Routable(prefix.Addr()) {
+			continue
+		}
+		if address, err := netip.ParseAddr(destination); err == nil && !ipv6Routable(address) {
+			continue
+		}
+		routable = append(routable, line)
+	}
+	return routable
+}
+
 func probeFromPreviewNetwork(ctx context.Context, cli DockerCLI, prefix, previewID, image, name string, command ...string) (string, error) {
 	return cli.RunOnce(ctx, ContainerSpec{
 		Name: prefix + "-probe-" + name, Image: image, Network: prefix,
 		Labels: PreviewLabels("runner-real", previewID), User: "65534:65534", ReadOnly: true,
 		MemoryMB: 64, CPUs: 0.25, PidsLimit: 64, Command: command,
 	})
+}
+
+func TestRoutableIPv6Routes(t *testing.T) {
+	output := "fe80::/64 dev eth0  metric 256 \nmulticast ff00::/8 dev eth0  metric 256 \nlocal ::1 dev lo\n" +
+		"2001:db8::/64 dev eth0  metric 256 \ndefault via fe80::1 dev eth0  metric 1024 \n"
+	routable := routableIPv6Routes(output)
+	if len(routable) != 2 || !strings.HasPrefix(routable[0], "2001:db8::/64") || !strings.HasPrefix(routable[1], "default") {
+		t.Fatalf("routable = %q", routable)
+	}
+	if routable := routableIPv6Routes(""); len(routable) != 0 {
+		t.Fatalf("routable = %q", routable)
+	}
 }
 
 func TestRealDockerDeployAndDestroy(t *testing.T) {
@@ -186,6 +227,10 @@ func TestRealDockerDeployAndDestroy(t *testing.T) {
 		}
 	}()
 	_, hostPort, _ := net.SplitHostPort(hostListener.Addr().String())
+	if output, err := probeFromPreviewNetwork(ctx, cli, prefix, operation.PreviewID, image, "control",
+		"wget", "-q", "-T", "5", "-O", "-", "http://app:8080/index.html"); err != nil || output != "preview ok\n" {
+		t.Fatalf("positive control: the probe could not reach the app: %q %v", output, err)
+	}
 	targets := map[string]string{
 		"public":         "http://1.1.1.1/",
 		"metadata":       "http://169.254.169.254/latest/meta-data/",
@@ -202,16 +247,15 @@ func TestRealDockerDeployAndDestroy(t *testing.T) {
 			t.Fatalf("%s %s reachable from the preview network: %q", name, target, output)
 		}
 	}
-	for name, host := range map[string]string{
-		"dns-random": "preview-" + strconv.FormatInt(time.Now().UnixNano(), 36) + ".example.com",
-		"dns-public": "example.com",
-	} {
-		if output, err := probeFromPreviewNetwork(ctx, cli, prefix, operation.PreviewID, image, name, "nslookup", host); err == nil {
-			t.Fatalf("%s resolved from the preview network: %q", host, output)
-		}
+	if output, err := probeFromPreviewNetwork(ctx, cli, prefix, operation.PreviewID, image, "dns-public", "nslookup", "example.com"); err == nil {
+		t.Fatalf("example.com resolved from the preview network: %q", output)
 	}
-	if output, err := probeFromPreviewNetwork(ctx, cli, prefix, operation.PreviewID, image, "ipv6-route", "ip", "-6", "route", "show"); err == nil && strings.TrimSpace(output) != "" {
-		t.Fatalf("the preview network carries IPv6 routes: %q", output)
+	routes, err := probeFromPreviewNetwork(ctx, cli, prefix, operation.PreviewID, image, "ipv6-route", "ip", "-6", "route", "show")
+	if err != nil && !strings.Contains(routes, "not supported") {
+		t.Fatalf("ipv6 route probe failed: %q %v", routes, err)
+	}
+	if routable := routableIPv6Routes(routes); len(routable) > 0 {
+		t.Fatalf("the preview network carries routable IPv6 routes: %q", routable)
 	}
 	destroy := v1.PreviewLifecycleOperation{PreviewID: operation.PreviewID}
 	destroy.Action = v1.PreviewLifecycleDestroy

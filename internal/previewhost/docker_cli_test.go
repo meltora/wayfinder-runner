@@ -311,7 +311,7 @@ esac`)
 	}
 	calls := readCalls(t, log)
 	want := []string{
-		"network create --driver bridge --internal -o com.docker.network.bridge.inhibit_ipv4=true " +
+		"network create --driver bridge --ipv6=false --internal -o com.docker.network.bridge.inhibit_ipv4=true " +
 			"--label com.ourplatform.preview-host=runner-1 --label com.ourplatform.preview-id=preview-1 our-preview-0123456789ab",
 		"network connect --alias our-gateway our-preview-0123456789ab our-preview-0123456789ab-gateway",
 		"version --format {{.Server.Version}}",

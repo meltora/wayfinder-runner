@@ -112,7 +112,7 @@ func (cli DockerCLI) Pull(ctx context.Context, image string) (string, error) {
 }
 
 func (cli DockerCLI) CreateNetwork(ctx context.Context, spec NetworkSpec) error {
-	args := []string{"network", "create", "--driver", "bridge"}
+	args := []string{"network", "create", "--driver", "bridge", "--ipv6=false"}
 	if spec.Internal {
 		args = append(args, "--internal")
 	}

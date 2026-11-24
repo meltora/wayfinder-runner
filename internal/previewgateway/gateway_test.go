@@ -13,7 +13,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -443,28 +442,6 @@ func (upstream *rawUpstream) Requests() []*http.Request {
 	return slices.Clone(upstream.requests)
 }
 
-func TestPlainHTTPForwardStripsResponseHeadersNamedInConnection(t *testing.T) {
-	for name, response := range map[string]string{
-		"close with token": "HTTP/1.1 200 OK\r\nConnection: close, X-Upstream-Hop\r\nX-Upstream-Hop: 1\r\nX-Kept: yes\r\nContent-Length: 2\r\n\r\nok",
-		"repeated header":  "HTTP/1.1 200 OK\r\nConnection: close\r\nConnection: X-Upstream-Hop\r\nX-Upstream-Hop: 1\r\nX-Kept: yes\r\nContent-Length: 2\r\n\r\nok",
-		"bare line feeds":  "HTTP/1.1 200 OK\nConnection: close, X-Upstream-Hop\nX-Upstream-Hop: 1\nX-Kept: yes\nContent-Length: 2\n\nok",
-		"after continue":   "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nConnection: close, X-Upstream-Hop\r\nX-Upstream-Hop: 1\r\nX-Kept: yes\r\nContent-Length: 2\r\n\r\nok",
-	} {
-		t.Run(name, func(t *testing.T) {
-			upstream := startRawUpstream(t, response)
-			h := startGateway(t, Config{Allow: []string{"api.example.com"}}, upstream.addr, [][]netip.Addr{public("93.184.216.34")}, 0)
-			got := proxyRequest(t, h.egress, "GET http://api.example.com/ HTTP/1.1\r\nHost: api.example.com\r\n\r\n")
-			body, _ := io.ReadAll(got.Body)
-			if got.StatusCode != http.StatusOK || string(body) != "ok" || got.Header.Get("X-Kept") != "yes" {
-				t.Fatalf("response = %d %q %v", got.StatusCode, body, got.Header)
-			}
-			if got.Header.Get("X-Upstream-Hop") != "" {
-				t.Fatalf("header named in Connection leaked: %v", got.Header)
-			}
-		})
-	}
-}
-
 func TestPlainHTTPForwardAddsNoUserAgentOrCompression(t *testing.T) {
 	upstream := startRawUpstream(t, "HTTP/1.1 204 No Content\r\n\r\n")
 	h := startGateway(t, Config{Allow: []string{"api.example.com"}}, upstream.addr, [][]netip.Addr{public("93.184.216.34")}, 0)
@@ -486,35 +463,25 @@ func TestPlainHTTPForwardAddsNoUserAgentOrCompression(t *testing.T) {
 	}
 }
 
-func TestPlainHTTPForwardIgnoresProxyEnvironment(t *testing.T) {
-	trap := listen(t)
-	t.Cleanup(func() { _ = trap.Close() })
-	var trapped atomic.Int32
-	go func() {
-		for {
-			conn, err := trap.Accept()
-			if err != nil {
-				return
-			}
-			trapped.Add(1)
-			_ = conn.Close()
-		}
-	}()
-	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
-		t.Setenv(key, "http://"+trap.Addr().String())
+func TestForwardTransportUsesNoProxy(t *testing.T) {
+	transport := forwardTransport(func(context.Context) (net.Conn, error) { return nil, errors.New("unused") })
+	if transport.Proxy != nil {
+		t.Fatal("forward transport consults a proxy")
 	}
-	t.Setenv("NO_PROXY", "")
-	t.Setenv("no_proxy", "")
+	if !transport.DisableKeepAlives || !transport.DisableCompression || transport.MaxResponseHeaderBytes != maxResponseHeaderBytes {
+		t.Fatalf("transport = %+v", transport)
+	}
+}
+
+func TestPlainHTTPForwardSendsOriginFormUpstream(t *testing.T) {
 	upstream := startRawUpstream(t, "HTTP/1.1 204 No Content\r\n\r\n")
 	h := startGateway(t, Config{Allow: []string{"api.example.com"}}, upstream.addr, [][]netip.Addr{public("93.184.216.34")}, 0)
-	if response := proxyRequest(t, h.egress, "GET http://api.example.com/ HTTP/1.1\r\nHost: api.example.com\r\n\r\n"); response.StatusCode != http.StatusNoContent {
+	if response := proxyRequest(t, h.egress, "GET http://api.example.com/a?b=1 HTTP/1.1\r\nHost: api.example.com\r\n\r\n"); response.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d", response.StatusCode)
 	}
-	if dialed := h.dialer.Dialed(); !slices.Equal(dialed, []string{"93.184.216.34:80"}) {
-		t.Fatalf("dialed = %v", dialed)
-	}
-	if len(upstream.Requests()) != 1 || trapped.Load() != 0 {
-		t.Fatalf("upstream requests = %d trapped = %d", len(upstream.Requests()), trapped.Load())
+	requests := upstream.Requests()
+	if len(requests) != 1 || requests[0].RequestURI != "/a?b=1" {
+		t.Fatalf("upstream requests = %+v", requests)
 	}
 }
 

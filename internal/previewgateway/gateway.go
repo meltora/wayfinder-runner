@@ -1,8 +1,6 @@
 package previewgateway
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -10,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/textproto"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,87 +27,7 @@ const (
 	maxLoggedHostLength  = 255
 
 	maxResponseHeaderBytes = 1 << 20
-	maxCapturedBytes       = maxResponseHeaderBytes + 64<<10
 )
-
-type headerCapture struct {
-	net.Conn
-	mu       sync.Mutex
-	data     []byte
-	scanned  int
-	complete bool
-	overflow bool
-	tokens   []string
-}
-
-func (capture *headerCapture) Read(p []byte) (int, error) {
-	n, err := capture.Conn.Read(p)
-	if n > 0 {
-		capture.observe(p[:n])
-	}
-	return n, err
-}
-
-func (capture *headerCapture) observe(chunk []byte) {
-	capture.mu.Lock()
-	defer capture.mu.Unlock()
-	if capture.complete || capture.overflow {
-		return
-	}
-	capture.data = append(capture.data, chunk...)
-	for {
-		end := headerBlockEnd(capture.data[capture.scanned:])
-		if end < 0 {
-			if len(capture.data) > maxCapturedBytes {
-				capture.overflow = true
-				capture.data = nil
-			}
-			return
-		}
-		block := capture.data[capture.scanned : capture.scanned+end]
-		capture.scanned += end
-		if !capture.collect(block) {
-			capture.complete = true
-			capture.data = nil
-			return
-		}
-	}
-}
-
-func headerBlockEnd(data []byte) int {
-	end := -1
-	if index := bytes.Index(data, []byte("\n\r\n")); index >= 0 {
-		end = index + 3
-	}
-	if index := bytes.Index(data, []byte("\n\n")); index >= 0 && (end < 0 || index+2 < end) {
-		end = index + 2
-	}
-	return end
-}
-
-func (capture *headerCapture) collect(block []byte) bool {
-	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(block)))
-	status, err := reader.ReadLine()
-	if err != nil {
-		return false
-	}
-	header, _ := reader.ReadMIMEHeader()
-	for _, value := range header.Values("Connection") {
-		for _, field := range strings.Split(value, ",") {
-			if field = strings.TrimSpace(field); field != "" {
-				capture.tokens = append(capture.tokens, field)
-			}
-		}
-	}
-	_, code, _ := strings.Cut(status, " ")
-	return strings.HasPrefix(code, "1") && !strings.HasPrefix(code, "101")
-}
-
-func (capture *headerCapture) connectionTokens() ([]string, bool) {
-	capture.mu.Lock()
-	defer capture.mu.Unlock()
-	return append([]string(nil), capture.tokens...), capture.complete
-}
 
 type Resolver interface {
 	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
@@ -340,22 +257,9 @@ func (g *gateway) forward(writer http.ResponseWriter, request *http.Request) {
 	if !ok {
 		return
 	}
-	var captured atomic.Pointer[headerCapture]
-	transport := &http.Transport{
-		Proxy:              nil,
-		DisableKeepAlives:  true,
-		DisableCompression: true,
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			conn, err := g.dialFirst(ctx, addresses, 80)
-			if err != nil {
-				return nil, err
-			}
-			capture := &headerCapture{Conn: conn}
-			captured.Store(capture)
-			return capture, nil
-		},
-		MaxResponseHeaderBytes: maxResponseHeaderBytes,
-	}
+	transport := forwardTransport(func(ctx context.Context) (net.Conn, error) {
+		return g.dialFirst(ctx, addresses, 80)
+	})
 	defer transport.CloseIdleConnections()
 	outbound := request.Clone(request.Context())
 	outbound.RequestURI = ""
@@ -369,21 +273,7 @@ func (g *gateway) forward(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	defer func() { _ = response.Body.Close() }()
-	capture := captured.Load()
-	if capture == nil {
-		g.refuse(writer, http.StatusBadGateway, request.URL.Hostname(), "forward failed")
-		return
-	}
-	connectionTokens, complete := capture.connectionTokens()
-	if !complete {
-		g.refuse(writer, http.StatusBadGateway, request.URL.Hostname(), "forward failed")
-		return
-	}
-	responseHeader := response.Header.Clone()
-	for _, token := range connectionTokens {
-		responseHeader.Del(token)
-	}
-	for key, values := range withoutHopHeaders(responseHeader) {
+	for key, values := range withoutHopHeaders(response.Header) {
 		writer.Header()[key] = values
 	}
 	writer.WriteHeader(response.StatusCode)
@@ -456,6 +346,18 @@ func (g *gateway) refuse(writer http.ResponseWriter, status int, host, reason st
 var hopHeaders = []string{
 	"Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Proxy-Connection",
 	"Te", "Trailer", "Transfer-Encoding", "Upgrade",
+}
+
+func forwardTransport(dial func(ctx context.Context) (net.Conn, error)) *http.Transport {
+	return &http.Transport{
+		Proxy:              nil,
+		DisableKeepAlives:  true,
+		DisableCompression: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dial(ctx)
+		},
+		MaxResponseHeaderBytes: maxResponseHeaderBytes,
+	}
 }
 
 func withoutHopHeaders(header http.Header) http.Header {
