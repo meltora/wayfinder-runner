@@ -660,8 +660,22 @@ func TestHealthProbeStaysOnLoopback(t *testing.T) {
 					t.Fatalf("probe reached %q", host)
 				}
 			}
+			if len(hosts) != 0 {
+				t.Fatalf("refused path %q was still probed: %v", path, hosts)
+			}
 		})
 	}
+}
+
+func TestDeployLeaseExpiryDuringHealthIsLeaseExpired(t *testing.T) {
+	h := newHarness(t)
+	h.build().client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	assertFailedAndTornDown(t, h, h.deploy(ctx, testContent(), testOperation()), v1.PreviewDeployPhaseLeaseExpired)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -877,7 +891,7 @@ func uniformPhaseTimeouts(timeout time.Duration) map[v1.PreviewDeployPhase]time.
 
 func TestConfigDefaultsAndValidation(t *testing.T) {
 	fits, err := Config{RunnerID: testRunnerID, StateDir: "/var/lib/runner", Lease: 20 * time.Minute,
-		TeardownTimeout: 5*time.Minute + 30*time.Second - logGrace/2, PhaseTimeouts: uniformPhaseTimeouts(time.Minute)}.normalized()
+		TeardownTimeout: 5*time.Minute + 30*time.Second - logGrace/2 - cancelledDockerCalls*dockerWaitDelay/2, PhaseTimeouts: uniformPhaseTimeouts(time.Minute)}.normalized()
 	if err != nil || fits.Lease != 20*time.Minute {
 		t.Fatalf("budget that fits the lease refused: %v", err)
 	}
@@ -896,7 +910,12 @@ func TestConfigDefaultsAndValidation(t *testing.T) {
 		}
 		sum += cfg.PhaseTimeouts[phase]
 	}
-	if budget := sum + 2*cfg.TeardownTimeout + logGrace; budget > cfg.Lease {
+	if _, err := (Config{RunnerID: testRunnerID, StateDir: "/var/lib/runner", Lease: 20 * time.Minute,
+		TeardownTimeout: 5*time.Minute + 30*time.Second - logGrace/2 - cancelledDockerCalls*dockerWaitDelay/2 + time.Second,
+		PhaseTimeouts:   uniformPhaseTimeouts(time.Minute)}).normalized(); err == nil {
+		t.Fatal("budget that ignores docker wait delays accepted")
+	}
+	if budget := deployBudget(sum, cfg.TeardownTimeout); budget > cfg.Lease {
 		t.Fatalf("default deploy budget %s exceeds lease %s", budget, cfg.Lease)
 	}
 	for name, bad := range map[string]Config{

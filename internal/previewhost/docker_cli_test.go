@@ -210,6 +210,45 @@ done`)
 	if err := (DockerCLI{TempDir: "relative"}).RunDetached(context.Background(), testSpec()); err == nil {
 		t.Fatal("relative TempDir accepted")
 	}
+	parentLink := filepath.Join(parent, "parent-link")
+	if err := os.Symlink(parent, parentLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := (DockerCLI{TempDir: filepath.Join(parentLink, "env")}).RunDetached(context.Background(), testSpec()); err == nil {
+		t.Fatal("TempDir under a symlinked parent accepted")
+	}
+}
+
+func TestOwnedByCurrentUserRefusesAnotherOwner(t *testing.T) {
+	info, err := os.Lstat(privateDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ownedByCurrentUser(info) {
+		t.Fatal("runner-owned directory refused")
+	}
+	if os.Geteuid() != 0 {
+		root, err := os.Lstat("/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ownedByCurrentUser(root) {
+			t.Fatal("root-owned directory accepted for a non-root runner")
+		}
+	}
+}
+
+func TestDockerCLIRemoveToleratesRemovalAlreadyInProgress(t *testing.T) {
+	installFakeDocker(t, `
+if [ "$1" = rm ]; then echo "Error response from daemon: removal of container 0123456789abcdef is already in progress" >&2; exit 1; fi`)
+	if err := (DockerCLI{TempDir: privateDir(t)}).Remove(context.Background(), Objects{Containers: []string{"0123456789abcdef"}}); err != nil {
+		t.Fatalf("removal already in progress was an error: %v", err)
+	}
+	installFakeDocker(t, `
+if [ "$1" = rm ]; then echo "Error response from daemon: permission denied" >&2; exit 1; fi`)
+	if err := (DockerCLI{TempDir: privateDir(t)}).Remove(context.Background(), Objects{Containers: []string{"0123456789abcdef"}}); err == nil {
+		t.Fatal("a real removal error was tolerated")
+	}
 }
 
 func TestDockerCLICancelSendsSIGTERM(t *testing.T) {

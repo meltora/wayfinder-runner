@@ -19,7 +19,13 @@ const (
 	DefaultJobUID          = 10001
 	DefaultJobGID          = 10001
 	logGrace               = 10 * time.Second
+	dockerWaitDelay        = 10 * time.Second
+	cancelledDockerCalls   = 4
 )
+
+func deployBudget(phases, teardown time.Duration) time.Duration {
+	return phases + 2*teardown + logGrace + cancelledDockerCalls*dockerWaitDelay
+}
 
 var deployPhases = []v1.PreviewDeployPhase{
 	v1.PreviewDeployPhaseCheckout, v1.PreviewDeployPhasePull, v1.PreviewDeployPhaseServices,
@@ -101,8 +107,8 @@ func (cfg Config) normalized() (Config, error) {
 	for _, timeout := range timeouts {
 		sum += timeout
 	}
-	if budget := sum + 2*cfg.TeardownTimeout + logGrace; budget > cfg.Lease {
-		return Config{}, fmt.Errorf("preview host phase timeouts, teardown and log grace %s exceed the deploy lease %s", budget, cfg.Lease)
+	if budget := deployBudget(sum, cfg.TeardownTimeout); budget > cfg.Lease {
+		return Config{}, fmt.Errorf("preview host phase timeouts, teardown, log grace and docker wait delays %s exceed the deploy lease %s", budget, cfg.Lease)
 	}
 	cfg.PhaseTimeouts = maps.Clone(timeouts)
 	return cfg, nil

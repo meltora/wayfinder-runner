@@ -534,6 +534,7 @@ func TestPreviewDeployChecksMatchUnsortedBlueprintByID(t *testing.T) {
 		"missing":         passed("api"),
 		"duplicate":       passed("api", "api"),
 		"extra":           passed("api", "other", "root"),
+		"trailing extra":  passed("api", "root", "zzz"),
 		"foreign":         passed("api", "other"),
 	} {
 		outcome := sanitizePreviewDeployOutcome(v1.PreviewDeployOutcome{Kind: v1.PreviewDeployDeployed, Checks: checks}, content, "")

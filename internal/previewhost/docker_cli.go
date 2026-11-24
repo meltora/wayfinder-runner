@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/example/app-runner/internal/isolation"
 )
@@ -40,7 +39,7 @@ func (cli DockerCLI) run(ctx context.Context, args ...string) (string, error) {
 	cmd.Stdout = output
 	cmd.Stderr = output
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-	cmd.WaitDelay = 10 * time.Second
+	cmd.WaitDelay = dockerWaitDelay
 	err := cmd.Run()
 	return output.String(), err
 }
@@ -48,6 +47,15 @@ func (cli DockerCLI) run(ctx context.Context, args ...string) (string, error) {
 func dockerMissing(output string) bool {
 	lower := strings.ToLower(output)
 	return strings.Contains(lower, "no such") || strings.Contains(lower, "not found")
+}
+
+func dockerRemovalInProgress(output string) bool {
+	return strings.Contains(strings.ToLower(output), "already in progress")
+}
+
+func ownedByCurrentUser(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(stat.Uid) == os.Geteuid()
 }
 
 func (cli DockerCLI) ImagePresent(ctx context.Context, image string) (bool, error) {
@@ -98,12 +106,22 @@ func (cli DockerCLI) privateTempDir() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", err
+	}
+	if resolved != dir {
+		return "", errors.New("preview docker temporary directory must not be reached through a symlink")
+	}
 	info, err := os.Lstat(dir)
 	if err != nil {
 		return "", err
 	}
 	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
 		return "", errors.New("preview docker temporary directory must be a 0700 directory")
+	}
+	if !ownedByCurrentUser(info) {
+		return "", errors.New("preview docker temporary directory must be owned by the runner")
 	}
 	return dir, nil
 }
@@ -311,7 +329,7 @@ func (cli DockerCLI) Remove(ctx context.Context, objects Objects) error {
 			continue
 		}
 		output, err := cli.run(ctx, append(step.args, step.ids...)...)
-		if err != nil && (ctx.Err() != nil || !dockerMissing(output)) {
+		if err != nil && (ctx.Err() != nil || !(dockerMissing(output) || dockerRemovalInProgress(output))) {
 			return fmt.Errorf("remove preview resources: %w: %s", err, strings.TrimSpace(output))
 		}
 	}
