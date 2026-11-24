@@ -278,6 +278,35 @@ func TestPreviewDeployPublishesOneResultAndReplaysByIdempotencyKey(t *testing.T)
 	}
 }
 
+func TestPreviewDeployStoresTheFullDeployAuthorityOnTheHostRow(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	command := validPreviewDeployCommand()
+	operation := *command.PreviewDeploy
+	trustPreviewDeployCommits(t, jr.d, operation)
+	jr.d.previewHostController = &fakePreviewHostController{deployOutcome: deployedPreviewOutcome()}
+	capturePreviewDeployEvents(t, jr.d)
+	if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command); err != nil {
+		t.Fatal(err)
+	}
+	host, found, err := jr.d.journal.PreviewHostByPreviewID(context.Background(), operation.PreviewID)
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if host.ExecutionManifestID != operation.ExecutionManifestID ||
+		host.ExecutionManifestDigest != operation.ExecutionManifestDigest ||
+		host.CommitSetDigest != operation.CommitSetDigest ||
+		!host.OriginalExpiresAt.Equal(operation.ExpiresAt) || !host.ExpiresAt.Equal(operation.ExpiresAt) ||
+		host.PreviewKey != operation.PreviewKey || host.OrganizationID != operation.OrganizationID ||
+		host.ProjectID != operation.ProjectID || host.BlueprintID != operation.Blueprint.BlueprintID ||
+		host.BlueprintVersion != operation.Blueprint.Version || host.BlueprintDigest != operation.Blueprint.Digest {
+		t.Fatalf("host=%+v operation=%+v", host, operation)
+	}
+	lifecycle := validHostedPreviewLifecycleCommand(v1.PreviewLifecycleDestroy, operation)
+	if !hostedPreviewHostBindingMatches(*lifecycle.PreviewLifecycle, host) {
+		t.Fatal("the stored row does not bind a lifecycle operation derived from the same deploy")
+	}
+}
+
 func TestPreviewDeployReplaysStoredResultWhenEventWasPruned(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	command := validPreviewDeployCommand()

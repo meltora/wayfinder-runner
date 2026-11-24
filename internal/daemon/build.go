@@ -73,6 +73,10 @@ func (jr *jobRunner) finalizeBuild(
 }
 
 func (jr *jobRunner) recordTrustedCommitSet(ctx context.Context, commitSet map[string]string) {
+	if err := jr.trustedCommitSetEligible(ctx, commitSet); err != nil {
+		jr.logger.Warn("trusted commit set not recorded", "manifest_id", jr.job.ManifestID, "err", err)
+		return
+	}
 	commits := make([]v1.PreviewObservationCommit, 0, len(commitSet))
 	for repositoryID, sha := range commitSet {
 		commits = append(commits, v1.PreviewObservationCommit{RepositoryID: repositoryID, CommitSHA: sha})
@@ -80,6 +84,25 @@ func (jr *jobRunner) recordTrustedCommitSet(ctx context.Context, commitSet map[s
 	if err := jr.d.journal.RecordTrustedCommitSet(ctx, jr.job.ManifestID, jr.job.ManifestDigest, commits, time.Now()); err != nil {
 		jr.logger.Error("record trusted commit set", "manifest_id", jr.job.ManifestID, "err", err)
 	}
+}
+
+func (jr *jobRunner) trustedCommitSetEligible(ctx context.Context, commitSet map[string]string) error {
+	if len(commitSet) != len(jr.repositories) {
+		return fmt.Errorf("commit set does not cover every authoritative repository")
+	}
+	for _, repository := range jr.repositories {
+		commit, ok := commitSet[repository.ID]
+		if !ok {
+			return fmt.Errorf("repository %q is missing from the commit set", repository.ID)
+		}
+		if err := jr.refuseCommittedRunnerArtifacts(ctx, repository, commit); err != nil {
+			return err
+		}
+		if err := refuseCommittedGitlinks(ctx, repository, commit); err != nil {
+			return err
+		}
+	}
+	return jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken)
 }
 
 func (jr *jobRunner) runRequiredChecks(ctx context.Context, commitSet map[string]string, results map[string]agentResult) bool {

@@ -120,6 +120,7 @@ func (jr *jobRunner) executePreviewPublication(ctx context.Context, raw map[stri
 	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
 		return nil, fmt.Errorf("lease validation before preview evidence: %w", err)
 	}
+	jr.recordTrustedCommitSet(ctx, commitSet)
 	fields := map[string]any{
 		"url": preview.url, "health": preview.health,
 		"expires_at":        preview.expiresAt.Format(time.RFC3339Nano),
@@ -152,6 +153,5 @@ func (jr *jobRunner) previewCommitSet(ctx context.Context) (map[string]string, e
 		}
 		commitSet[repository.ID] = result.commit
 	}
-	jr.recordTrustedCommitSet(ctx, commitSet)
 	return commitSet, nil
 }

@@ -249,12 +249,24 @@ func TestHostedPreviewExtendRefusesStaleCurrentEffectiveExpiry(t *testing.T) {
 			insertHostedPreviewHost(t, jr.d, deploy, func(host *journal.PreviewHost) { host.ExpiresAt = rowExpiresAt })
 			events := captureLifecycleEvents(jr.d)
 			err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: hostedLifecycleCommandID("3")}, command)
-			if reason := commandRejectionReason(err); reason != v1.CommandAckReasonCommandConflict {
-				t.Fatalf("reason=%q err=%v", reason, err)
+			if err != nil {
+				t.Fatal(err)
 			}
 			host, _, _ := jr.d.journal.PreviewHostByPreviewID(context.Background(), deploy.PreviewID)
-			if _, lifecycles, _ := controller.counts(); lifecycles != 0 || len(*events) != 0 || !host.ExpiresAt.Equal(rowExpiresAt) {
+			if _, lifecycles, _ := controller.counts(); lifecycles != 0 || len(*events) != 1 || !host.ExpiresAt.Equal(rowExpiresAt) {
 				t.Fatalf("lifecycles=%d events=%d expires_at=%s", lifecycles, len(*events), host.ExpiresAt)
+			}
+			outcome := (*events)[0].Outcome
+			if outcome.Kind != v1.PreviewLifecyclePermanent || outcome.Code != v1.PreviewLifecycleResourceBindingMismatch {
+				t.Fatalf("outcome=%+v", outcome)
+			}
+			if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: hostedLifecycleCommandID("4")}, command); err != nil {
+				t.Fatal(err)
+			}
+			stored, found, err := jr.d.journal.PreviewHostedLifecycleResultByKey(context.Background(), command.PreviewLifecycle.IdempotencyKey)
+			if _, lifecycles, _ := controller.counts(); err != nil || !found || lifecycles != 0 || len(*events) != 1 ||
+				stored.EventID != previewLifecycleResultEventID(hostedLifecycleCommandID("3")) {
+				t.Fatalf("replay lifecycles=%d events=%d stored=%+v found=%v err=%v", lifecycles, len(*events), stored, found, err)
 			}
 		})
 	}

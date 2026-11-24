@@ -152,7 +152,9 @@ func hostedPreviewLifecyclePrecheck(
 	switch host.State {
 	case journal.PreviewHostDeployed:
 		if operation.Action == v1.PreviewLifecycleExtend && !operation.CurrentEffectiveExpiresAt.Equal(host.ExpiresAt) {
-			return v1.PreviewLifecycleResultOutcome{}, false, rejectCommand(v1.CommandAckReasonCommandConflict, nil)
+			return v1.PreviewLifecycleResultOutcome{
+				Kind: v1.PreviewLifecyclePermanent, Code: v1.PreviewLifecycleResourceBindingMismatch,
+			}, false, nil
 		}
 		return v1.PreviewLifecycleResultOutcome{}, true, nil
 	case journal.PreviewHostUncertain:

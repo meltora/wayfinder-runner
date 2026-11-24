@@ -63,18 +63,24 @@ func TestBuildWithFailedRequiredChecksStillRecordsTrustedCommitSet(t *testing.T)
 	}
 }
 
-func TestMidBuildPreviewCommitSetResolutionRecordsTrustedCommitSet(t *testing.T) {
+func publishPreviewAndResolve(t *testing.T, f agentResultTest, key string) map[string]string {
+	t.Helper()
+	if _, err := call(t, f.jr, "platform_publish_preview", previewArguments(t, map[string]any{"idempotency_key": key})); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := f.jr.previewCommitSet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+func TestMidBuildPreviewPublicationRecordsTrustedCommitSet(t *testing.T) {
 	f := newAgentResultTest(t)
 	writeAgentFile(t, f.checkout, "feature.txt", "first\n")
-	first, err := f.jr.previewCommitSet(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := publishPreviewAndResolve(t, f, "preview-first")
 	writeAgentFile(t, f.checkout, "feature.txt", "second\n")
-	second, err := f.jr.previewCommitSet(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	second := publishPreviewAndResolve(t, f, "preview-second")
 	if first["repo-1"] == second["repo-1"] {
 		t.Fatalf("resolutions did not differ: %v", first)
 	}
@@ -91,10 +97,7 @@ func TestAgentCommitClaimsNeverReachTheTrustedLedger(t *testing.T) {
 	if _, err := call(t, f.jr, "platform_publish_preview", args); err == nil {
 		t.Fatal("preview accepted an agent commit_set claim")
 	}
-	resolved, err := f.jr.previewCommitSet(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	resolved := publishPreviewAndResolve(t, f, "preview-runner")
 	if resolved["repo-1"] == agentSHA {
 		t.Fatalf("runner adopted the agent commit %s", agentSHA)
 	}
