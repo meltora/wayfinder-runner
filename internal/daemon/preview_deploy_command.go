@@ -167,8 +167,9 @@ func (d *Daemon) reportUncertainPreviewDeploy(
 		v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain})
 	raw, err := validatedPreviewDeployResult(event)
 	d.previewHostMu.Lock()
+	stopped := false
 	if claimed {
-		delete(d.previewHostRecovering, operation.IdempotencyKey)
+		stopped = d.releasePreviewHostRecoveryLocked(operation.IdempotencyKey)
 	}
 	if err != nil {
 		d.previewHostMu.Unlock()
@@ -188,6 +189,9 @@ func (d *Daemon) reportUncertainPreviewDeploy(
 		update.State = journal.PreviewHostUncertain
 		if proven {
 			update.State = journal.PreviewHostDestroyed
+		} else if stopped {
+			update.State = journal.PreviewHostDestroying
+			update.DestroyReason = v1.PreviewHostedDestroyEmergencyStop
 		}
 	}
 	if len(stored) == 0 {
@@ -199,6 +203,9 @@ func (d *Daemon) reportUncertainPreviewDeploy(
 	d.previewHostMu.Unlock()
 	if err != nil {
 		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
+	}
+	if update.State == journal.PreviewHostDestroying {
+		d.wakePreviewHostReaper()
 	}
 	if len(stored) > 0 {
 		return d.resendStoredPreviewDeployResult(ctx, stored)

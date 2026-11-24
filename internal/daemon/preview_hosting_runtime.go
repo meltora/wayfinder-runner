@@ -86,9 +86,15 @@ func (d *Daemon) previewHostInFlightLocked(idempotencyKey string) bool {
 
 func (d *Daemon) claimPreviewHostRecoveryLocked(idempotencyKey string) {
 	if d.previewHostRecovering == nil {
-		d.previewHostRecovering = make(map[string]struct{})
+		d.previewHostRecovering = make(map[string]uint64)
 	}
-	d.previewHostRecovering[idempotencyKey] = struct{}{}
+	d.previewHostRecovering[idempotencyKey] = d.previewHostEmergencyGeneration
+}
+
+func (d *Daemon) releasePreviewHostRecoveryLocked(idempotencyKey string) bool {
+	generation, claimed := d.previewHostRecovering[idempotencyKey]
+	delete(d.previewHostRecovering, idempotencyKey)
+	return claimed && generation != d.previewHostEmergencyGeneration
 }
 
 func (d *Daemon) admitPreviewDeploy(
@@ -259,25 +265,38 @@ func (d *Daemon) proveUncertainPreviewDeploys(ctx context.Context) error {
 		return err
 	}
 	var errs []error
+	wake := false
 	for _, host := range claimed {
 		recoverErr := d.previewHostController.Recover(ctx, host)
 		if recoverErr != nil {
 			d.logger.Warn("uncertain preview deploy teardown unproven", "preview_id", host.PreviewID, "err", recoverErr)
 		}
 		d.previewHostMu.Lock()
-		delete(d.previewHostRecovering, host.IdempotencyKey)
-		if recoverErr == nil {
+		stopped := d.releasePreviewHostRecoveryLocked(host.IdempotencyKey)
+		var update *journal.PreviewHostUpdate
+		switch {
+		case recoverErr == nil:
+			update = &journal.PreviewHostUpdate{IdempotencyKey: host.IdempotencyKey, State: journal.PreviewHostDestroyed}
+		case stopped:
+			update = &journal.PreviewHostUpdate{
+				IdempotencyKey: host.IdempotencyKey, State: journal.PreviewHostDestroying,
+				DestroyReason: v1.PreviewHostedDestroyEmergencyStop,
+			}
+			wake = true
+		}
+		if update != nil {
 			current, found, err := d.journal.PreviewHostByIdempotencyKey(ctx, host.IdempotencyKey)
 			if err == nil && found && current.State == journal.PreviewHostUncertain && current.DestroyReason == "" {
-				err = d.journal.UpdatePreviewHost(ctx, journal.PreviewHostUpdate{
-					IdempotencyKey: host.IdempotencyKey, State: journal.PreviewHostDestroyed,
-				})
+				err = d.journal.UpdatePreviewHost(ctx, *update)
 			}
 			if err != nil {
 				errs = append(errs, err)
 			}
 		}
 		d.previewHostMu.Unlock()
+	}
+	if wake {
+		d.wakePreviewHostReaper()
 	}
 	return errors.Join(errs...)
 }

@@ -51,6 +51,11 @@ func (d *Daemon) executeHostedPreviewLifecycle(
 	if err != nil {
 		return err
 	}
+	if apply && d.previewHostInFlightLocked(host.IdempotencyKey) {
+		outcome, apply = v1.PreviewLifecycleResultOutcome{
+			Kind: v1.PreviewLifecycleRetryable, Code: v1.PreviewLifecycleTransientResourceConflict,
+		}, false
+	}
 	if apply {
 		lifecycleCtx, cancel := context.WithDeadline(ctx, d.previewHostDeadline(operation.LeaseExpiresAt))
 		outcome = d.previewHostController.ApplyLifecycle(lifecycleCtx, previewhost.LifecycleRequest{

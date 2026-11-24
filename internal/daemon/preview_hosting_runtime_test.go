@@ -692,6 +692,7 @@ func TestPreviewHostTeardownSkipsAGenuinelyInFlightDeploy(t *testing.T) {
 		deployOutcome: deployedPreviewOutcome(), started: make(chan struct{}, 1), release: make(chan struct{}),
 	}
 	d.previewHostController = controller
+	release := releaseOnCleanup(t, controller.release)
 	events := capturePreviewHostingEvents(d)
 	done := make(chan error, 1)
 	go func() {
@@ -722,7 +723,7 @@ func TestPreviewHostTeardownSkipsAGenuinelyInFlightDeploy(t *testing.T) {
 	if _, _, recovered := controller.counts(); recovered != 0 {
 		t.Fatalf("in-flight deploy was torn down concurrently: attempts=%d", recovered)
 	}
-	close(controller.release)
+	release()
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
@@ -747,6 +748,7 @@ func TestInterruptedPreviewDeployRecoveryIsInFlightForTeardown(t *testing.T) {
 		released:                  make(chan struct{}),
 	}
 	d.previewHostController = controller
+	release := releaseOnCleanup(t, controller.released)
 	events := capturePreviewHostingEvents(d)
 	command := validPreviewDeployCommand()
 	insertHostedPreviewHost(t, d, *command.PreviewDeploy, func(host *journal.PreviewHost) {
@@ -772,9 +774,12 @@ func TestInterruptedPreviewDeployRecoveryIsInFlightForTeardown(t *testing.T) {
 	if stored := previewHostState(t, d, command.PreviewDeploy.IdempotencyKey); stored.State != journal.PreviewHostDeploying {
 		t.Fatalf("recovering deploy was marked for teardown: %+v", stored)
 	}
-	close(controller.released)
+	release()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if recovering := previewHostRecoveryClaims(d); recovering != 0 {
+		t.Fatalf("recovery claims left behind: %d", recovering)
 	}
 	if _, _, recovered := controller.counts(); recovered != 1 {
 		t.Fatalf("teardown attempts=%d", recovered)
