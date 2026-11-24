@@ -17,7 +17,15 @@ var (
 	previewDeployIdempotencyPattern = regexp.MustCompile(`^preview-deploy-[0-9a-f]{64}$`)
 	previewDeployCommandIDPattern   = regexp.MustCompile(`^preview-deploy-command-[0-9a-f]{64}$`)
 	previewKeyPattern               = regexp.MustCompile(`^[a-z2-7]{26}$`)
+	hostedBlueprintVersionPattern   = regexp.MustCompile(`^[1-9][0-9]{0,15}$`)
 )
+
+func hostedPreviewBlueprintVersion(version string) error {
+	if !hostedBlueprintVersionPattern.MatchString(version) {
+		return fmt.Errorf("hosted preview blueprint version must be a positive decimal integer")
+	}
+	return nil
+}
 
 func previewDeployAuthority(value v1.PreviewDeployOperationAuthority) error {
 	if value.SchemaVersion != v1.PreviewDeploySchemaVersion {
@@ -68,8 +76,8 @@ func previewBlueprintIdentity(blueprint v1.PreviewObservationBlueprint) error {
 	if err := ID("blueprint_id", blueprint.BlueprintID); err != nil {
 		return err
 	}
-	if err := boundedText("blueprint version", blueprint.Version, 128, true); err != nil || strings.TrimSpace(blueprint.Version) == "" {
-		return fmt.Errorf("preview blueprint version is invalid")
+	if err := hostedPreviewBlueprintVersion(blueprint.Version); err != nil {
+		return err
 	}
 	return SHA256Digest("blueprint digest", blueprint.Digest)
 }
@@ -272,6 +280,9 @@ func PreviewHostedLifecycleOperation(value v1.PreviewLifecycleOperation) error {
 		value.Blueprint, value.PreviewURL, value.CommitSet, value.CommitSetDigest,
 		value.OriginalExpiresAt, value.CurrentEffectiveExpiresAt, value.DesiredExpiresAt, value.Action, true,
 	); err != nil {
+		return err
+	}
+	if err := hostedPreviewBlueprintVersion(value.Blueprint.Version); err != nil {
 		return err
 	}
 	if value.CommitSetDigest != v1.PreviewLifecycleCommitSetDigest(value.CommitSet) {

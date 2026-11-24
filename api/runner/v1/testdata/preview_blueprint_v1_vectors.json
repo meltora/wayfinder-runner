@@ -255,6 +255,28 @@
       ]
     },
     {
+      "name": "env_key_proto_null_value",
+      "rule": "env keys __proto__, constructor and prototype are refused even though JSON parsers may drop or special-case them",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"__proto__\":null}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env"
+        ]
+      ]
+    },
+    {
+      "name": "env_key_constructor_null_value",
+      "rule": "env keys __proto__, constructor and prototype are refused even though JSON parsers may drop or special-case them",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"constructor\":null}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env"
+        ]
+      ]
+    },
+    {
       "name": "service_env_key_proto",
       "rule": "env keys __proto__, constructor and prototype are refused even though JSON parsers may drop or special-case them",
       "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"__proto__\":{\"kind\":\"disabled\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",

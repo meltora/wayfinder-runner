@@ -324,6 +324,31 @@ func TestPreviewHostedLifecycleOperationRejectsExternalTargetFields(t *testing.T
 	}
 }
 
+func TestHostedPreviewBlueprintVersionIsAPositiveDecimalInteger(t *testing.T) {
+	versions := map[string]bool{
+		"1": true, "42": true, "9999999999999999": true,
+		"": false, "0": false, "01": false, "-1": false, "+1": false, "1.0": false, "1e3": false,
+		" 1": false, "1 ": false, "2026.08.1": false, "10000000000000000": false, "١": false,
+	}
+	for version, valid := range versions {
+		t.Run(version, func(t *testing.T) {
+			deploy := validPreviewDeployOperation()
+			deploy.CommitSet = append([]v1.PreviewObservationCommit(nil), deploy.CommitSet...)
+			deploy.Blueprint.Version = version
+			if err := PreviewDeployOperation(sealPreviewDeployOperation(deploy)); (err == nil) != valid {
+				t.Fatalf("deploy version %q err=%v", version, err)
+			}
+			for _, action := range []v1.PreviewLifecycleAction{v1.PreviewLifecycleExtend, v1.PreviewLifecycleDestroy} {
+				lifecycle := validPreviewHostedLifecycleOperation(action)
+				lifecycle.Blueprint.Version = version
+				if err := PreviewHostedLifecycleOperation(sealPreviewHostedLifecycleOperation(lifecycle)); (err == nil) != valid {
+					t.Fatalf("hosted %s version %q err=%v", action, version, err)
+				}
+			}
+		})
+	}
+}
+
 func TestPreviewHostedLifecycleResultEvent(t *testing.T) {
 	extend := validPreviewHostedLifecycleOperation(v1.PreviewLifecycleExtend)
 	destroy := validPreviewHostedLifecycleOperation(v1.PreviewLifecycleDestroy)

@@ -94,7 +94,7 @@ func TestPreviewBlueprintV1AcceptsEveryValidVector(t *testing.T) {
 
 func TestPreviewBlueprintV1RefusesEveryInvalidVectorAtTheAppIssuePaths(t *testing.T) {
 	vectors := readPreviewBlueprintV1TestVectors(t).Invalid
-	if len(vectors) != 80 {
+	if len(vectors) != 82 {
 		t.Fatalf("invalid vectors = %d", len(vectors))
 	}
 	for _, vector := range vectors {

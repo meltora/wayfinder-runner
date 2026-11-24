@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 )
 
-const previewBlueprintV1VectorsSHA256 = "e7f66c041826a2d7953d6e15da1495dfcfdd612e48948c89c20a656063e4df7f"
+const previewBlueprintV1VectorsSHA256 = "5934ffc7661058d05532fb5195bdf43ef98c00857349964c0df548b65fb0316b"
 
 type previewBlueprintV1VectorFile struct {
 	Valid []struct {
@@ -54,7 +54,7 @@ func TestPreviewBlueprintV1VectorsAreAByteForByteCopyOfTheAppVectorFile(t *testi
 		t.Fatalf("vector file sha256 = %s, want %s; the app file changed, which is a contract change", got, previewBlueprintV1VectorsSHA256)
 	}
 	vectors := readPreviewBlueprintV1Vectors(t)
-	if len(vectors.Valid) != 9 || len(vectors.Invalid) != 80 {
+	if len(vectors.Valid) != 9 || len(vectors.Invalid) != 82 {
 		t.Fatalf("vector counts = %d valid, %d invalid", len(vectors.Valid), len(vectors.Invalid))
 	}
 	if vectors.Valid[0].Digest != "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563" {
