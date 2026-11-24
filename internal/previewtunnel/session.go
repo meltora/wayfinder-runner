@@ -199,8 +199,13 @@ func (s *Session) sendLocked(frame Frame) {
 	} else {
 		if s.outboxControl+size > s.controlLimit {
 			s.overflowed = true
-			if s.cancel != nil {
-				s.cancel()
+			if cancel := s.cancel; cancel != nil {
+				s.wg.Add(1)
+				go func() {
+					defer s.wg.Done()
+					_ = s.conn.Close(CloseOutboxOverflow, outboxOverflowReason)
+					cancel()
+				}()
 			}
 			return
 		}

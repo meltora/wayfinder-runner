@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,6 +22,8 @@ const (
 	TunnelPath           = "/v1/runners/preview-tunnel"
 	PingInterval         = 20 * time.Second
 	PingTimeout          = 60 * time.Second
+	CloseTimeout         = 2 * time.Second
+	CloseNormal          = 1000
 	CloseUnsupportedData = 1003
 	minReconnectBackoff  = time.Second
 	maxReconnectBackoff  = 60 * time.Second
@@ -28,6 +31,7 @@ const (
 	dialTimeout          = 10 * time.Second
 	textMessageReason    = "binary messages only"
 	rotatedReason        = "certificate rotated"
+	goodbyeReason        = "bye"
 )
 
 var ErrTextMessage = errors.New("preview tunnel received a text message")
@@ -38,13 +42,14 @@ type Client struct {
 	logger       *slog.Logger
 	pingInterval time.Duration
 	pingTimeout  time.Duration
+	closeTimeout time.Duration
 	backoff      func(time.Duration) time.Duration
 	now          func() time.Time
 	dial         DialFunc
 
 	mu      sync.Mutex
 	tlsCfg  *tls.Config
-	conn    *websocket.Conn
+	conn    *wsConn
 	session *Session
 }
 
@@ -60,6 +65,7 @@ func NewClient(url string, tlsCfg *tls.Config, resolver Resolver, logger *slog.L
 		logger:       logger,
 		pingInterval: PingInterval,
 		pingTimeout:  PingTimeout,
+		closeTimeout: CloseTimeout,
 		backoff:      transport.JitterBackoff,
 		now:          time.Now,
 		dial: func(ctx context.Context, address string) (net.Conn, error) {
@@ -73,14 +79,13 @@ func TunnelURL(controlURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse control url: %w", err)
 	}
-	switch parsed.Scheme {
-	case "wss", "ws", "https", "http":
-	default:
-		return "", fmt.Errorf("control url scheme %q is not a websocket or http scheme", parsed.Scheme)
+	if parsed.Scheme != "wss" && parsed.Scheme != "ws" {
+		return "", fmt.Errorf("control url scheme %q is not wss or ws", parsed.Scheme)
 	}
-	if parsed.Host == "" {
+	if parsed.Hostname() == "" {
 		return "", fmt.Errorf("control url has no host")
 	}
+	parsed.User = nil
 	parsed.Path = TunnelPath
 	parsed.RawPath = ""
 	parsed.RawQuery = ""
@@ -96,7 +101,7 @@ func (c *Client) UpdateTLSConfig(cfg *tls.Config) {
 	conn := c.conn
 	c.mu.Unlock()
 	if conn != nil {
-		_ = conn.Close(websocket.StatusNormalClosure, rotatedReason)
+		_ = conn.Close(CloseNormal, rotatedReason)
 	}
 }
 
@@ -148,39 +153,47 @@ func (c *Client) connectOnce(ctx context.Context) (time.Time, error) {
 		}
 		return time.Time{}, fmt.Errorf("dial: %w", err)
 	}
-	conn.SetReadLimit(MaxMessage)
-	session := NewSession(&wsConn{conn: conn}, c.resolver, c.dial, c.logger, nil)
+	connectedAt := c.now()
+	ws := newWSConn(conn, c.closeTimeout)
+	defer ws.abort()
+	session := NewSession(ws, c.resolver, c.dial, c.logger, nil)
 	c.mu.Lock()
-	rotated := c.tlsCfg != tlsCfg
-	c.conn = conn
+	if c.tlsCfg != tlsCfg {
+		c.mu.Unlock()
+		_ = conn.CloseNow()
+		return connectedAt, errors.New("tls config changed while dialing")
+	}
+	c.conn = ws
 	c.session = session
 	c.mu.Unlock()
-	connectedAt := c.now()
 	defer func() {
-		_ = conn.CloseNow()
 		c.mu.Lock()
 		c.conn = nil
 		c.session = nil
 		c.mu.Unlock()
 	}()
-	if rotated {
-		_ = conn.Close(websocket.StatusNormalClosure, rotatedReason)
-		return connectedAt, errors.New("tls config changed while dialing")
-	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	keepAliveDone := make(chan struct{})
+	var helpers sync.WaitGroup
+	helpers.Add(2)
 	go func() {
-		defer close(keepAliveDone)
-		c.keepAlive(runCtx, conn)
+		defer helpers.Done()
+		<-runCtx.Done()
+		_ = ws.Close(CloseNormal, goodbyeReason)
 	}()
-	err = session.Run(runCtx)
+	go func() {
+		defer helpers.Done()
+		c.keepAlive(runCtx, ws)
+	}()
+	err = session.Run(ctx)
+	_ = ws.Close(CloseNormal, goodbyeReason)
+	ws.wait()
 	cancel()
-	<-keepAliveDone
+	helpers.Wait()
 	return connectedAt, err
 }
 
-func (c *Client) keepAlive(ctx context.Context, conn *websocket.Conn) {
+func (c *Client) keepAlive(ctx context.Context, ws *wsConn) {
 	ticker := time.NewTicker(c.pingInterval)
 	defer ticker.Stop()
 	for {
@@ -189,39 +202,82 @@ func (c *Client) keepAlive(ctx context.Context, conn *websocket.Conn) {
 			return
 		case <-ticker.C:
 		}
-		pingCtx, cancel := context.WithTimeout(ctx, c.pingTimeout)
-		err := conn.Ping(pingCtx)
+		pingCtx, cancel := context.WithTimeout(ws.ctx, c.pingTimeout)
+		err := ws.conn.Ping(pingCtx)
 		cancel()
 		if err != nil {
 			if ctx.Err() == nil {
 				c.logger.Debug("preview tunnel ping failed", "error", err)
 			}
-			_ = conn.CloseNow()
+			ws.abort()
 			return
 		}
 	}
 }
 
 type wsConn struct {
-	conn *websocket.Conn
+	conn         *websocket.Conn
+	ctx          context.Context
+	abort        context.CancelFunc
+	closeTimeout time.Duration
+	closeOnce    sync.Once
+	closed       chan struct{}
 }
 
-func (w *wsConn) ReadMessage(ctx context.Context) ([]byte, error) {
-	messageType, message, err := w.conn.Read(ctx)
+func newWSConn(conn *websocket.Conn, closeTimeout time.Duration) *wsConn {
+	conn.SetReadLimit(MaxMessage + 1)
+	ctx, abort := context.WithCancel(context.Background())
+	return &wsConn{conn: conn, ctx: ctx, abort: abort, closeTimeout: closeTimeout, closed: make(chan struct{})}
+}
+
+func (w *wsConn) ReadMessage(context.Context) ([]byte, error) {
+	messageType, reader, err := w.conn.Reader(w.ctx)
 	if err != nil {
 		return nil, err
 	}
 	if messageType != websocket.MessageBinary {
-		_ = w.conn.Close(CloseUnsupportedData, textMessageReason)
+		_ = w.Close(CloseUnsupportedData, textMessageReason)
 		return nil, ErrTextMessage
+	}
+	message, err := io.ReadAll(io.LimitReader(reader, MaxMessage+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(message) > MaxMessage {
+		return nil, protocolError("message exceeds %d bytes", MaxMessage)
 	}
 	return message, nil
 }
 
-func (w *wsConn) WriteMessage(ctx context.Context, message []byte) error {
-	return w.conn.Write(ctx, websocket.MessageBinary, message)
+func (w *wsConn) WriteMessage(_ context.Context, message []byte) error {
+	err := w.conn.Write(w.ctx, websocket.MessageBinary, message)
+	if err != nil {
+		w.abort()
+	}
+	return err
 }
 
 func (w *wsConn) Close(code int, reason string) error {
-	return w.conn.Close(websocket.StatusCode(code), reason)
+	w.closeOnce.Do(func() {
+		go func() {
+			defer close(w.closed)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				_ = w.conn.Close(websocket.StatusCode(code), reason)
+			}()
+			timer := time.NewTimer(w.closeTimeout)
+			defer timer.Stop()
+			select {
+			case <-done:
+			case <-timer.C:
+				w.abort()
+			}
+		}()
+	})
+	return nil
+}
+
+func (w *wsConn) wait() {
+	<-w.closed
 }
