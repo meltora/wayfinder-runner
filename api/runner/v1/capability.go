@@ -38,6 +38,8 @@ type CapabilityManifest struct {
 	PreviewObservationProfiles                               []PreviewObservationProfileCapability                            `json:"preview_observation_profiles,omitempty"`
 	PreviewLifecycleTransportVersion                         int                                                              `json:"preview_lifecycle_transport_version,omitempty"`
 	PreviewLifecycleProfiles                                 []PreviewLifecycleProfileCapability                              `json:"preview_lifecycle_profiles,omitempty"`
+	PreviewHostingTransportVersion                           int                                                              `json:"preview_hosting_transport_version,omitempty"`
+	PreviewHosting                                           *PreviewHostingCapability                                        `json:"preview_hosting,omitempty"`
 	ReviewerIdentityVerificationTransportVersion             int                                                              `json:"reviewer_identity_verification_transport_version,omitempty"`
 	ReviewerIdentityVerificationProviders                    []string                                                         `json:"reviewer_identity_verification_providers,omitempty"`
 	ReviewerIdentityVerificationInstallations                []ReviewerIdentityVerificationInstallationCapability             `json:"reviewer_identity_verification_installations,omitempty"`

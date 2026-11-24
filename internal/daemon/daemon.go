@@ -656,6 +656,10 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	if d.previewLifecycleController != nil {
 		det.PreviewLifecycleProfiles = d.previewLifecycleController.ReadyProfiles()
 	}
+	if d.previewHostController != nil {
+		hosting := d.previewHostController.Capability()
+		det.PreviewHosting = &hosting
+	}
 	if services.reviewerIdentityVerifier != nil {
 		det.ReviewerIdentityVerificationInstallations = services.reviewerIdentityVerifier.ReadyReviewerIdentityInstallations()
 	}
