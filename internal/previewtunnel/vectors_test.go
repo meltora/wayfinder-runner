@@ -2,13 +2,17 @@ package previewtunnel
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -56,14 +60,170 @@ type PreviewTunnelOpen struct {
 type PreviewTunnelSequence struct {
 	Name          string                      `json:"name"`
 	KnownPreviews []PreviewTunnelOpen         `json:"known_previews"`
+	Upstream      string                      `json:"upstream"`
 	Steps         []PreviewTunnelSequenceStep `json:"steps"`
 }
 
 type PreviewTunnelSequenceStep struct {
 	From       string   `json:"from"`
 	Hex        string   `json:"hex"`
+	FillByte   string   `json:"fill_byte,omitempty"`
+	FillCount  int      `json:"fill_count,omitempty"`
+	Length     int      `json:"length"`
 	Expect     string   `json:"expect"`
 	RepliesHex []string `json:"replies_hex"`
+}
+
+const (
+	expectDrop          = "drop"
+	fromGateway         = "gateway"
+	upstreamDiscard     = "discard"
+	upstreamCloseOnEOF  = "close_on_eof"
+	upstreamStall       = "stall"
+	sequencePreviewID   = "prv_1"
+	sequencePreviewKey  = "key_1"
+	sequenceOtherID     = "prv_2"
+	sequenceOtherKey    = "key_2"
+	sequenceUnknownID   = "prv_9"
+	sequenceWindowCover = MaxWindow - InitialWindow
+)
+
+func sequenceStep(expect string, message []byte, replies ...[]byte) PreviewTunnelSequenceStep {
+	prefix, fillByte, fillCount := compactHex(message)
+	repliesHex := make([]string, 0, len(replies))
+	for _, reply := range replies {
+		repliesHex = append(repliesHex, hex.EncodeToString(reply))
+	}
+	return PreviewTunnelSequenceStep{From: fromGateway, Hex: prefix, FillByte: fillByte, FillCount: fillCount, Length: len(message), Expect: expect, RepliesHex: repliesHex}
+}
+
+func openMessage(streamID uint32, previewID, previewKey string) []byte {
+	return rawFrame(byte(FrameOpen), streamID, []byte(`{"preview_id":"`+previewID+`","preview_key":"`+previewKey+`"}`))
+}
+
+func openKnown(streamID uint32) []byte {
+	return openMessage(streamID, sequencePreviewID, sequencePreviewKey)
+}
+
+func dataMessage(streamID uint32, payload []byte) []byte {
+	return rawFrame(byte(FrameData), streamID, payload)
+}
+
+func endMessage(streamID uint32) []byte {
+	return rawFrame(byte(FrameEnd), streamID, nil)
+}
+
+func resetMessage(streamID uint32, code byte) []byte {
+	return rawFrame(byte(FrameReset), streamID, []byte{code})
+}
+
+func windowMessage(streamID uint32, credit uint32) []byte {
+	return rawFrame(byte(FrameWindow), streamID, creditPayload(credit))
+}
+
+func sequence(name, upstream string, steps ...PreviewTunnelSequenceStep) PreviewTunnelSequence {
+	return PreviewTunnelSequence{
+		Name:          name,
+		KnownPreviews: []PreviewTunnelOpen{{PreviewID: sequencePreviewID, PreviewKey: sequencePreviewKey}, {PreviewID: sequenceOtherID, PreviewKey: sequenceOtherKey}},
+		Upstream:      upstream,
+		Steps:         steps,
+	}
+}
+
+func previewLimitSequence() PreviewTunnelSequence {
+	steps := make([]PreviewTunnelSequenceStep, 0, StreamsPerPreview+2)
+	id := uint32(1)
+	for range StreamsPerPreview {
+		steps = append(steps, sequenceStep(expectOK, openKnown(id)))
+		id += 2
+	}
+	steps = append(steps, sequenceStep(expectOK, openKnown(id), resetMessage(id, byte(ResetLimit))))
+	steps = append(steps, sequenceStep(expectOK, openMessage(id+2, sequenceOtherID, sequenceOtherKey)))
+	return sequence("preview_stream_limit_resets_limit", upstreamStall, steps...)
+}
+
+func buildSequences() []PreviewTunnelSequence {
+	full := bytes.Repeat([]byte{'a'}, MaxPayload)
+	return []PreviewTunnelSequence{
+		sequence("open_data_end_half_closes", upstreamCloseOnEOF,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectOK, dataMessage(1, []byte("hello"))),
+			sequenceStep(expectOK, endMessage(1), endMessage(1)),
+			sequenceStep(expectDrop, dataMessage(1, []byte("late"))),
+		),
+		sequence("unknown_preview_resets_not_found", upstreamDiscard,
+			sequenceStep(expectOK, openMessage(1, sequenceUnknownID, sequencePreviewKey), resetMessage(1, byte(ResetNotFound))),
+			sequenceStep(expectOK, openMessage(3, sequencePreviewID, sequenceOtherKey), resetMessage(3, byte(ResetNotFound))),
+			sequenceStep(expectDrop, dataMessage(1, []byte("x"))),
+			sequenceStep(expectOK, openKnown(5)),
+		),
+		sequence("data_after_gateway_end_resets_protocol", upstreamDiscard,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectOK, endMessage(1)),
+			sequenceStep(expectOK, dataMessage(1, []byte("x")), resetMessage(1, byte(ResetProtocol))),
+			sequenceStep(expectOK, openKnown(3)),
+			sequenceStep(expectOK, dataMessage(3, []byte("y"))),
+		),
+		sequence("second_end_closes_1002", upstreamDiscard,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectOK, endMessage(1)),
+			sequenceStep(expectClose1002, endMessage(1)),
+		),
+		sequence("open_same_id_closes_1002", upstreamDiscard,
+			sequenceStep(expectOK, openKnown(3)),
+			sequenceStep(expectClose1002, openKnown(3)),
+		),
+		sequence("open_lower_id_closes_1002", upstreamDiscard,
+			sequenceStep(expectOK, openKnown(3)),
+			sequenceStep(expectClose1002, openKnown(1)),
+		),
+		sequence("frame_above_highest_opened_closes_1002", upstreamDiscard,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectClose1002, dataMessage(3, []byte("x"))),
+		),
+		sequence("frame_before_any_open_closes_1002", upstreamDiscard,
+			sequenceStep(expectClose1002, windowMessage(1, 1)),
+		),
+		sequence("closed_stream_frames_dropped", upstreamDiscard,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectOK, resetMessage(1, byte(ResetRefused))),
+			sequenceStep(expectDrop, dataMessage(1, []byte("x"))),
+			sequenceStep(expectDrop, endMessage(1)),
+			sequenceStep(expectDrop, endMessage(1)),
+			sequenceStep(expectDrop, windowMessage(1, MaxWindow)),
+			sequenceStep(expectDrop, resetMessage(1, byte(ResetIdle))),
+			sequenceStep(expectOK, openKnown(5)),
+			sequenceStep(expectDrop, dataMessage(3, []byte("x"))),
+			sequenceStep(expectOK, dataMessage(5, []byte("y"))),
+		),
+		sequence("reset_code_7_closes_stream_only", upstreamDiscard,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectOK, resetMessage(1, 7)),
+			sequenceStep(expectDrop, dataMessage(1, []byte("x"))),
+			sequenceStep(expectOK, openKnown(3)),
+			sequenceStep(expectOK, dataMessage(3, []byte("y"))),
+		),
+		sequence("data_beyond_window_resets_protocol", upstreamStall,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectOK, dataMessage(1, full)),
+			sequenceStep(expectOK, dataMessage(1, full)),
+			sequenceStep(expectOK, dataMessage(1, full)),
+			sequenceStep(expectOK, dataMessage(1, full)),
+			sequenceStep(expectOK, dataMessage(1, []byte("b")), resetMessage(1, byte(ResetProtocol))),
+			sequenceStep(expectOK, openKnown(3)),
+		),
+		sequence("window_granted_after_upstream_consumes", upstreamDiscard,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectOK, dataMessage(1, full)),
+			sequenceStep(expectOK, dataMessage(1, full), windowMessage(1, 2*MaxPayload)),
+		),
+		sequence("window_grant_overflow_closes_1002", upstreamStall,
+			sequenceStep(expectOK, openKnown(1)),
+			sequenceStep(expectOK, windowMessage(1, sequenceWindowCover)),
+			sequenceStep(expectClose1002, windowMessage(1, 1)),
+		),
+		previewLimitSequence(),
+	}
 }
 
 var resetCodeNames = map[ResetCode]string{
@@ -191,18 +351,23 @@ func BuildPreviewTunnelVectorFile() PreviewTunnelVectorFile {
 		SchemaVersion: 1,
 		Generator:     previewTunnelVectorsUpdateEnv + "=1 go test ./internal/previewtunnel -run TestPreviewTunnelV1VectorsAreCurrent",
 		Conventions: map[string]string{
-			"hex":            "one complete websocket binary message, lowercase hex: 1 byte type, 4 bytes big-endian stream id, then the payload",
-			"fill":           "optional fill_byte (one lowercase hex byte) and fill_count: the message is hex followed by fill_byte repeated fill_count times; decoded.payload_fill_byte and decoded.payload_fill_count apply the same rule to payload_hex; fill is used only when the repeated run is over 1024 bytes",
-			"length":         "required: the total message length in bytes after fill expansion; replayers must assert it",
-			"expect":         "ok: the frame passes every stateless check of preview tunnel v1 T2; close_1002: the receiver closes the tunnel with close code 1002",
-			"receiver":       "frames are judged as received by the runner; a gateway receiving OPEN closes 1002 regardless of payload",
-			"decoded":        "present only when expect is ok; type is the numeric frame type, payload_hex the payload bytes in lowercase hex",
-			"open":           "present for OPEN: the strictly parsed preview_id and preview_key",
-			"window_credit":  "present for WINDOW: the uint32 big-endian credit",
-			"reset_code":     "present for RESET: the code name the receiver acts on; an unknown code decodes ok and maps to protocol",
-			"frames":         "stateless decoding only; stream ordering, windows and limits are covered by sequences",
-			"sequences":      "stateful replays against a runner that knows known_previews; from gateway is a message the runner receives, replies_hex the messages the runner sends in order",
-			"stream_id_rule": "every frame needs an odd, non-zero stream id; even ids are a protocol error in both directions",
+			"hex":               "one complete websocket binary message, lowercase hex: 1 byte type, 4 bytes big-endian stream id, then the payload",
+			"fill":              "optional fill_byte (one lowercase hex byte) and fill_count: the message is hex followed by fill_byte repeated fill_count times; decoded.payload_fill_byte and decoded.payload_fill_count apply the same rule to payload_hex; fill is used only when the repeated run is over 1024 bytes",
+			"length":            "required: the total message length in bytes after fill expansion; replayers must assert it",
+			"expect":            "ok: the frame passes every stateless check of preview tunnel v1 T2; close_1002: the receiver closes the tunnel with close code 1002",
+			"receiver":          "frames are judged as received by the runner; a gateway receiving OPEN closes 1002 regardless of payload",
+			"decoded":           "present only when expect is ok; type is the numeric frame type, payload_hex the payload bytes in lowercase hex",
+			"open":              "present for OPEN: the strictly parsed preview_id and preview_key",
+			"window_credit":     "present for WINDOW: the uint32 big-endian credit",
+			"reset_code":        "present for RESET: the code name the receiver acts on; an unknown code decodes ok and maps to protocol",
+			"frames":            "stateless decoding only; stream ordering, windows and limits are covered by sequences",
+			"sequences":         "stateful replays from the runner's point of view; each sequence starts on a fresh tunnel; known_previews are the hosted previews the runner owns, all deployed and unexpired; an OPEN naming any other preview_id, or a known preview_id with a different preview_key, is answered with RESET not_found and nothing is dialed; steps run in order",
+			"sequence_step":     "from is always gateway: hex, expanded with fill_byte and fill_count exactly as for frames and checked against length, is one websocket binary message the runner receives",
+			"sequence_expect":   "ok: the runner accepts the message and the tunnel stays open; drop: the message names an odd stream id at or below the highest opened id that is not open (closed, reset, or skipped by the gateway), it is ignored without any reply or state change; close_1002: the runner closes the tunnel with close code 1002 and sends nothing more; close_1002 is always the last step",
+			"sequence_replies":  "replies_hex lists, in order, every message the runner sends because of that step before the next step is delivered, including replies that depend on the upstream such as RESET after a failed lookup, END after the upstream closes, or WINDOW after bytes reach the upstream; a replayer waits for exactly these and then for silence before delivering the next step; when a sequence ends without close_1002 the gateway closes the tunnel",
+			"sequence_upstream": "upstream is how the local upstream behind every known preview behaves: discard reads and discards all bytes and never writes or closes, ignoring the runner's half-close; close_on_eof reads and discards and closes its side once it reads EOF, so the runner sends END; stall accepts the connection and never reads, writes or closes, so gateway DATA stays queued and unconsumed",
+			"window_policy":     "runner policy, not protocol: credit is granted only after bytes are written to the upstream, as one WINDOW per stream once at least 131072 written bytes are ungranted, never while 16777216 or more received bytes are unconsumed across the tunnel, and withheld credit is sent once the total drops below that; a gateway must not rely on grant size or timing beyond the spec",
+			"stream_id_rule":    "every frame needs an odd, non-zero stream id; even ids are a protocol error in both directions",
 		},
 		Frames: []PreviewTunnelFrame{
 			okOpen("open_ok", 1, []byte(`{"preview_id":"prv_1","preview_key":"key_1"}`), "prv_1", "key_1"),
@@ -273,7 +438,7 @@ func BuildPreviewTunnelVectorFile() PreviewTunnelVectorFile {
 			badOpen("open_reversed_surrogate_escapes", openWith(jsonUnit("de00")+jsonUnit("d83d"))),
 			badFrame("open_even_stream_id", rawFrame(byte(FrameOpen), 2, []byte(`{"preview_id":"p","preview_key":"k"}`))),
 		},
-		Sequences: []PreviewTunnelSequence{},
+		Sequences: buildSequences(),
 	}
 }
 
@@ -409,5 +574,131 @@ func assertDecodedVector(t *testing.T, frame Frame, want *PreviewTunnelFrameDeco
 	}
 	if !resetOK && want.ResetCode != "" {
 		t.Fatalf("reset_code on type %d", frame.Type)
+	}
+}
+
+var requiredSequenceNames = []string{
+	"open_data_end_half_closes",
+	"unknown_preview_resets_not_found",
+	"data_after_gateway_end_resets_protocol",
+	"second_end_closes_1002",
+	"open_same_id_closes_1002",
+	"open_lower_id_closes_1002",
+	"frame_above_highest_opened_closes_1002",
+	"frame_before_any_open_closes_1002",
+	"closed_stream_frames_dropped",
+	"reset_code_7_closes_stream_only",
+	"data_beyond_window_resets_protocol",
+	"window_granted_after_upstream_consumes",
+	"window_grant_overflow_closes_1002",
+	"preview_stream_limit_resets_limit",
+}
+
+func TestPreviewTunnelV1SequenceVectorsReplay(t *testing.T) {
+	file := loadPreviewTunnelVectorFile(t)
+	names := map[string]bool{}
+	for _, vector := range file.Sequences {
+		if names[vector.Name] {
+			t.Fatalf("duplicate sequence name %q", vector.Name)
+		}
+		names[vector.Name] = true
+		t.Run(vector.Name, func(t *testing.T) { replaySequence(t, vector) })
+	}
+	for _, name := range requiredSequenceNames {
+		if !names[name] {
+			t.Fatalf("missing required sequence %q", name)
+		}
+	}
+}
+
+func driveSequenceUpstream(mode string, upstream *halfConn) {
+	switch mode {
+	case upstreamDiscard:
+		_, _ = io.Copy(io.Discard, upstream)
+	case upstreamCloseOnEOF:
+		_, _ = io.Copy(io.Discard, upstream)
+		_ = upstream.Close()
+	}
+}
+
+func replaySequence(t *testing.T, vector PreviewTunnelSequence) {
+	switch vector.Upstream {
+	case upstreamDiscard, upstreamCloseOnEOF, upstreamStall:
+	default:
+		t.Fatalf("unknown upstream %q", vector.Upstream)
+	}
+	resolver := &fakeResolver{previews: map[string]fakePreview{}}
+	addresses := map[string]bool{}
+	for index, preview := range vector.KnownPreviews {
+		address := fmt.Sprintf("127.0.0.1:%d", 20080+index)
+		resolver.previews[preview.PreviewID] = fakePreview{key: preview.PreviewKey, address: address}
+		addresses[address] = true
+	}
+	dial := func(_ context.Context, address string) (net.Conn, error) {
+		if !addresses[address] {
+			return nil, errors.New("unknown upstream address")
+		}
+		local, remote := duplexPipe()
+		go driveSequenceUpstream(vector.Upstream, remote)
+		return local, nil
+	}
+	h := &harness{t: t, conn: newFakeConn(), result: make(chan error, 1)}
+	h.session = NewSession(h.conn, resolver, dial, nil, nil)
+	h.session.idleTicks = make(chan time.Time)
+	h.start()
+	for index, step := range vector.Steps {
+		if step.From != fromGateway {
+			t.Fatalf("step %d: from %q", index, step.From)
+		}
+		message, err := expandHex(step.Hex, step.FillByte, step.FillCount)
+		if err != nil {
+			t.Fatalf("step %d: %v", index, err)
+		}
+		if len(message) != step.Length {
+			t.Fatalf("step %d: expanded message has %d bytes, want length %d", index, len(message), step.Length)
+		}
+		switch step.Expect {
+		case expectClose1002:
+			if index != len(vector.Steps)-1 || len(step.RepliesHex) != 0 {
+				t.Fatalf("step %d: close_1002 must be the last step and have no replies", index)
+			}
+			h.conn.in <- message
+			h.expectClosed1002()
+			h.expectQuietFor(5 * time.Millisecond)
+			return
+		case expectDrop:
+			if len(step.RepliesHex) != 0 {
+				t.Fatalf("step %d: drop with replies", index)
+			}
+		case expectOK:
+		default:
+			t.Fatalf("step %d: unknown expect %q", index, step.Expect)
+		}
+		h.deliverMessage(message)
+		for _, replyHex := range step.RepliesHex {
+			want, err := hex.DecodeString(replyHex)
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case got := <-h.conn.out:
+				if !bytes.Equal(got, want) {
+					t.Fatalf("step %d: runner sent %x, want %x", index, got, want)
+				}
+			case <-time.After(waitTimeout):
+				t.Fatalf("step %d: runner did not send %s", index, replyHex)
+			}
+		}
+		h.expectQuietFor(5 * time.Millisecond)
+	}
+	close(h.conn.in)
+	select {
+	case err := <-h.result:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("Run error = %v, want io.EOF", err)
+		}
+		h.result <- err
+	case <-time.After(waitTimeout):
+		t.Fatal("session did not stop")
 	}
 }
