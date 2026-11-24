@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
@@ -61,6 +62,7 @@ type PreviewHost struct {
 	ExpiresAt               time.Time
 	State                   PreviewHostState
 	Result                  []byte
+	DestroyReason           v1.PreviewHostedDestroyReason
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
@@ -78,6 +80,15 @@ type PreviewHostUpdate struct {
 	State          PreviewHostState
 	Result         []byte
 	ExpiresAt      *time.Time
+	DestroyReason  v1.PreviewHostedDestroyReason
+}
+
+func validPreviewHostDestroyReason(reason v1.PreviewHostedDestroyReason) bool {
+	switch reason {
+	case "", v1.PreviewHostedDestroyExpired, v1.PreviewHostedDestroyEmergencyStop, v1.PreviewHostedDestroyReconcileExpired:
+		return true
+	}
+	return false
 }
 
 func (j *Journal) ensurePreviewHostingSchema() error {
@@ -109,6 +120,7 @@ func (j *Journal) ensurePreviewHostingSchema() error {
 			expires_at INTEGER NOT NULL,
 			state TEXT NOT NULL CHECK (state IN ('deploying', 'deployed', 'destroying', 'destroyed', 'failed', 'uncertain')),
 			result BLOB,
+			destroy_reason TEXT NOT NULL DEFAULT '',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		);
@@ -122,7 +134,44 @@ func (j *Journal) ensurePreviewHostingSchema() error {
 			created_at INTEGER NOT NULL
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return j.ensurePreviewHostDestroyReasonColumn()
+}
+
+func (j *Journal) ensurePreviewHostDestroyReasonColumn() error {
+	rows, err := j.db.Query(`PRAGMA table_info(preview_hosts)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var index, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&index, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == "destroy_reason" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := j.db.Exec(`ALTER TABLE preview_hosts ADD COLUMN destroy_reason TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add preview host destroy_reason column: %w", err)
+	}
+	return nil
 }
 
 func sortedTrustedCommits(commits []v1.PreviewObservationCommit) []v1.PreviewObservationCommit {
@@ -236,6 +285,9 @@ func validatePreviewHost(host PreviewHost) error {
 	if !host.State.valid() {
 		return fmt.Errorf("preview host state is invalid")
 	}
+	if !validPreviewHostDestroyReason(host.DestroyReason) {
+		return fmt.Errorf("preview host destroy reason is invalid")
+	}
 	if len(host.Result) > maxPreviewHostResultBytes {
 		return fmt.Errorf("preview host result is too large")
 	}
@@ -287,13 +339,13 @@ func (j *Journal) InsertPreviewHost(ctx context.Context, host PreviewHost) (Prev
 			(idempotency_key, preview_id, preview_key, operation_digest, organization_id, project_id,
 			 execution_manifest_id, execution_manifest_digest, commit_set_digest,
 			 blueprint_id, blueprint_version, blueprint_digest, memory_mb, original_expires_at, expires_at,
-			 state, result, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 state, result, destroy_reason, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		host.IdempotencyKey, host.PreviewID, host.PreviewKey, host.OperationDigest, host.OrganizationID, host.ProjectID,
 		host.ExecutionManifestID, host.ExecutionManifestDigest, host.CommitSetDigest,
 		host.BlueprintID, host.BlueprintVersion, host.BlueprintDigest, host.MemoryMB,
 		host.OriginalExpiresAt.UTC().UnixMilli(), host.ExpiresAt.UTC().UnixMilli(),
-		string(host.State), host.Result, now.UnixNano(), now.UnixNano()); err != nil {
+		string(host.State), host.Result, string(host.DestroyReason), now.UnixNano(), now.UnixNano()); err != nil {
 		return PreviewHost{}, false, err
 	}
 	stored, _, err := loadPreviewHost(ctx, conn, `WHERE idempotency_key=?`, host.IdempotencyKey)
@@ -310,6 +362,9 @@ func (j *Journal) InsertPreviewHost(ctx context.Context, host PreviewHost) (Prev
 func validatePreviewHostUpdate(update PreviewHostUpdate) error {
 	if !update.State.valid() {
 		return fmt.Errorf("preview host state is invalid")
+	}
+	if !validPreviewHostDestroyReason(update.DestroyReason) {
+		return fmt.Errorf("preview host destroy reason is invalid")
 	}
 	if len(update.Result) > maxPreviewHostResultBytes {
 		return fmt.Errorf("preview host result is too large")
@@ -344,9 +399,10 @@ func applyPreviewHostUpdate(ctx context.Context, execer previewHostExecer, updat
 		result = update.Result
 	}
 	outcome, err := execer.ExecContext(ctx, `
-		UPDATE preview_hosts SET state=?, result=COALESCE(?, result), expires_at=COALESCE(?, expires_at), updated_at=?
+		UPDATE preview_hosts SET state=?, result=COALESCE(?, result), expires_at=COALESCE(?, expires_at),
+			destroy_reason=COALESCE(NULLIF(?, ''), destroy_reason), updated_at=?
 		WHERE idempotency_key=?`,
-		string(update.State), result, expiresAt, time.Now().UTC().UnixNano(), update.IdempotencyKey)
+		string(update.State), result, expiresAt, string(update.DestroyReason), time.Now().UTC().UnixNano(), update.IdempotencyKey)
 	if err != nil {
 		return err
 	}
@@ -472,7 +528,23 @@ func (j *Journal) PreviewHostByPreviewID(ctx context.Context, previewID string) 
 }
 
 func (j *Journal) LivePreviewHosts(ctx context.Context) ([]PreviewHost, error) {
-	rows, err := j.db.QueryContext(ctx, previewHostColumns+` WHERE state IN ('deploying', 'deployed') ORDER BY created_at, rowid`)
+	return j.PreviewHostsInStates(ctx, PreviewHostDeploying, PreviewHostDeployed)
+}
+
+func (j *Journal) PreviewHostsInStates(ctx context.Context, states ...PreviewHostState) ([]PreviewHost, error) {
+	if len(states) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(states))
+	args := make([]any, len(states))
+	for index, state := range states {
+		if !state.valid() {
+			return nil, fmt.Errorf("preview host state is invalid")
+		}
+		placeholders[index] = "?"
+		args[index] = string(state)
+	}
+	rows, err := j.db.QueryContext(ctx, previewHostColumns+` WHERE state IN (`+strings.Join(placeholders, ", ")+`) ORDER BY created_at, rowid`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +564,7 @@ const previewHostColumns = `
 	SELECT idempotency_key, preview_id, preview_key, operation_digest, organization_id, project_id,
 		execution_manifest_id, execution_manifest_digest, commit_set_digest,
 		blueprint_id, blueprint_version, blueprint_digest, memory_mb, original_expires_at, expires_at,
-		state, result, created_at, updated_at
+		state, result, destroy_reason, created_at, updated_at
 	FROM preview_hosts`
 
 type previewHostScanner interface {
@@ -501,16 +573,17 @@ type previewHostScanner interface {
 
 func scanPreviewHost(row previewHostScanner) (PreviewHost, error) {
 	var host PreviewHost
-	var state string
+	var state, destroyReason string
 	var originalExpiresAt, expiresAt, createdAt, updatedAt int64
 	var result []byte
 	if err := row.Scan(&host.IdempotencyKey, &host.PreviewID, &host.PreviewKey, &host.OperationDigest,
 		&host.OrganizationID, &host.ProjectID, &host.ExecutionManifestID, &host.ExecutionManifestDigest, &host.CommitSetDigest,
 		&host.BlueprintID, &host.BlueprintVersion, &host.BlueprintDigest,
-		&host.MemoryMB, &originalExpiresAt, &expiresAt, &state, &result, &createdAt, &updatedAt); err != nil {
+		&host.MemoryMB, &originalExpiresAt, &expiresAt, &state, &result, &destroyReason, &createdAt, &updatedAt); err != nil {
 		return PreviewHost{}, err
 	}
 	host.State = PreviewHostState(state)
+	host.DestroyReason = v1.PreviewHostedDestroyReason(destroyReason)
 	host.OriginalExpiresAt = time.UnixMilli(originalExpiresAt).UTC()
 	host.ExpiresAt = time.UnixMilli(expiresAt).UTC()
 	host.CreatedAt = time.Unix(0, createdAt).UTC()

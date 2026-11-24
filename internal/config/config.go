@@ -59,6 +59,7 @@ type Config struct {
 	SourcePublicationInstallations map[string]SourcePublicationInstallationConfig `yaml:"source_publication_installations,omitempty"`
 	PreviewObservationProfiles     map[string]PreviewObservationProfileConfig     `yaml:"preview_observation_profiles,omitempty"`
 	PreviewLifecycleControllers    map[string]PreviewLifecycleControllerConfig    `yaml:"preview_lifecycle_controllers,omitempty"`
+	PreviewHosting                 PreviewHostingConfig                           `yaml:"preview_hosting,omitempty"`
 	Labels                         map[string]string                              `yaml:"labels,omitempty"`
 	RunnerConfigurationDigest      string                                         `yaml:"-"`
 	RevokedAgentPackDigests        []string                                       `yaml:"-"`
@@ -111,6 +112,7 @@ func Default() Config {
 		JobNetwork:                 "none",
 		UpdateSocketPath:           "/run/our-runner-updater/control.sock",
 		EgressPolicyVerifierSocket: "/run/our-runner-egress/policy.sock",
+		PreviewHosting:             defaultPreviewHosting(),
 	}
 }
 
@@ -217,6 +219,7 @@ func Normalize(in Config) Config {
 	}
 	out.PreviewObservationProfiles = normalizePreviewObservationProfiles(in.PreviewObservationProfiles)
 	out.PreviewLifecycleControllers = normalizePreviewLifecycleControllers(in.PreviewLifecycleControllers)
+	out.PreviewHosting = normalizePreviewHosting(in.PreviewHosting)
 	out.AllowedArtifactOrigins = append([]string(nil), in.AllowedArtifactOrigins...)
 	return out
 }
@@ -438,6 +441,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := validatePreviewLifecycleControllers(c.PreviewLifecycleControllers); err != nil {
+		return err
+	}
+	if err := validatePreviewHosting(c.PreviewHosting, c.Isolation); err != nil {
 		return err
 	}
 	return nil

@@ -27,6 +27,7 @@ var (
 		"job-results":           regexp.MustCompile(`^job-[A-Za-z0-9]+\.(checks|npm-cache)$`),
 		"work-intake-proposals": regexp.MustCompile(`^execution-[A-Za-z0-9]+$`),
 		"doctor":                regexp.MustCompile(`^sandbox-[A-Za-z0-9]+$`),
+		"previews":              regexp.MustCompile(`^[0-9a-f]{12}$`),
 	}
 )
 

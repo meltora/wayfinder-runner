@@ -229,6 +229,29 @@ func (engine *fakeEngine) List(ctx context.Context, labels map[string]string) (O
 	return objects, nil
 }
 
+func (engine *fakeEngine) HostPreviewIDs(ctx context.Context, runnerID string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.listErr != nil {
+		return nil, engine.listErr
+	}
+	seen := map[string]bool{}
+	for _, spec := range engine.containers {
+		if spec.Labels[LabelPreviewHost] == runnerID && spec.Labels[LabelPreviewID] != "" {
+			seen[spec.Labels[LabelPreviewID]] = true
+		}
+	}
+	for _, spec := range engine.networks {
+		if spec.Labels[LabelPreviewHost] == runnerID && spec.Labels[LabelPreviewID] != "" {
+			seen[spec.Labels[LabelPreviewID]] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
+}
+
 func (engine *fakeEngine) Remove(ctx context.Context, objects Objects) error {
 	engine.mu.Lock()
 	hook := engine.removeHook

@@ -315,6 +315,31 @@ func (cli DockerCLI) listIDs(ctx context.Context, pattern *regexp.Regexp, args [
 	return ids, nil
 }
 
+func (cli DockerCLI) HostPreviewIDs(ctx context.Context, runnerID string) ([]string, error) {
+	if runnerID == "" {
+		return nil, errors.New("preview host listing requires a runner id")
+	}
+	filter := []string{"--filter", "label=" + LabelPreviewHost + "=" + runnerID, "--format", `{{.Label "` + LabelPreviewID + `"}}`}
+	seen := map[string]bool{}
+	var ids []string
+	for _, command := range [][]string{{"ps", "-a"}, {"network", "ls"}, {"volume", "ls"}} {
+		output, err := cli.run(ctx, append(command, filter...)...)
+		if err != nil {
+			return nil, fmt.Errorf("list preview host resources: %w", err)
+		}
+		for _, line := range strings.Split(output, "\n") {
+			id := strings.TrimSpace(line)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
 func (cli DockerCLI) Remove(ctx context.Context, objects Objects) error {
 	steps := []struct {
 		args []string

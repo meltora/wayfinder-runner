@@ -21,6 +21,7 @@ import (
 	"github.com/example/app-runner/internal/journal"
 	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/repo"
+	"github.com/example/app-runner/internal/validation"
 )
 
 const (
@@ -500,6 +501,23 @@ func (d *Docker) Recover(ctx context.Context, host journal.PreviewHost) error {
 	teardownCtx, cancel := context.WithTimeout(ctx, d.cfg.TeardownTimeout)
 	defer cancel()
 	return d.teardown(teardownCtx, host.PreviewID)
+}
+
+func (d *Docker) HostedPreviewIDs(ctx context.Context) ([]string, error) {
+	raw, err := d.engine.HostPreviewIDs(ctx, d.cfg.RunnerID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(raw))
+	var invalid error
+	for _, id := range raw {
+		if err := validation.ID("preview_id", id); err != nil {
+			invalid = errors.New("docker reported a preview resource with an invalid preview id label")
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids, invalid
 }
 
 func (d *Docker) teardownDetached(ctx context.Context, previewID string) error {

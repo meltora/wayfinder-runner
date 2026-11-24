@@ -75,4 +75,5 @@ type Engine interface {
 	Logs(ctx context.Context, container string) (string, error)
 	List(ctx context.Context, labels map[string]string) (Objects, error)
 	Remove(ctx context.Context, objects Objects) error
+	HostPreviewIDs(ctx context.Context, runnerID string) ([]string, error)
 }
