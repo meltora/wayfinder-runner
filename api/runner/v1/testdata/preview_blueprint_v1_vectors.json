@@ -1,0 +1,818 @@
+{
+  "description": "Shared preview blueprint v1 vectors for the app (TypeScript and PostgreSQL) and the runner (Go). Contract: docs/adr/0050-runner-hosted-preview-controller.md. Regenerate with pnpm previews:blueprint-vectors.",
+  "canonical_json": "Parse content_json as JSON and validate it. Serialize the parsed value with object keys sorted by UTF-16 code unit order (byte order for these ASCII keys), arrays in order, no whitespace, ECMAScript JSON.stringify string escaping and ECMAScript Number::toString numbers. digest is the lowercase hex SHA-256 of the UTF-8 bytes of canonical.",
+  "valid": [
+    {
+      "name": "base",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3000,\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"working_directory\":\".\"},\"egress\":{\"mode\":\"none\"},\"limits\":{\"cpus\":1,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"}]}",
+      "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+    },
+    {
+      "name": "base_keys_reversed",
+      "content_json": "{\"services\":[{\"role\":\"database\",\"name\":\"db\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"schema_version\":1,\"limits\":{\"memory_mb\":1024,\"max_lifetime_minutes\":1440,\"cpus\":1},\"egress\":{\"mode\":\"none\"},\"app\":{\"working_directory\":\".\",\"start\":\"pnpm start\",\"seed\":[\"pnpm db:seed\"],\"port\":3000,\"migrate\":[\"pnpm db:migrate:deploy\"],\"install\":[\"pnpm install --frozen-lockfile\"],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"health_checks\":[{\"path\":\"/\",\"id\":\"home\",\"expected_status\":200}],\"env\":{\"STRIPE_SECRET_KEY\":{\"note\":\"Test mode key\",\"kind\":\"secret\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"FEATURE_FLAG\":{\"value\":\"enabled\",\"kind\":\"fake\"},\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"}},\"build\":[\"pnpm build\"]}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3000,\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"working_directory\":\".\"},\"egress\":{\"mode\":\"none\"},\"limits\":{\"cpus\":1,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"}]}",
+      "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+    },
+    {
+      "name": "base_value_changed",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3001,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3001,\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"working_directory\":\".\"},\"egress\":{\"mode\":\"none\"},\"limits\":{\"cpus\":1,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"}]}",
+      "digest": "19adfbcacb695fa09c0d1192a5564374828323d2176c440f3d0e3c4d8548c6f4"
+    },
+    {
+      "name": "escaping_and_unicode",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile && pnpm prisma generate\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"node server.js > /dev/null 2>&1 < /dev/null\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Ünïcödé note\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"a && b < c > d     \\\"quoted\\\" back\\\\slash Zürich – 日本 😀\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"a && b < c > d     \\\"quoted\\\" back\\\\slash Zürich – 日本 😀\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Ünïcödé note\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile && pnpm prisma generate\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3000,\"seed\":[\"pnpm db:seed\"],\"start\":\"node server.js > /dev/null 2>&1 < /dev/null\",\"working_directory\":\".\"},\"egress\":{\"mode\":\"none\"},\"limits\":{\"cpus\":1,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"}]}",
+      "digest": "5077861cf8d451a9420b0e5133f8bf70919474893011f810062ea353103d84bc"
+    },
+    {
+      "name": "quarter_cpus",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":0.25,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3000,\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"working_directory\":\".\"},\"egress\":{\"mode\":\"none\"},\"limits\":{\"cpus\":0.25,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"}]}",
+      "digest": "8f3577c819f76c012c392da8dd0d26a5ed650cb15962e2bc50bb6b470fcdec53"
+    },
+    {
+      "name": "fractional_cpus",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1.5,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3000,\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"working_directory\":\".\"},\"egress\":{\"mode\":\"none\"},\"limits\":{\"cpus\":1.5,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"}]}",
+      "digest": "fb971b0080824014966b4285f486ff3e7c538378cf22fc916a70358b49969a52"
+    },
+    {
+      "name": "cpus_written_as_one_point_zero",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1.0,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3000,\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"working_directory\":\".\"},\"egress\":{\"mode\":\"none\"},\"limits\":{\"cpus\":1,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"}]}",
+      "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+    },
+    {
+      "name": "memory_written_with_exponent",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1.024e3,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3000,\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"working_directory\":\".\"},\"egress\":{\"mode\":\"none\"},\"limits\":{\"cpus\":1,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"}]}",
+      "digest": "83ded9d685a2c763c73dd2ea0f56a054fe1e851b8b44c8307211ea518fa60563"
+    },
+    {
+      "name": "nested_ordering_all_services",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}},{\"role\":\"cache\",\"name\":\"cache\",\"image\":\"docker.io/library/redis@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"health\":{\"interval_seconds\":5,\"command\":[\"redis-cli\",\"ping\"]}},{\"name\":\"mail\",\"role\":\"mail_sink\",\"image\":\"docker.io/axllent/mailpit@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\"}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200},{\"expected_status\":204,\"path\":\"/api/health\",\"id\":\"api\"}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"REDIS_URL\":{\"kind\":\"generated\",\"generator\":\"redis_url\"},\"SMTP_URL\":{\"kind\":\"generated\",\"generator\":\"smtp_url\"},\"APP_URL\":{\"kind\":\"generated\",\"generator\":\"preview_url\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"registry.npmjs.org\",\"api.stripe.com\"]}}",
+      "canonical": "{\"app\":{\"build\":[\"pnpm build\"],\"env\":{\"APP_URL\":{\"generator\":\"preview_url\",\"kind\":\"generated\"},\"DATABASE_URL\":{\"generator\":\"postgres_url\",\"kind\":\"generated\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"REDIS_URL\":{\"generator\":\"redis_url\",\"kind\":\"generated\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"SMTP_URL\":{\"generator\":\"smtp_url\",\"kind\":\"generated\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"}},\"health_checks\":[{\"expected_status\":200,\"id\":\"home\",\"path\":\"/\"},{\"expected_status\":204,\"id\":\"api\",\"path\":\"/api/health\"}],\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"install\":[\"pnpm install --frozen-lockfile\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"port\":3000,\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"working_directory\":\".\"},\"egress\":{\"hosts\":[\"registry.npmjs.org\",\"api.stripe.com\"],\"mode\":\"allow\"},\"limits\":{\"cpus\":1,\"max_lifetime_minutes\":1440,\"memory_mb\":1024},\"schema_version\":1,\"services\":[{\"env\":{\"POSTGRES_PASSWORD\":{\"generator\":\"random_secret\",\"kind\":\"generated\"}},\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"name\":\"db\",\"role\":\"database\"},{\"health\":{\"command\":[\"redis-cli\",\"ping\"],\"interval_seconds\":5},\"image\":\"docker.io/library/redis@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"name\":\"cache\",\"role\":\"cache\"},{\"image\":\"docker.io/axllent/mailpit@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"name\":\"mail\",\"role\":\"mail_sink\"}]}",
+      "digest": "8382cb281e71e8e4bf2b2925fec3bb994d10f62a3c034df89de7f21db89fbf85"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "schema_version_not_1",
+      "rule": "schema_version is the number 1",
+      "content_json": "{\"schema_version\":2,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "schema_version"
+        ]
+      ]
+    },
+    {
+      "name": "unknown_top_level_key",
+      "rule": "objects are strict: unknown keys are rejected",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"},\"extra\":true}",
+      "paths": [
+        []
+      ]
+    },
+    {
+      "name": "unknown_app_key",
+      "rule": "objects are strict: unknown keys are rejected",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}},\"ports\":[3000]},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app"
+        ]
+      ]
+    },
+    {
+      "name": "missing_required_key",
+      "rule": "every non-optional key is required",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440}}",
+      "paths": [
+        [
+          "egress"
+        ]
+      ]
+    },
+    {
+      "name": "too_many_services",
+      "rule": "at most 8 services",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"s0\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"s1\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"s2\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"s3\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"s4\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"s5\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"s6\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"s7\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"name\":\"s8\",\"role\":\"other\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services"
+        ]
+      ]
+    },
+    {
+      "name": "service_name_pattern",
+      "rule": "service name ^[a-z][a-z0-9-]{0,31}$",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"DB\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services",
+          "0",
+          "name"
+        ]
+      ]
+    },
+    {
+      "name": "duplicate_service_names",
+      "rule": "service names are unique",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}},{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services",
+          "1",
+          "name"
+        ]
+      ]
+    },
+    {
+      "name": "service_role_enum",
+      "rule": "role is database | cache | mail_sink | other",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"queue\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services",
+          "0",
+          "role"
+        ]
+      ]
+    },
+    {
+      "name": "image_not_pinned",
+      "rule": "images are pinned as <repository>@sha256:<64 hex>",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node:20\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "image"
+        ]
+      ]
+    },
+    {
+      "name": "image_uppercase_digest",
+      "rule": "images are pinned as <repository>@sha256:<64 hex>",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "image"
+        ]
+      ]
+    },
+    {
+      "name": "image_link_local_registry",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa nip.io sslip.io suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"169.254.169.254/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "image"
+        ]
+      ]
+    },
+    {
+      "name": "image_localhost_registry",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa nip.io sslip.io suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"localhost:5000/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services",
+          "0",
+          "image"
+        ]
+      ]
+    },
+    {
+      "name": "image_internal_suffix_registry",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa nip.io sslip.io suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"metadata.google.internal/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "image"
+        ]
+      ]
+    },
+    {
+      "name": "image_wildcard_dns_registry",
+      "rule": "a registry host (first path segment with . or : or equal to localhost) is a lowercase public DNS name: no IP literal, localhost or .local .localdomain .internal .intranet .lan .home.arpa nip.io sslip.io suffix",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"127.0.0.1.nip.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "image"
+        ]
+      ]
+    },
+    {
+      "name": "env_key_pattern",
+      "rule": "env key ^[A-Z_][A-Z0-9_]{0,127}$",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"lower_key\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "lower_key"
+        ]
+      ]
+    },
+    {
+      "name": "too_many_env_keys",
+      "rule": "at most 128 keys per env map",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"},\"K0\":{\"kind\":\"disabled\"},\"K1\":{\"kind\":\"disabled\"},\"K2\":{\"kind\":\"disabled\"},\"K3\":{\"kind\":\"disabled\"},\"K4\":{\"kind\":\"disabled\"},\"K5\":{\"kind\":\"disabled\"},\"K6\":{\"kind\":\"disabled\"},\"K7\":{\"kind\":\"disabled\"},\"K8\":{\"kind\":\"disabled\"},\"K9\":{\"kind\":\"disabled\"},\"K10\":{\"kind\":\"disabled\"},\"K11\":{\"kind\":\"disabled\"},\"K12\":{\"kind\":\"disabled\"},\"K13\":{\"kind\":\"disabled\"},\"K14\":{\"kind\":\"disabled\"},\"K15\":{\"kind\":\"disabled\"},\"K16\":{\"kind\":\"disabled\"},\"K17\":{\"kind\":\"disabled\"},\"K18\":{\"kind\":\"disabled\"},\"K19\":{\"kind\":\"disabled\"},\"K20\":{\"kind\":\"disabled\"},\"K21\":{\"kind\":\"disabled\"},\"K22\":{\"kind\":\"disabled\"},\"K23\":{\"kind\":\"disabled\"},\"K24\":{\"kind\":\"disabled\"},\"K25\":{\"kind\":\"disabled\"},\"K26\":{\"kind\":\"disabled\"},\"K27\":{\"kind\":\"disabled\"},\"K28\":{\"kind\":\"disabled\"},\"K29\":{\"kind\":\"disabled\"},\"K30\":{\"kind\":\"disabled\"},\"K31\":{\"kind\":\"disabled\"},\"K32\":{\"kind\":\"disabled\"},\"K33\":{\"kind\":\"disabled\"},\"K34\":{\"kind\":\"disabled\"},\"K35\":{\"kind\":\"disabled\"},\"K36\":{\"kind\":\"disabled\"},\"K37\":{\"kind\":\"disabled\"},\"K38\":{\"kind\":\"disabled\"},\"K39\":{\"kind\":\"disabled\"},\"K40\":{\"kind\":\"disabled\"},\"K41\":{\"kind\":\"disabled\"},\"K42\":{\"kind\":\"disabled\"},\"K43\":{\"kind\":\"disabled\"},\"K44\":{\"kind\":\"disabled\"},\"K45\":{\"kind\":\"disabled\"},\"K46\":{\"kind\":\"disabled\"},\"K47\":{\"kind\":\"disabled\"},\"K48\":{\"kind\":\"disabled\"},\"K49\":{\"kind\":\"disabled\"},\"K50\":{\"kind\":\"disabled\"},\"K51\":{\"kind\":\"disabled\"},\"K52\":{\"kind\":\"disabled\"},\"K53\":{\"kind\":\"disabled\"},\"K54\":{\"kind\":\"disabled\"},\"K55\":{\"kind\":\"disabled\"},\"K56\":{\"kind\":\"disabled\"},\"K57\":{\"kind\":\"disabled\"},\"K58\":{\"kind\":\"disabled\"},\"K59\":{\"kind\":\"disabled\"},\"K60\":{\"kind\":\"disabled\"},\"K61\":{\"kind\":\"disabled\"},\"K62\":{\"kind\":\"disabled\"},\"K63\":{\"kind\":\"disabled\"},\"K64\":{\"kind\":\"disabled\"},\"K65\":{\"kind\":\"disabled\"},\"K66\":{\"kind\":\"disabled\"},\"K67\":{\"kind\":\"disabled\"},\"K68\":{\"kind\":\"disabled\"},\"K69\":{\"kind\":\"disabled\"},\"K70\":{\"kind\":\"disabled\"},\"K71\":{\"kind\":\"disabled\"},\"K72\":{\"kind\":\"disabled\"},\"K73\":{\"kind\":\"disabled\"},\"K74\":{\"kind\":\"disabled\"},\"K75\":{\"kind\":\"disabled\"},\"K76\":{\"kind\":\"disabled\"},\"K77\":{\"kind\":\"disabled\"},\"K78\":{\"kind\":\"disabled\"},\"K79\":{\"kind\":\"disabled\"},\"K80\":{\"kind\":\"disabled\"},\"K81\":{\"kind\":\"disabled\"},\"K82\":{\"kind\":\"disabled\"},\"K83\":{\"kind\":\"disabled\"},\"K84\":{\"kind\":\"disabled\"},\"K85\":{\"kind\":\"disabled\"},\"K86\":{\"kind\":\"disabled\"},\"K87\":{\"kind\":\"disabled\"},\"K88\":{\"kind\":\"disabled\"},\"K89\":{\"kind\":\"disabled\"},\"K90\":{\"kind\":\"disabled\"},\"K91\":{\"kind\":\"disabled\"},\"K92\":{\"kind\":\"disabled\"},\"K93\":{\"kind\":\"disabled\"},\"K94\":{\"kind\":\"disabled\"},\"K95\":{\"kind\":\"disabled\"},\"K96\":{\"kind\":\"disabled\"},\"K97\":{\"kind\":\"disabled\"},\"K98\":{\"kind\":\"disabled\"},\"K99\":{\"kind\":\"disabled\"},\"K100\":{\"kind\":\"disabled\"},\"K101\":{\"kind\":\"disabled\"},\"K102\":{\"kind\":\"disabled\"},\"K103\":{\"kind\":\"disabled\"},\"K104\":{\"kind\":\"disabled\"},\"K105\":{\"kind\":\"disabled\"},\"K106\":{\"kind\":\"disabled\"},\"K107\":{\"kind\":\"disabled\"},\"K108\":{\"kind\":\"disabled\"},\"K109\":{\"kind\":\"disabled\"},\"K110\":{\"kind\":\"disabled\"},\"K111\":{\"kind\":\"disabled\"},\"K112\":{\"kind\":\"disabled\"},\"K113\":{\"kind\":\"disabled\"},\"K114\":{\"kind\":\"disabled\"},\"K115\":{\"kind\":\"disabled\"},\"K116\":{\"kind\":\"disabled\"},\"K117\":{\"kind\":\"disabled\"},\"K118\":{\"kind\":\"disabled\"},\"K119\":{\"kind\":\"disabled\"},\"K120\":{\"kind\":\"disabled\"},\"K121\":{\"kind\":\"disabled\"},\"K122\":{\"kind\":\"disabled\"},\"K123\":{\"kind\":\"disabled\"},\"K124\":{\"kind\":\"disabled\"},\"K125\":{\"kind\":\"disabled\"},\"K126\":{\"kind\":\"disabled\"},\"K127\":{\"kind\":\"disabled\"},\"K128\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env"
+        ]
+      ]
+    },
+    {
+      "name": "env_kind_enum",
+      "rule": "env kind is generated | secret | fake | disabled",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"plain\",\"value\":\"x\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "SENTRY_DSN",
+          "kind"
+        ]
+      ]
+    },
+    {
+      "name": "generator_enum",
+      "rule": "generator is postgres_url | redis_url | smtp_url | preview_url | random_secret",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"mysql_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "DATABASE_URL",
+          "generator"
+        ]
+      ]
+    },
+    {
+      "name": "generator_needs_role",
+      "rule": "postgres_url needs a database service, redis_url a cache, smtp_url a mail_sink",
+      "content_json": "{\"schema_version\":1,\"services\":[],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "DATABASE_URL",
+          "generator"
+        ]
+      ]
+    },
+    {
+      "name": "fake_live_credential_prefix",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"sk_live_abc\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "FEATURE_FLAG",
+          "value"
+        ]
+      ]
+    },
+    {
+      "name": "fake_high_entropy_token",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"Zx9Qm2Lp7Rt4Vw8Ny3Kb6Hd1Fg5Js0Ac\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "FEATURE_FLAG",
+          "value"
+        ]
+      ]
+    },
+    {
+      "name": "fake_control_character",
+      "rule": "no U+0000-U+001F or U+007F in text",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"a\\tb\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "FEATURE_FLAG",
+          "value"
+        ]
+      ]
+    },
+    {
+      "name": "fake_value_too_long",
+      "rule": "fake value at most 1024 UTF-16 code units",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "FEATURE_FLAG",
+          "value"
+        ]
+      ]
+    },
+    {
+      "name": "note_too_long",
+      "rule": "note at most 280 UTF-16 code units",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "STRIPE_SECRET_KEY",
+          "note"
+        ]
+      ]
+    },
+    {
+      "name": "command_empty_string",
+      "rule": "commands are not empty",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "build",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "command_too_many_bytes",
+      "rule": "a command is at most 2048 UTF-8 bytes and 2048 UTF-16 code units",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "start"
+        ]
+      ]
+    },
+    {
+      "name": "command_list_too_long",
+      "rule": "at most 8 commands per phase",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"true\",\"true\",\"true\",\"true\",\"true\",\"true\",\"true\",\"true\",\"true\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "install"
+        ]
+      ]
+    },
+    {
+      "name": "command_control_character",
+      "rule": "no U+0000-U+001F or U+007F in text",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\\n\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "start"
+        ]
+      ]
+    },
+    {
+      "name": "command_live_credential_prefix",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"STRIPE_KEY=sk_live_abc pnpm install\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "install",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "command_url_userinfo",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"psql postgres://admin:hunter2@db.internal/app\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "migrate",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "start_live_credential_prefix",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"TOKEN=glpat-abc123 pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "start"
+        ]
+      ]
+    },
+    {
+      "name": "secret_note_credential",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"whsec_abc\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "STRIPE_SECRET_KEY",
+          "note"
+        ]
+      ]
+    },
+    {
+      "name": "disabled_note_credential",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\",\"note\":\"xoxe-123\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "env",
+          "SENTRY_DSN",
+          "note"
+        ]
+      ]
+    },
+    {
+      "name": "service_health_command_credential",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}},\"health\":{\"command\":[\"pg_isready\",\"--dbname=postgres://u:p@localhost/db\"],\"interval_seconds\":5}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services",
+          "0",
+          "health",
+          "command",
+          "1"
+        ]
+      ]
+    },
+    {
+      "name": "working_directory_credential",
+      "rule": "no text field (commands, start, health commands, notes, working directory, fake values) may contain a live credential prefix, URL userinfo with a password, or a token of 32+ characters with upper, lower and digit and Shannon entropy >= 4",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\"apps/sk_live_abc\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "working_directory"
+        ]
+      ]
+    },
+    {
+      "name": "working_directory_absolute",
+      "rule": "working directory is relative, no backslash, no .. segment",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\"/srv/app\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "working_directory"
+        ]
+      ]
+    },
+    {
+      "name": "working_directory_parent",
+      "rule": "working directory is relative, no backslash, no .. segment",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\"apps/../..\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "working_directory"
+        ]
+      ]
+    },
+    {
+      "name": "port_too_low",
+      "rule": "port is an integer 1024-65535",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":80,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "port"
+        ]
+      ]
+    },
+    {
+      "name": "port_not_integer",
+      "rule": "port is an integer 1024-65535",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000.5,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "port"
+        ]
+      ]
+    },
+    {
+      "name": "health_checks_empty",
+      "rule": "1 to 16 health checks",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks"
+        ]
+      ]
+    },
+    {
+      "name": "health_check_id_pattern",
+      "rule": "health check id ^[a-z][a-z0-9-]{0,63}$",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"1home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "id"
+        ]
+      ]
+    },
+    {
+      "name": "duplicate_health_check_ids",
+      "rule": "health check ids are unique",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200},{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "1",
+          "id"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_query",
+      "rule": "health path starts with /, no //, ? # \\ whitespace, .. segment or %2e %2f %5c (any case)",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/health?full=1\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_relative",
+      "rule": "health path starts with /, no //, ? # \\ whitespace, .. segment or %2e %2f %5c (any case)",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"health\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_protocol_relative",
+      "rule": "health path starts with /, no //, ? # \\ whitespace, .. segment or %2e %2f %5c (any case)",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"//evil.example.com/x\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_empty_segment",
+      "rule": "health path starts with /, no //, ? # \\ whitespace, .. segment or %2e %2f %5c (any case)",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/a//b\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_encoded_dot",
+      "rule": "health path starts with /, no //, ? # \\ whitespace, .. segment or %2e %2f %5c (any case)",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/%2e%2e/admin\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_encoded_slash",
+      "rule": "health path starts with /, no //, ? # \\ whitespace, .. segment or %2e %2f %5c (any case)",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/a%2Fb\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_encoded_backslash",
+      "rule": "health path starts with /, no //, ? # \\ whitespace, .. segment or %2e %2f %5c (any case)",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/a%5Cb\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
+      "name": "health_path_backslash",
+      "rule": "health path starts with /, no //, ? # \\ whitespace, .. segment or %2e %2f %5c (any case)",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/a\\\\b\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "path"
+        ]
+      ]
+    },
+    {
+      "name": "expected_status_range",
+      "rule": "expected_status is an integer 100-599",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":600}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "health_checks",
+          "0",
+          "expected_status"
+        ]
+      ]
+    },
+    {
+      "name": "service_health_command_empty",
+      "rule": "service health command has 1 to 16 entries",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}},\"health\":{\"command\":[],\"interval_seconds\":5}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services",
+          "0",
+          "health",
+          "command"
+        ]
+      ]
+    },
+    {
+      "name": "service_health_interval_range",
+      "rule": "interval_seconds is an integer 1-300",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}},\"health\":{\"command\":[\"true\"],\"interval_seconds\":0}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "services",
+          "0",
+          "health",
+          "interval_seconds"
+        ]
+      ]
+    },
+    {
+      "name": "cpus_not_quarter",
+      "rule": "cpus is 0.25-4 in steps of 0.25",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":0.3,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "limits",
+          "cpus"
+        ]
+      ]
+    },
+    {
+      "name": "cpus_too_high",
+      "rule": "cpus is 0.25-4 in steps of 0.25",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":4.25,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "limits",
+          "cpus"
+        ]
+      ]
+    },
+    {
+      "name": "memory_not_integer",
+      "rule": "memory_mb is an integer 128-8192",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":512.5,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "limits",
+          "memory_mb"
+        ]
+      ]
+    },
+    {
+      "name": "lifetime_too_short",
+      "rule": "max_lifetime_minutes is an integer 5-43200",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":4},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "limits",
+          "max_lifetime_minutes"
+        ]
+      ]
+    },
+    {
+      "name": "egress_mode_enum",
+      "rule": "egress mode is none | allow",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"all\"}}",
+      "paths": [
+        [
+          "egress",
+          "mode"
+        ]
+      ]
+    },
+    {
+      "name": "egress_none_with_hosts",
+      "rule": "objects are strict: unknown keys are rejected",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\",\"hosts\":[\"a.example\"]}}",
+      "paths": [
+        [
+          "egress"
+        ]
+      ]
+    },
+    {
+      "name": "egress_allow_empty",
+      "rule": "egress allow lists 1 to 32 hosts",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts"
+        ]
+      ]
+    },
+    {
+      "name": "egress_host_pattern",
+      "rule": "egress host is a lowercase DNS name with at least two labels",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"localhost\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "egress_host_ip_literal",
+      "rule": "egress host is a lowercase DNS name with at least two labels",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"169.254.169.254\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "0"
+        ]
+      ]
+    },
+    {
+      "name": "egress_duplicate_hosts",
+      "rule": "egress hosts are unique",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":3000,\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"allow\",\"hosts\":[\"a.example.com\",\"a.example.com\"]}}",
+      "paths": [
+        [
+          "egress",
+          "hosts",
+          "1"
+        ]
+      ]
+    },
+    {
+      "name": "wrong_type_string_for_number",
+      "rule": "numbers are JSON numbers",
+      "content_json": "{\"schema_version\":1,\"services\":[{\"name\":\"db\",\"role\":\"database\",\"image\":\"docker.io/library/postgres@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"env\":{\"POSTGRES_PASSWORD\":{\"kind\":\"generated\",\"generator\":\"random_secret\"}}}],\"app\":{\"image\":\"ghcr.io/acme/node@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"working_directory\":\".\",\"install\":[\"pnpm install --frozen-lockfile\"],\"build\":[\"pnpm build\"],\"migrate\":[\"pnpm db:migrate:deploy\"],\"seed\":[\"pnpm db:seed\"],\"start\":\"pnpm start\",\"port\":\"3000\",\"health_checks\":[{\"id\":\"home\",\"path\":\"/\",\"expected_status\":200}],\"env\":{\"DATABASE_URL\":{\"kind\":\"generated\",\"generator\":\"postgres_url\"},\"STRIPE_SECRET_KEY\":{\"kind\":\"secret\",\"note\":\"Test mode key\"},\"FEATURE_FLAG\":{\"kind\":\"fake\",\"value\":\"enabled\"},\"SENTRY_DSN\":{\"kind\":\"disabled\"}}},\"limits\":{\"memory_mb\":1024,\"cpus\":1,\"max_lifetime_minutes\":1440},\"egress\":{\"mode\":\"none\"}}",
+      "paths": [
+        [
+          "app",
+          "port"
+        ]
+      ]
+    }
+  ]
+}
