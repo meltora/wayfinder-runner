@@ -196,6 +196,47 @@ func TestJobNetworkIsRemovedAtJobEndAndOnReplace(t *testing.T) {
 	}
 }
 
+func addOrphanEndpoint(h *harness, network, endpoint string) {
+	h.engine.mu.Lock()
+	defer h.engine.mu.Unlock()
+	h.engine.orphans[network] = append(h.engine.orphans[network], endpoint)
+}
+
+func TestJobNetworkRemovalDisconnectsOrphanedEndpoints(t *testing.T) {
+	name := JobNetworkName(testRunnerID, testAttemptID)
+	gateway := ResourcePrefix(testRunnerID, testPreviewID) + "-gateway"
+	remove := map[string]func(h *harness) error{
+		"detach": func(h *harness) error { return h.controller.DetachJob(context.Background(), testAttemptID) },
+		"sweep":  func(h *harness) error { return h.controller.SweepJobNetworks(context.Background(), nil) },
+		"replace": func(h *harness) error {
+			return h.controller.AttachJob(context.Background(), testPreviewID, testAttemptID, testJobContainer)
+		},
+	}
+	for label, run := range remove {
+		t.Run(label, func(t *testing.T) {
+			h := attachedHarness(t)
+			addOrphanEndpoint(h, name, "our-stale-endpoint")
+			before := len(h.engine.Events())
+			if err := run(h); err != nil {
+				t.Fatalf("%s with an orphaned endpoint: %v", label, err)
+			}
+			events := h.engine.Events()[before:]
+			order := []string{
+				"disconnect " + name + " " + testJobContainer + " true",
+				"disconnect " + name + " " + gateway + " true",
+				"disconnect " + name + " our-stale-endpoint true",
+				"rmnet " + name,
+			}
+			if len(events) < len(order) || !slices.Equal(events[:len(order)], order) {
+				t.Fatalf("events = %v", events)
+			}
+			if orphans := h.engine.Orphans(name); len(orphans) != 0 {
+				t.Fatalf("orphans left = %v", orphans)
+			}
+		})
+	}
+}
+
 func TestSweepJobNetworksKeepsActiveAttempt(t *testing.T) {
 	h := attachedHarness(t)
 	addJobContainer(h, "our-runner-other-job")

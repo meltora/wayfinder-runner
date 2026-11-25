@@ -178,28 +178,40 @@ func (cli DockerCLI) NetworkSubnets(ctx context.Context, name string) ([]netip.P
 	return subnets, nil
 }
 
-func (cli DockerCLI) NetworkContainers(ctx context.Context, name string) ([]string, error) {
-	output, err := cli.run(ctx, "network", "inspect", "--format", "{{range $id, $endpoint := .Containers}}{{$id}} {{end}}", name)
+func (cli DockerCLI) NetworkContainers(ctx context.Context, name string) ([]string, []string, error) {
+	output, err := cli.run(ctx, "network", "inspect", "--format", "{{json .Containers}}", name)
 	if err != nil {
 		if ctx.Err() == nil && dockerOnlySoft(output, networkMissing(name)) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("inspect network containers: %w: %s", err, strings.TrimSpace(output))
+		return nil, nil, fmt.Errorf("inspect network containers: %w: %s", err, strings.TrimSpace(output))
 	}
-	var ids []string
-	for _, id := range strings.Fields(output) {
+	var endpoints map[string]struct{ Name string }
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &endpoints); err != nil {
+		return nil, nil, errors.New("docker returned an invalid network endpoint listing")
+	}
+	var ids, orphans []string
+	for _, id := range slices.Sorted(maps.Keys(endpoints)) {
 		if dockerOrphanEndpointPattern.MatchString(id) {
+			if !dockerObjectNamePattern.MatchString(endpoints[id].Name) {
+				return nil, nil, errors.New("docker returned an invalid orphaned endpoint name")
+			}
+			orphans = append(orphans, endpoints[id].Name)
 			continue
 		}
 		if !dockerContainerIDPattern.MatchString(id) {
-			return nil, errors.New("docker returned an invalid container identifier")
+			return nil, nil, errors.New("docker returned an invalid container identifier")
 		}
 		ids = append(ids, id)
 	}
-	return ids, nil
+	slices.Sort(orphans)
+	return ids, slices.Compact(orphans), nil
 }
 
 func (cli DockerCLI) DisconnectNetwork(ctx context.Context, network, container string, force bool) error {
+	if !dockerObjectNamePattern.MatchString(container) {
+		return errors.New("network disconnect requires a valid container or endpoint name")
+	}
 	args := []string{"network", "disconnect"}
 	if force {
 		args = append(args, "--force")

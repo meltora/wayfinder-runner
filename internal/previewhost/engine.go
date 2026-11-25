@@ -79,7 +79,7 @@ type Engine interface {
 	CreateNetwork(ctx context.Context, spec NetworkSpec) error
 	ConnectNetwork(ctx context.Context, network, container, alias string) error
 	NetworkSubnets(ctx context.Context, name string) ([]netip.Prefix, error)
-	NetworkContainers(ctx context.Context, name string) ([]string, error)
+	NetworkContainers(ctx context.Context, name string) (containers, orphans []string, err error)
 	DisconnectNetwork(ctx context.Context, network, container string, force bool) error
 	RemoveNetwork(ctx context.Context, name string) error
 	ListNetworks(ctx context.Context, labels map[string]string) ([]NetworkSummary, error)

@@ -336,7 +336,7 @@ func TestDockerCLIJobNetworkVerbs(t *testing.T) {
 	log := installFakeDocker(t, `
 case "$*" in
 *IPAM*) echo '[{"Subnet":"172.25.0.0/16"},{"Subnet":""},{"Subnet":"fd00:9::/64","Gateway":"fd00:9::1"}]' ;;
-*Containers*) echo '0123456789abcdef 89abcdef01234567 ' ;;
+*Containers*) echo '{"0123456789abcdef":{"Name":"job"},"89abcdef01234567":{"Name":"gateway"}}' ;;
 *Labels*) printf '"our-preview-job-0787555948ce"\t{"com.ourplatform.attempt-id":"attempt-1","com.ourplatform.preview-job-network":"runner-1"}\n' ;;
 "network ls"*) echo our-preview-job-0787555948ce ;;
 "network disconnect"*) echo 'Error response from daemon: container x is not connected to network y' >&2; exit 1 ;;
@@ -349,9 +349,9 @@ esac`)
 	if err != nil || !slices.Equal(subnets, []netip.Prefix{netip.MustParsePrefix("172.25.0.0/16"), netip.MustParsePrefix("fd00:9::/64")}) {
 		t.Fatalf("subnets = %v %v", subnets, err)
 	}
-	containers, err := cli.NetworkContainers(ctx, name)
-	if err != nil || !slices.Equal(containers, []string{"0123456789abcdef", "89abcdef01234567"}) {
-		t.Fatalf("containers = %v %v", containers, err)
+	containers, orphans, err := cli.NetworkContainers(ctx, name)
+	if err != nil || !slices.Equal(containers, []string{"0123456789abcdef", "89abcdef01234567"}) || len(orphans) != 0 {
+		t.Fatalf("containers = %v orphans = %v %v", containers, orphans, err)
 	}
 	if err := cli.DisconnectNetwork(ctx, name, "0123456789abcdef", true); err != nil {
 		t.Fatalf("disconnecting a container that is not connected: %v", err)
@@ -372,7 +372,7 @@ esac`)
 	}
 	want := []string{
 		"network inspect --format {{json .IPAM.Config}} " + name,
-		"network inspect --format {{range $id, $endpoint := .Containers}}{{$id}} {{end}} " + name,
+		"network inspect --format {{json .Containers}} " + name,
 		"network disconnect --force " + name + " 0123456789abcdef",
 		"network rm " + name,
 		"network ls --no-trunc --format {{.Name}} --filter label=com.ourplatform.attempt-id=attempt-1 " +
@@ -394,7 +394,7 @@ esac`)
 	if _, err := cli.NetworkSubnets(ctx, name); err == nil {
 		t.Fatal("invalid subnet accepted")
 	}
-	if _, err := cli.NetworkContainers(ctx, name); err == nil {
+	if _, _, err := cli.NetworkContainers(ctx, name); err == nil {
 		t.Fatal("invalid container id accepted")
 	}
 	if err := cli.DisconnectNetwork(ctx, name, "0123456789abcdef", true); err == nil {
@@ -405,5 +405,66 @@ esac`)
 	}
 	if _, err := cli.ListNetworks(ctx, JobNetworkLabels(testRunnerID, testAttemptID)); err == nil {
 		t.Fatal("invalid network name accepted")
+	}
+}
+
+func TestDockerCLIJobNetworkRemovalDisconnectsOrphanedEndpoints(t *testing.T) {
+	name := JobNetworkName(testRunnerID, testAttemptID)
+	orphan := "ep-" + strings.Repeat("ab12", 16)
+	stale := ResourcePrefix(testRunnerID, testPreviewID) + "-gateway"
+	script := `
+log="$(dirname "$0")/calls.log"
+case "$*" in
+"network ls"*) echo ` + name + ` ;;
+*Labels*) printf '"` + name + `"\t{"com.ourplatform.attempt-id":"attempt-1","com.ourplatform.preview-job-network":"runner-1"}\n' ;;
+*Containers*) echo '{"0123456789abcdef":{"Name":"our-runner-job-container","EndpointID":"1"},"` + orphan + `":{"Name":"` + stale + `","EndpointID":"2"}}' ;;
+"network disconnect --force ` + name + ` ` + stale + `") echo 'Error response from daemon: endpoint ` + stale + ` not found' >&2; exit 1 ;;
+"network disconnect"*) ;;
+"network rm"*)
+	if ! grep -qx "network disconnect --force ` + name + ` ` + stale + `" "$log"; then
+		echo 'Error response from daemon: error while removing network: network ` + name + ` has active endpoints' >&2
+		exit 1
+	fi ;;
+esac`
+	want := []string{
+		"network ls --no-trunc --format {{.Name}} --filter label=com.ourplatform.attempt-id=attempt-1 " +
+			"--filter label=com.ourplatform.preview-job-network=runner-1",
+		"network inspect --format {{json .Name}}{{\"\t\"}}{{json .Labels}} " + name,
+		"network inspect --format {{json .Containers}} " + name,
+		"network disconnect --force " + name + " 0123456789abcdef",
+		"network disconnect --force " + name + " " + stale,
+		"network rm " + name,
+	}
+	controller := &Docker{cfg: Config{RunnerID: testRunnerID, TeardownTimeout: time.Minute}, engine: DockerCLI{TempDir: privateDir(t)}}
+	log := installFakeDocker(t, script)
+	if err := controller.DetachJob(context.Background(), testAttemptID); err != nil {
+		t.Fatalf("detach with an orphaned endpoint: %v", err)
+	}
+	if calls := readCalls(t, log); !slices.Equal(calls, want) {
+		t.Fatalf("detach calls = %q", calls)
+	}
+	log = installFakeDocker(t, script)
+	if err := controller.SweepJobNetworks(context.Background(), nil); err != nil {
+		t.Fatalf("sweep with an orphaned endpoint: %v", err)
+	}
+	if calls := readCalls(t, log); !slices.Equal(calls, append([]string{
+		"network ls --no-trunc --format {{.Name}} --filter label=com.ourplatform.preview-job-network=runner-1",
+	}, want[1:]...)) {
+		t.Fatalf("sweep calls = %q", calls)
+	}
+
+	log = installFakeDocker(t, `
+case "$*" in
+"network ls"*) echo `+name+` ;;
+*Labels*) printf '"`+name+`"\t{"com.ourplatform.attempt-id":"attempt-1","com.ourplatform.preview-job-network":"runner-1"}\n' ;;
+*Containers*) echo '{"`+orphan+`":{"Name":"--force"}}' ;;
+esac`)
+	if err := controller.DetachJob(context.Background(), testAttemptID); err == nil {
+		t.Fatal("orphaned endpoint with a flag-like name was accepted")
+	}
+	for _, call := range readCalls(t, log) {
+		if strings.HasPrefix(call, "network disconnect") || strings.HasPrefix(call, "network rm") {
+			t.Fatalf("flag-like orphan name reached docker: %q", call)
+		}
 	}
 }

@@ -46,6 +46,7 @@ type fakeEngine struct {
 	subnets    map[string][]netip.Prefix
 	subnetErr  error
 	endpoints  map[string][]string
+	orphans    map[string][]string
 	listNetErr error
 }
 
@@ -70,13 +71,13 @@ func (engine *fakeEngine) NetworkSubnets(ctx context.Context, name string) ([]ne
 	return []netip.Prefix{fakeDefaultSubnet}, nil
 }
 
-func (engine *fakeEngine) NetworkContainers(ctx context.Context, name string) ([]string, error) {
+func (engine *fakeEngine) NetworkContainers(ctx context.Context, name string) ([]string, []string, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
-	return slices.Clone(engine.endpoints[name]), nil
+	return slices.Clone(engine.endpoints[name]), slices.Clone(engine.orphans[name]), nil
 }
 
 func (engine *fakeEngine) DisconnectNetwork(ctx context.Context, network, container string, force bool) error {
@@ -87,6 +88,9 @@ func (engine *fakeEngine) DisconnectNetwork(ctx context.Context, network, contai
 	defer engine.mu.Unlock()
 	engine.record("disconnect " + network + " " + container + " " + strconv.FormatBool(force))
 	engine.endpoints[network] = slices.DeleteFunc(engine.endpoints[network], func(name string) bool { return name == container })
+	if force {
+		engine.orphans[network] = slices.DeleteFunc(engine.orphans[network], func(name string) bool { return name == container })
+	}
 	return nil
 }
 
@@ -97,11 +101,12 @@ func (engine *fakeEngine) RemoveNetwork(ctx context.Context, name string) error 
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	engine.record("rmnet " + name)
-	if len(engine.endpoints[name]) > 0 {
+	if len(engine.endpoints[name]) > 0 || len(engine.orphans[name]) > 0 {
 		return fmt.Errorf("network %s has active endpoints", name)
 	}
 	delete(engine.networks, name)
 	delete(engine.endpoints, name)
+	delete(engine.orphans, name)
 	return nil
 }
 
@@ -133,6 +138,12 @@ func (engine *fakeEngine) Endpoints(network string) []string {
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	return slices.Clone(engine.endpoints[network])
+}
+
+func (engine *fakeEngine) Orphans(network string) []string {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return slices.Clone(engine.orphans[network])
 }
 
 func (engine *fakeEngine) HostPortCalls() []string {
@@ -222,6 +233,7 @@ func newFakeEngine() *fakeEngine {
 		stopped:    map[string]bool{},
 		subnets:    map[string][]netip.Prefix{},
 		endpoints:  map[string][]string{},
+		orphans:    map[string][]string{},
 		version:    "27.3.1",
 	}
 }
@@ -462,6 +474,7 @@ func (engine *fakeEngine) Remove(ctx context.Context, objects Objects) error {
 	for _, name := range objects.Networks {
 		delete(engine.networks, name)
 		delete(engine.endpoints, name)
+		delete(engine.orphans, name)
 	}
 	return nil
 }

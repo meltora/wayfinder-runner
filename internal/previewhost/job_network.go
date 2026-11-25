@@ -103,11 +103,11 @@ func (d *Docker) removeJobNetworks(ctx context.Context, labels map[string]string
 }
 
 func (d *Docker) removeJobNetwork(ctx context.Context, name string) error {
-	containers, err := d.engine.NetworkContainers(ctx, name)
+	containers, orphans, err := d.engine.NetworkContainers(ctx, name)
 	if err != nil {
 		return err
 	}
-	for _, container := range containers {
+	for _, container := range append(containers, orphans...) {
 		if err := d.engine.DisconnectNetwork(ctx, name, container, true); err != nil {
 			return err
 		}
