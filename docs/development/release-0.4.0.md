@@ -75,12 +75,41 @@ RUN_PREVIEW_HOST_DOCKER=1 go test -count=1 -v -run 'TestRealDocker' ./internal/p
 
 - **Orphan endpoint:** an orphan was not produced on Docker 29.6.1; producing one needs an unclean daemon stop. A normal endpoint in `{{json .Containers}}` has the keys `EndpointID`, `IPv4Address`, `IPv6Address`, `MacAddress` and `Name`, which matches the parser's `map[string]struct{ Name string }`.
 
-### 3a. Local end to end (blocks the tag; requires the user's approval in the runner tab, together with the real-Docker gate)
+### 3a. Local gates (block the tag; approved by the user together with the real-Docker gate)
 
-Run locally against an isolated app at `a352c671f` or later, backed by a disposable database seeded with the e2e seed (never the dev database), and a runner built from `main` under Docker isolation with the restricted job network. This is the only check that shows Claude's inner sandbox proxy allows a private address, so the release depends on it.
+The app at `a352c671f` does not yet send `preview_deploy` for a job request, attach J6 evidence or offer reach through the tunnel condition, so the app-driven flow moved to 3c. 3a checks the two parts that the release itself depends on.
 
-- [ ] A Claude build job calls `platform_deploy_preview` and gets `deployed`, and its inner sandbox proxy reaches `our-preview` on the private address at `:8080`.
-- [ ] The app accepts `run_network_policy.agent_sandbox_network` = `preview_only` for that job.
+- [x] Claude's inner sandbox proxy reaches `our-preview` on the private address at `:8080`.
+- [x] The app accepts `run_network_policy.agent_sandbox_network` = `preview_only`.
+
+#### 3a record (2026-11-25)
+
+- **Sandbox reach:**
+  - **Setup:**
+    - Rootless Docker 29.6.1, runner `611eaa7`, job image `local/our-runner-job:e2e-611eaa7`.
+    - Claude Code 2.1.299. Its sandbox runtime is bundled inside `claude.exe` and does not report a version; the standalone `@anthropic-ai/sandbox-runtime` in the image is 0.0.69 and was not used.
+    - A real preview was deployed with `previewhost`. A job container was started with the runner's nested-sandbox flags on an internal base network, then attached with `AttachJob`.
+    - The real `claude` binary ran against an offline Messages API stub. The stub returned one Bash call.
+    - The settings came from `provider.Claude.BuildSpec` with `HardenedRuntime`, `DockerIsolation` and `PreviewReach`: `strictAllowlist: true`, `allowedDomains: ["our-preview"]`, `enableWeakerNestedSandbox: true`.
+  - **Result**, from inside the Bash sandbox, through the sandbox proxy and with its proxy credentials:
+    - `http://our-preview:8080/index.html` returned `200` with `preview ok`. `our-preview` resolved to `172.22.0.2`.
+    - `http://example.com/` returned `403` "Connection blocked by network allowlist", reported as a sandbox violation.
+    - A direct TCP connect to the preview address failed with `ENETUNREACH`.
+  - Passed on two consecutive runs. No `our-preview*` container or network was left behind.
+  - On rootful Docker, bubblewrap fails with "Failed to make / slave", which is why the runner requires rootless Docker for nested sandboxes.
+- **`preview_only` acceptance:**
+  - Run on app `a352c671f` with `pnpm test` on an isolated `vitest_*` database: 4 files, 53 tests passed.
+    - `agent-run-guardrails.runtime-login.integration.test.ts`: a `docker`/`restricted` policy with `preview_only` is stored under the runtime login and read back by lease and by agent run. `preview_only` without the restricted job network is rejected by `agent_run_network_policy_preview_only_shape_check`.
+    - `get-agent-run-guardrails.tool.integration.test.ts`
+    - `accept-run-network-policy.service.test.ts`: the runner event with `preview_only` is accepted.
+    - `run-network-policy-event.schema.test.ts`
+
+### 3c. Full P5f app wiring end to end (after the release, once the app P5f slice lands)
+
+Not a tag gate. Until then the app never sends `preview_deploy` for a job request, so the runner's job deploy path stays dormant in production.
+
+- [ ] Run against an isolated app with the J2 policy (`preview_deploy_requested`), the J6 evidence and the tunnel condition in `isPreviewReachOffered` wired, on a disposable database (never the dev database), with a runner built from `main` under rootless Docker isolation.
+- [ ] A Claude build job calls `platform_deploy_preview` and gets `deployed`, then reaches `our-preview` from inside its sandbox.
 - [ ] The job's final `preview` evidence is accepted and `create_preview` closes through the built-in observation.
 
 ### 3b. Edge through the tunnel (after the release, before hosted previews are enabled in production)
@@ -101,4 +130,5 @@ There is no staging environment. This needs the preview domain, its DNS, the cer
 - Job start and startup recovery still read the wall clock rather than the injected lease clock.
 - A job network leaked by a failed recovery detach waits for the next restart, since the sweep is startup-only.
 - A client that half-closes its connection before the gateway answers `CONNECT` gets `502`, because the request context is cancelled during the DNS lookup or dial. No known HTTPS client does this.
+- The 3a sandbox reach check was a one-off spike and is not in the repository; a gated integration test (rootless Docker, job image, offline Messages API) could keep it from regressing on Claude Code upgrades.
 - The orphaned `ep-` endpoint path (`disconnect -f` by endpoint name) is covered by unit tests only, since no orphan could be produced on the gate host.
