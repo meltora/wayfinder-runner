@@ -236,7 +236,9 @@ func cloneToolSchema(value any) any {
 		}
 		return clone
 	case []string:
-		return append([]string(nil), current...)
+		clone := make([]string, len(current))
+		copy(clone, current)
+		return clone
 	default:
 		return current
 	}

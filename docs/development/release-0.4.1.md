@@ -22,6 +22,11 @@ Draft release notes and tag checklist for the patch release after v0.4.0.
 - `our-runner status` shows `preview hosting: on (at most N previews at once)`, or `off` or `unknown` with the reason.
 - `our-runner doctor` reports a `preview-hosting` check: `OK` when enabled, `SKIP` with the reason when disabled.
 
+### Valid `platform_deploy_preview` schema
+
+- On 0.4.0, the MCP bridge served the `platform_deploy_preview` input schema with `"required": null`, because cloning the tool schema turned an empty string list into nil. JSON Schema requires `required` to be an array, so a client could reject or ignore the tool. The clone now keeps an empty list as `[]`.
+- A test checks every served tool schema, from both `ToolDefinitions` and `ToolDefinitionsForNames`: no keyword is null, `required` is an array of unique declared properties, and nested `properties`, `items`, `enum` and `additionalProperties` are well formed. The check is structural, written with the standard library, and is not a full JSON Schema metaschema validation.
+
 ### Turning preview hosting on
 
 On a runner already enrolled and configured from the dashboard, with Docker isolation and git 2.29 or later:
