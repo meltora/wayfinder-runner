@@ -24,9 +24,9 @@ The decision does not change during the job. If the tunnel comes up after the jo
 
 - `preview_only`: a Claude job under Docker with reach open. The baseline allows only `our-preview`.
 - `deny_all`: a Claude job under Docker without reach. It is never reported while reach is open.
-- `not_recorded`: every other provider, including opencode with reach open.
+- `not_recorded`: every non-Claude provider, including opencode with reach open, and any job under direct isolation.
 
-Hosts added by `network_access` grants are not part of this value. They are reported separately for the same manifest: in `elevated_capability_outcomes` (applied per `request_id`), and under run guardrails schema version 2 in the `egress_rules` field of `run_network_policy`. See [elevated-capabilities.md](elevated-capabilities.md).
+Hosts added by `network_access` grants are not part of this value. `elevated_capability_outcomes` for the same manifest records which grants were applied, by `request_id`; it carries no host names, and the control plane knows each grant's host from its own request. The hosts themselves appear in `run_network_policy.egress_rules.approved_hosts` only under run guardrails schema version 2, with Docker isolation and the restricted job network, and only when the host egress rules were held. See [elevated-capabilities.md](elevated-capabilities.md).
 
 ## Codex finding (codex 0.146.0, the version pinned in `packaging/job-image/package.json`)
 

@@ -87,7 +87,7 @@ The event is manifest-bound like the other job events. It carries the standard j
   - The job container gains no other route.
 - When the job ends, or a newer job preview replaces the old one, the runner removes the job network.
 - The network, its name and the alias are not on the wire. The one wire-visible effect is `run_network_policy.agent_sandbox_network`. A Claude job under Docker with reach open reports `preview_only`, and never `deny_all`, because its inner sandbox allows exactly `our-preview`.
-- `agent_sandbox_network` describes only the baseline of the agent CLI sandbox. Hosts from applied `network_access` grants are reported separately, in `elevated_capability_outcomes` and, under run guardrails schema version 2, in `run_network_policy.egress_rules`.
+- `agent_sandbox_network` describes only the baseline of the agent CLI sandbox. Which `network_access` grants were applied is reported separately, by `request_id`, in `elevated_capability_outcomes`, which carries no host names. The hosts appear in `run_network_policy.egress_rules.approved_hosts` only under run guardrails schema version 2, with Docker isolation and the restricted job network, and when the host egress rules were held.
 
 ## J6 Final evidence
 
