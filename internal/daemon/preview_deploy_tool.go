@@ -206,6 +206,11 @@ func (jr *jobRunner) publishFinalPreviewEvidence(ctx context.Context, final map[
 				"status", outcome.Status, "code", outcome.Code)
 			return
 		}
+		if !outcome.ExpiresAt.After(jr.d.previewHostNow().Add(previewJobEvidenceExpiryMargin)) {
+			jr.logger.Warn("final preview evidence skipped: redeployed preview expires inside the evidence margin",
+				"reason", "invalid_result", "expires_at", outcome.ExpiresAt.UTC().Format(time.RFC3339Nano))
+			return
+		}
 		deployed = &outcome
 	}
 	if deployed.EdgeHost == "" {

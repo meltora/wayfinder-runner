@@ -361,6 +361,36 @@ func TestFinalizeBuildRedeploysExpiringPreview(t *testing.T) {
 	}
 }
 
+func TestFinalizeBuildSkipsEvidenceWhenRedeployExpiresInsideMargin(t *testing.T) {
+	jr, captured, _ := previewEvidenceFixture(t)
+	logs := &bytes.Buffer{}
+	jr.logger = slog.New(slog.NewTextHandler(&lockedWriter{buffer: logs}, nil))
+	redeployExpiry := time.Now().Add(previewJobEvidenceExpiryMargin - time.Minute).Truncate(time.Millisecond).UTC()
+	requests := 0
+	respondToPreviewDeployRequests(jr, captured, func(event map[string]any) {
+		requests++
+		if requests == 1 {
+			deployPreviewResultAt(jr, event, previewDeployToolEdgeHost, time.Now().Add(previewJobEvidenceExpiryMargin-time.Minute).Truncate(time.Millisecond))
+			return
+		}
+		deployPreviewResultAt(jr, event, previewEvidenceRedeployEdgeHost, redeployExpiry)
+	})
+	assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusDeployed, "")
+	if state := finalizeEvidenceBuild(t, jr, true); state != "succeeded" {
+		t.Fatalf("state = %s", state)
+	}
+	if requests != 2 {
+		t.Fatalf("request events = %d", requests)
+	}
+	assertNoPreviewEvidence(t, captured)
+	assertReviewReadySent(t, captured)
+	output := logs.String()
+	if !strings.Contains(output, "level=WARN") || !strings.Contains(output, "invalid_result") ||
+		!strings.Contains(output, redeployExpiry.Format(time.RFC3339Nano)) {
+		t.Fatalf("logs = %s", output)
+	}
+}
+
 func currentPreviewEvidenceOutcome(t *testing.T, commitSet map[string]string, edgeHost string) previewJobDeployOutcome {
 	t.Helper()
 	commits, err := v1.PreviewCommitSetFromMap(commitSet)
