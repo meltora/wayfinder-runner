@@ -56,6 +56,13 @@ func TestDockerCLINetworkContainersReportsOrphanedEndpointNames(t *testing.T) {
 			t.Fatalf("invalid key %q accepted: %v %v", invalid, ids, orphans)
 		}
 	}
+	installFakeDocker(t, "echo '"+networkContainersJSON(
+		[2]string{"ep-89abcdef0123", "stale-endpoint"},
+		[2]string{orphan, "stale-endpoint"},
+	)+"'")
+	if _, orphans, err := cli.NetworkContainers(context.Background(), missingTestNetwork); err != nil || !slices.Equal(orphans, []string{"stale-endpoint", "stale-endpoint"}) {
+		t.Fatalf("orphans sharing a name = %v %v", orphans, err)
+	}
 	installFakeDocker(t, "echo 'not json'")
 	if ids, orphans, err := cli.NetworkContainers(context.Background(), missingTestNetwork); err == nil {
 		t.Fatalf("invalid inspect output accepted: %v %v", ids, orphans)
@@ -72,6 +79,9 @@ func TestDockerCLIRefusesInvalidOrphanedEndpointNames(t *testing.T) {
 		log := installFakeDocker(t, "exit 0")
 		if err := cli.DisconnectNetwork(context.Background(), missingTestNetwork, invalid, true); err == nil {
 			t.Fatalf("disconnect of %q accepted", invalid)
+		}
+		if err := cli.DisconnectOrphanEndpoint(context.Background(), missingTestNetwork, invalid); err == nil {
+			t.Fatalf("orphan disconnect of %q accepted", invalid)
 		}
 		if raw, err := os.ReadFile(log); err == nil && len(raw) != 0 {
 			t.Fatalf("invalid endpoint %q reached docker: %q", invalid, raw)
@@ -94,7 +104,7 @@ func TestDockerCLIMissingOutputIsNarrowPerCallSite(t *testing.T) {
 			return cli.DisconnectNetwork(ctx, missingTestNetwork, missingTestContainer, true)
 		},
 		"disconnect orphan": func(cli DockerCLI) error {
-			return cli.DisconnectNetwork(ctx, missingTestNetwork, missingTestOrphan, true)
+			return cli.DisconnectOrphanEndpoint(ctx, missingTestNetwork, missingTestOrphan)
 		},
 		"running": func(cli DockerCLI) error {
 			running, err := cli.Running(ctx, missingTestContainer)
@@ -146,7 +156,7 @@ func TestDockerCLIMissingOutputIsNarrowPerCallSite(t *testing.T) {
 		{"disconnect network", badDockerContext, false},
 		{"disconnect orphan", networkGone, true},
 		{"disconnect orphan", "Error response from daemon: endpoint " + missingTestOrphan + " not found", true},
-		{"disconnect orphan", "Error response from daemon: container " + missingTestOrphan + " is not connected to network " + missingTestNetwork, true},
+		{"disconnect orphan", "Error response from daemon: container " + missingTestOrphan + " is not connected to network " + missingTestNetwork, false},
 		{"disconnect orphan", "Error response from daemon: endpoint our-preview-other-gateway not found", false},
 		{"disconnect orphan", "Error response from daemon: network " + missingTestNetwork + " has active endpoints", false},
 		{"disconnect orphan", badDockerContext, false},

@@ -88,8 +88,18 @@ func (engine *fakeEngine) DisconnectNetwork(ctx context.Context, network, contai
 	defer engine.mu.Unlock()
 	engine.record("disconnect " + network + " " + container + " " + strconv.FormatBool(force))
 	engine.endpoints[network] = slices.DeleteFunc(engine.endpoints[network], func(name string) bool { return name == container })
-	if force {
-		engine.orphans[network] = slices.DeleteFunc(engine.orphans[network], func(name string) bool { return name == container })
+	return nil
+}
+
+func (engine *fakeEngine) DisconnectOrphanEndpoint(ctx context.Context, network, endpoint string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	engine.record("disconnect-orphan " + network + " " + endpoint)
+	if i := slices.Index(engine.orphans[network], endpoint); i >= 0 {
+		engine.orphans[network] = slices.Delete(engine.orphans[network], i, i+1)
 	}
 	return nil
 }

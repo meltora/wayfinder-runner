@@ -468,3 +468,79 @@ esac`)
 		}
 	}
 }
+
+func jobNetworkOrphanScript(name, containers, disconnect string) string {
+	return `
+log="$(dirname "$0")/calls.log"
+case "$*" in
+"network ls"*) echo ` + name + ` ;;
+*Labels*) printf '"` + name + `"\t{"com.ourplatform.attempt-id":"attempt-1","com.ourplatform.preview-job-network":"runner-1"}\n' ;;
+*Containers*) echo '` + containers + `' ;;
+"network disconnect"*) ` + disconnect + ` ;;
+"network rm"*) echo 'Error response from daemon: error while removing network: network ` + name + ` has active endpoints' >&2; exit 1 ;;
+esac`
+}
+
+func TestDockerCLIJobNetworkRemovalRefusesOrphanShadowedByLiveContainer(t *testing.T) {
+	name := JobNetworkName(testRunnerID, testAttemptID)
+	orphan := "ep-" + strings.Repeat("ab12", 16)
+	log := installFakeDocker(t, jobNetworkOrphanScript(name,
+		`{"`+orphan+`":{"Name":"`+testJobContainer+`"}}`,
+		`echo 'Error response from daemon: container `+testJobContainer+` is not connected to network `+name+`' >&2; exit 1`))
+	controller := &Docker{cfg: Config{RunnerID: testRunnerID, TeardownTimeout: time.Minute}, engine: DockerCLI{TempDir: privateDir(t)}}
+	err := controller.DetachJob(context.Background(), testAttemptID)
+	if err == nil || !strings.Contains(err.Error(), "orphaned endpoint "+testJobContainer) || !strings.Contains(err.Error(), "live container") {
+		t.Fatalf("detach with a shadowed orphan = %v", err)
+	}
+	for _, call := range readCalls(t, log) {
+		if strings.HasPrefix(call, "network rm") {
+			t.Fatalf("network removal attempted after a shadowed orphan: %q", readCalls(t, log))
+		}
+	}
+}
+
+func TestDockerCLIJobNetworkRemovalDisconnectsEachOrphanSharingAName(t *testing.T) {
+	name := JobNetworkName(testRunnerID, testAttemptID)
+	first := "ep-" + strings.Repeat("ab12", 16)
+	second := "ep-" + strings.Repeat("cd34", 16)
+	script := strings.Replace(jobNetworkOrphanScript(name,
+		`{"`+first+`":{"Name":"stale-endpoint"},"`+second+`":{"Name":"stale-endpoint"}}`,
+		`if [ "$(grep -c '^network disconnect' "$log")" -ge 2 ]; then echo 'Error response from daemon: endpoint stale-endpoint not found' >&2; exit 1; fi`),
+		`"network rm"*) echo`,
+		`"network rm"*) [ "$(grep -cx 'network disconnect --force `+name+` stale-endpoint' "$log")" -ge 2 ] && exit 0; echo`, 1)
+	log := installFakeDocker(t, script)
+	controller := &Docker{cfg: Config{RunnerID: testRunnerID, TeardownTimeout: time.Minute}, engine: DockerCLI{TempDir: privateDir(t)}}
+	if err := controller.DetachJob(context.Background(), testAttemptID); err != nil {
+		t.Fatalf("detach with two orphans sharing a name: %v", err)
+	}
+	calls := readCalls(t, log)
+	want := []string{
+		"network disconnect --force " + name + " stale-endpoint",
+		"network disconnect --force " + name + " stale-endpoint",
+		"network rm " + name,
+	}
+	if len(calls) < len(want) || !slices.Equal(calls[len(calls)-len(want):], want) {
+		t.Fatalf("calls = %q", calls)
+	}
+}
+
+func TestDockerCLIOrphanDisconnectIgnoresOnlyGoneEndpoints(t *testing.T) {
+	name := JobNetworkName(testRunnerID, testAttemptID)
+	orphan := "ep-" + strings.Repeat("ab12", 16)
+	controller := &Docker{cfg: Config{RunnerID: testRunnerID, TeardownTimeout: time.Minute}, engine: DockerCLI{TempDir: privateDir(t)}}
+	for _, gone := range []string{
+		"Error response from daemon: endpoint stale-endpoint not found",
+		"Error response from daemon: network " + name + " not found",
+	} {
+		installFakeDocker(t, strings.Replace(jobNetworkOrphanScript(name, `{"`+orphan+`":{"Name":"stale-endpoint"}}`,
+			`echo '`+gone+`' >&2; exit 1`), `"network rm"*) echo`, `"network rm"*) exit 0; echo`, 1))
+		if err := controller.DetachJob(context.Background(), testAttemptID); err != nil {
+			t.Fatalf("orphan disconnect treated %q as a failure: %v", gone, err)
+		}
+	}
+	installFakeDocker(t, jobNetworkOrphanScript(name, `{"`+orphan+`":{"Name":"stale-endpoint"}}`,
+		`echo 'Error response from daemon: endpoint other-endpoint not found' >&2; exit 1`))
+	if err := controller.DetachJob(context.Background(), testAttemptID); err == nil {
+		t.Fatal("orphan disconnect treated another endpoint's absence as success")
+	}
+}

@@ -414,6 +414,28 @@ func TestEmergencyStopCancelsJob(t *testing.T) {
 }
 
 func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
+	terminal := renewedPlanningJobTerminal(t, func(original, _ time.Time) time.Time { return original.Add(time.Second) })
+	if terminal["state"] != "failed" || terminal["failure_code"] != "plan_not_published" ||
+		terminal["failure_message"] != "planning finished without publishing a plan" {
+		t.Fatalf("terminal after renewal = %v", terminal)
+	}
+	if _, hasCategory := terminal["failure_category"]; hasCategory {
+		t.Fatalf("terminal after renewal = %v", terminal)
+	}
+	if _, hasRetryable := terminal["retryable"]; hasRetryable {
+		t.Fatalf("terminal after renewal = %v", terminal)
+	}
+}
+
+func TestPlanningJobLosesItsLeaseAfterTheRenewedExpiry(t *testing.T) {
+	terminal := renewedPlanningJobTerminal(t, func(_, renewed time.Time) time.Time { return renewed.Add(time.Second) })
+	if terminal["state"] != "quarantined" || terminal["failure_code"] != "lease_lost" {
+		t.Fatalf("terminal after the renewed expiry = %v", terminal)
+	}
+}
+
+func renewedPlanningJobTerminal(t *testing.T, advance func(original, renewed time.Time) time.Time) map[string]any {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
@@ -497,7 +519,7 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 	if renewAck["status"] != "accepted" {
 		t.Fatalf("lease renewal acknowledgement = %v", renewAck)
 	}
-	renewalNow.Store(job.LeaseExpiresAt.Add(time.Second).UnixNano())
+	renewalNow.Store(advance(job.LeaseExpiresAt, renew.Payload.(v1.CommandPayload).LeaseExpiresAt).UnixNano())
 	pastExpiry.Store(true)
 	waitFor(t, "lease checks past the original expiry", time.Minute, func() bool {
 		return pastExpiryReads.Load() >= 2 || len(cp.EventsByKind("job_finished")) != 0
@@ -508,17 +530,7 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 	waitFor(t, "job completion after original expiry", time.Minute, func() bool {
 		return len(cp.EventsByKind("job_finished")) == 1
 	})
-	terminal := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
-	if terminal["state"] != "failed" || terminal["failure_code"] != "plan_not_published" ||
-		terminal["failure_message"] != "planning finished without publishing a plan" {
-		t.Fatalf("terminal after renewal = %v", terminal)
-	}
-	if _, hasCategory := terminal["failure_category"]; hasCategory {
-		t.Fatalf("terminal after renewal = %v", terminal)
-	}
-	if _, hasRetryable := terminal["retryable"]; hasRetryable {
-		t.Fatalf("terminal after renewal = %v", terminal)
-	}
+	return cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
 }
 
 var _ = json.Marshal

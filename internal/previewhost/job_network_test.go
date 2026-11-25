@@ -216,6 +216,7 @@ func TestJobNetworkRemovalDisconnectsOrphanedEndpoints(t *testing.T) {
 		t.Run(label, func(t *testing.T) {
 			h := attachedHarness(t)
 			addOrphanEndpoint(h, name, "our-stale-endpoint")
+			addOrphanEndpoint(h, name, "our-stale-endpoint")
 			before := len(h.engine.Events())
 			if err := run(h); err != nil {
 				t.Fatalf("%s with an orphaned endpoint: %v", label, err)
@@ -224,7 +225,8 @@ func TestJobNetworkRemovalDisconnectsOrphanedEndpoints(t *testing.T) {
 			order := []string{
 				"disconnect " + name + " " + testJobContainer + " true",
 				"disconnect " + name + " " + gateway + " true",
-				"disconnect " + name + " our-stale-endpoint true",
+				"disconnect-orphan " + name + " our-stale-endpoint",
+				"disconnect-orphan " + name + " our-stale-endpoint",
 				"rmnet " + name,
 			}
 			if len(events) < len(order) || !slices.Equal(events[:len(order)], order) {

@@ -81,6 +81,7 @@ type Engine interface {
 	NetworkSubnets(ctx context.Context, name string) ([]netip.Prefix, error)
 	NetworkContainers(ctx context.Context, name string) (containers, orphans []string, err error)
 	DisconnectNetwork(ctx context.Context, network, container string, force bool) error
+	DisconnectOrphanEndpoint(ctx context.Context, network, endpoint string) error
 	RemoveNetwork(ctx context.Context, name string) error
 	ListNetworks(ctx context.Context, labels map[string]string) ([]NetworkSummary, error)
 	RunDetached(ctx context.Context, spec ContainerSpec) error

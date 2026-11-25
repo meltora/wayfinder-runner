@@ -205,7 +205,21 @@ func (cli DockerCLI) NetworkContainers(ctx context.Context, name string) ([]stri
 		ids = append(ids, id)
 	}
 	slices.Sort(orphans)
-	return ids, slices.Compact(orphans), nil
+	return ids, orphans, nil
+}
+
+func (cli DockerCLI) DisconnectOrphanEndpoint(ctx context.Context, network, endpoint string) error {
+	if !dockerObjectNamePattern.MatchString(endpoint) {
+		return errors.New("network disconnect requires a valid container or endpoint name")
+	}
+	output, err := cli.run(ctx, "network", "disconnect", "--force", network, endpoint)
+	if err == nil || (ctx.Err() == nil && dockerOnlySoft(output, networkMissing(network), endpointMissing(endpoint))) {
+		return nil
+	}
+	if ctx.Err() == nil && containerNotConnected(strings.ToLower(output)) {
+		return fmt.Errorf("orphaned endpoint %s could not be removed: the name belongs to a live container that is not connected to network %s", endpoint, network)
+	}
+	return fmt.Errorf("disconnect orphaned endpoint: %w: %s", err, strings.TrimSpace(output))
 }
 
 func (cli DockerCLI) DisconnectNetwork(ctx context.Context, network, container string, force bool) error {

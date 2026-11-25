@@ -107,8 +107,13 @@ func (d *Docker) removeJobNetwork(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	for _, container := range append(containers, orphans...) {
+	for _, container := range containers {
 		if err := d.engine.DisconnectNetwork(ctx, name, container, true); err != nil {
+			return err
+		}
+	}
+	for _, endpoint := range orphans {
+		if err := d.engine.DisconnectOrphanEndpoint(ctx, name, endpoint); err != nil {
 			return err
 		}
 	}
