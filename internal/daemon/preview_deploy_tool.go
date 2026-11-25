@@ -28,6 +28,7 @@ const (
 	previewJobDeployCodeInvalidResult        = "invalid_result"
 	previewJobNetworkSweepTimeout            = 30 * time.Second
 	previewJobNetworkAttachTimeout           = 60 * time.Second
+	previewJobEvidenceExpiryMargin           = 5 * time.Minute
 )
 
 type previewJobDeployState struct {
@@ -184,6 +185,9 @@ func (jr *jobRunner) requestPreviewJobDeploy(ctx context.Context, commitSet map[
 }
 
 func (jr *jobRunner) publishFinalPreviewEvidence(ctx context.Context, final map[string]string) {
+	if _, ok := jr.reviewReadyIntentSnapshot(); !ok {
+		return
+	}
 	deployed := jr.previewDeploys.lastDeployed()
 	if deployed == nil {
 		return
@@ -194,7 +198,8 @@ func (jr *jobRunner) publishFinalPreviewEvidence(ctx context.Context, final map[
 		return
 	}
 	digest := v1.PreviewLifecycleCommitSetDigest(commits)
-	if deployed.CommitSetDigest != digest {
+	fresh := deployed.ExpiresAt.After(jr.d.previewHostNow().Add(previewJobEvidenceExpiryMargin))
+	if deployed.CommitSetDigest != digest || !fresh {
 		outcome := jr.requestPreviewJobDeploy(ctx, final, false)
 		if outcome.Status != v1.PreviewJobDeployStatusDeployed {
 			jr.logger.Warn("final preview evidence skipped: final commit set was not deployed",
@@ -218,8 +223,13 @@ func (jr *jobRunner) publishFinalPreviewEvidence(ctx context.Context, final map[
 	}
 	eventID := v1.PreviewJobEvidenceEventID(jr.job.JobID, jr.job.LeaseID, digest)
 	payload := manifestBoundEvent(jr.job, "preview", fields, time.Now().UTC())
-	if _, err := jr.d.sendEventWithStableID(ctx, eventID, payload); err != nil {
+	inserted, err := jr.d.sendEventWithStableID(ctx, eventID, payload)
+	if err != nil {
 		jr.logger.Warn("final preview evidence not sent", "event_id", eventID, "err", err)
+		return
+	}
+	if !inserted {
+		jr.logger.Warn("final preview evidence dropped: event id already journaled", "event_id", eventID)
 	}
 }
 
