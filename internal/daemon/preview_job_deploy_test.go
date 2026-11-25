@@ -526,8 +526,10 @@ func TestPreviewJobDeployEndsWhenLeaseIdentityChanges(t *testing.T) {
 			}
 		},
 		"other attempt": func(t *testing.T, jr *jobRunner, current lease.Lease) {
+			if !jr.d.leases.Release(current.AttemptID) {
+				t.Fatal("lease was not released")
+			}
 			current.AttemptID = "a2"
-			current.FencingToken++
 			current.ExpiresAt = current.ExpiresAt.Add(time.Hour)
 			if err := jr.d.leases.Acquire(current); err != nil {
 				t.Fatal(err)
