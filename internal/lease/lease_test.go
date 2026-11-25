@@ -152,3 +152,52 @@ func TestRenewDurationAndMaximumExpiry(t *testing.T) {
 		t.Fatal("renewal beyond 24 hours accepted")
 	}
 }
+
+func TestManagerUsesInjectedClock(t *testing.T) {
+	start := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	now := start
+	m := NewManager()
+	m.SetClock(func() time.Time { return now })
+	l := testLease(1)
+	l.ExpiresAt = start.Add(time.Minute)
+	if err := m.Acquire(l); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if err := m.Validate("a1", 1); err != nil {
+		t.Fatalf("Validate before injected expiry: %v", err)
+	}
+	if err := m.Acquire(testLease(1)); err == nil {
+		t.Fatal("equal fencing token displaced a lease that is active on the injected clock")
+	}
+	if err := m.RenewUntil("a1", 1, start.Add(-time.Second)); err == nil {
+		t.Fatal("renewal into the injected past accepted")
+	}
+	if err := m.RenewUntil("a1", 1, start.Add(25*time.Hour)); err == nil {
+		t.Fatal("renewal beyond 24 hours of the injected clock accepted")
+	}
+	now = start.Add(30 * time.Second)
+	if err := m.RenewUntil("a1", 1, start.Add(2*time.Minute)); err != nil {
+		t.Fatalf("RenewUntil: %v", err)
+	}
+	if current := m.Current(); !current.AcquiredAt.Equal(now) || !current.ExpiresAt.Equal(start.Add(2*time.Minute)) {
+		t.Fatalf("renewed lease = %+v", current)
+	}
+	now = start.Add(90 * time.Second)
+	if err := m.Validate("a1", 1); err != nil {
+		t.Fatalf("Validate after the original expiry but before the renewed one: %v", err)
+	}
+	now = start.Add(3 * time.Minute)
+	if err := m.Validate("a1", 1); err == nil {
+		t.Fatal("lease valid after the renewed expiry on the injected clock")
+	}
+	if err := m.Acquire(testLease(1)); err != nil {
+		t.Fatalf("Acquire after injected expiry: %v", err)
+	}
+	now = start
+	if !m.Renew(time.Minute) {
+		t.Fatal("Renew failed")
+	}
+	if current := m.Current(); !current.AcquiredAt.Equal(start) || !current.ExpiresAt.Equal(start.Add(time.Minute)) {
+		t.Fatalf("Renew used the wall clock: %+v", current)
+	}
+}

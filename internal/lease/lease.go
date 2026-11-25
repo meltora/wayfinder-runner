@@ -35,9 +35,23 @@ func (l Lease) HasManifestAuthority() bool {
 type Manager struct {
 	mu      sync.Mutex
 	current *Lease
+	now     func() time.Time
 }
 
 func NewManager() *Manager { return &Manager{} }
+
+func (m *Manager) SetClock(now func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.now = now
+}
+
+func (m *Manager) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
+}
 
 func (m *Manager) Acquire(l Lease) error {
 	m.mu.Lock()
@@ -45,7 +59,7 @@ func (m *Manager) Acquire(l Lease) error {
 	if !l.HasManifestAuthority() {
 		return fmt.Errorf("lease is missing immutable execution authority")
 	}
-	if m.current != nil && time.Now().Before(m.current.ExpiresAt) {
+	if m.current != nil && m.clock().Before(m.current.ExpiresAt) {
 		if m.current.FencingToken >= l.FencingToken {
 			return fmt.Errorf("runner busy: active lease for job %s (fencing %d)", m.current.JobID, m.current.FencingToken)
 		}
@@ -76,7 +90,7 @@ func (m *Manager) Validate(attemptID string, fencing uint64) error {
 	if m.current.FencingToken != fencing {
 		return fmt.Errorf("stale fencing token %d (current %d)", fencing, m.current.FencingToken)
 	}
-	if time.Now().After(m.current.ExpiresAt) {
+	if m.clock().After(m.current.ExpiresAt) {
 		return fmt.Errorf("lease expired")
 	}
 	return nil
@@ -88,7 +102,7 @@ func (m *Manager) Renew(d time.Duration) bool {
 	if m.current == nil {
 		return false
 	}
-	now := time.Now()
+	now := m.clock()
 	m.current.AcquiredAt = now
 	m.current.ExpiresAt = now.Add(d)
 	return true
@@ -103,7 +117,8 @@ func (m *Manager) RenewUntil(attemptID string, fencing uint64, expiresAt time.Ti
 	if m.current.FencingToken != fencing {
 		return fmt.Errorf("stale fencing token %d", fencing)
 	}
-	if !expiresAt.After(time.Now()) {
+	now := m.clock()
+	if !expiresAt.After(now) {
 		return fmt.Errorf("renewed lease must expire in the future")
 	}
 	if !expiresAt.After(m.current.ExpiresAt) {
@@ -112,10 +127,10 @@ func (m *Manager) RenewUntil(attemptID string, fencing uint64, expiresAt time.Ti
 		}
 		return fmt.Errorf("renewed lease must extend the current expiration")
 	}
-	if expiresAt.After(time.Now().Add(24 * time.Hour)) {
+	if expiresAt.After(now.Add(24 * time.Hour)) {
 		return fmt.Errorf("renewed lease cannot exceed 24 hours")
 	}
-	m.current.AcquiredAt = time.Now()
+	m.current.AcquiredAt = now
 	m.current.ExpiresAt = expiresAt
 	return nil
 }

@@ -432,6 +432,7 @@ func NewWithExternalOperationDependencies(
 		}
 		d.previewHostController = controller
 	}
+	leaseManager.SetClock(d.leaseRenewalClock)
 	return d, nil
 }
 

@@ -439,8 +439,14 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var renewalNow atomic.Int64
-	d.SetLeaseRenewalClock(func() time.Time { return time.Unix(0, renewalNow.Load()) }, 20*time.Millisecond)
+	var renewalNow, pastExpiryReads atomic.Int64
+	var pastExpiry atomic.Bool
+	d.SetLeaseRenewalClock(func() time.Time {
+		if pastExpiry.Load() {
+			pastExpiryReads.Add(1)
+		}
+		return time.Unix(0, renewalNow.Load())
+	}, 20*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = d.Run(ctx) }()
@@ -448,7 +454,7 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-renew", AttemptID: "att-renew", Kind: v1.JobKindPlan, FencingToken: 9,
-		LeaseExpiresAt: time.Now().Add(10 * time.Minute),
+		LeaseExpiresAt: time.Now().Add(30 * time.Second),
 		Repositories:   []v1.JobRepository{pinnedPlanRepository(t, "repo-renew", origin)},
 		Ticket:         v1.TicketContext{Key: "PROJ-RENEW", Summary: "Long planning job"},
 	})
@@ -472,7 +478,7 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 		Version: v1.ProtocolVersion, Type: v1.TypeCommand, ID: "cmd-renew-lease", SentAt: time.Now(),
 		Payload: v1.CommandPayload{
 			Command: v1.CmdRenewLease, AttemptID: job.AttemptID, FencingToken: job.FencingToken,
-			LeaseExpiresAt: job.LeaseExpiresAt.Add(time.Hour),
+			LeaseExpiresAt: job.LeaseExpiresAt.Add(30 * time.Second),
 		},
 	}
 	if err := cp.SendCommandEnvelope(ctx, renew); err != nil {
@@ -491,10 +497,15 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 	if renewAck["status"] != "accepted" {
 		t.Fatalf("lease renewal acknowledgement = %v", renewAck)
 	}
+	renewalNow.Store(job.LeaseExpiresAt.Add(time.Second).UnixNano())
+	pastExpiry.Store(true)
+	waitFor(t, "lease checks past the original expiry", time.Minute, func() bool {
+		return pastExpiryReads.Load() >= 2 || len(cp.EventsByKind("job_finished")) != 0
+	})
 	if err := os.WriteFile(release, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "job completion after renewal", time.Minute, func() bool {
+	waitFor(t, "job completion after original expiry", time.Minute, func() bool {
 		return len(cp.EventsByKind("job_finished")) == 1
 	})
 	terminal := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)
