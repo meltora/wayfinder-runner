@@ -101,6 +101,9 @@ func TestRealDockerJobNetworkReachesOnlyIngress(t *testing.T) {
 	if strings.Contains(output, "HTTP/") {
 		t.Fatalf("job container reached the egress proxy: %q", output)
 	}
+	if output, err := cli.Exec(ctx, job, []string{"sh", "-c", "nc -w 2 our-preview 3128 </dev/null"}); err == nil {
+		t.Fatalf("job container connected to the egress port: %q", output)
+	}
 	routes, err := cli.Exec(ctx, job, []string{"ip", "route", "show"})
 	if err != nil {
 		t.Fatalf("route probe failed: %q %v", routes, err)
