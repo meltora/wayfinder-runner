@@ -37,6 +37,7 @@ type Detector struct {
 	PreviewObservationProfiles                            []v1.PreviewObservationProfileCapability
 	PreviewLifecycleProfiles                              []v1.PreviewLifecycleProfileCapability
 	PreviewHosting                                        *v1.PreviewHostingCapability
+	PreviewTunnel                                         bool
 	ReviewerIdentityVerificationInstallations             []v1.ReviewerIdentityVerificationInstallationCapability
 	ProviderReviewerAssignmentInstallations               []v1.ProviderReviewerAssignmentInstallationCapability
 	ProviderReviewerAssignmentReconciliationInstallations []v1.ProviderReviewerAssignmentReconciliationInstallationCapability
@@ -205,6 +206,9 @@ func (d *Detector) Collect(ctx context.Context) v1.CapabilityManifest {
 	}
 	if previewHosting != nil {
 		m.PreviewHostingTransportVersion = v1.PreviewHostingTransportVersion
+		if d.PreviewTunnel {
+			m.PreviewTunnelTransportVersion = v1.PreviewTunnelTransportVersion
+		}
 	}
 	if len(reviewerIdentityInstallations) != 0 {
 		m.ReviewerIdentityVerificationTransportVersion = v1.ReviewerIdentityVerificationTransportVersion

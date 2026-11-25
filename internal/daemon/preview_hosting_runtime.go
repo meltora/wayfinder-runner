@@ -157,6 +157,7 @@ func (d *Daemon) admitPreviewDeploy(
 
 func (d *Daemon) recordPreviewDeployOutcome(
 	ctx context.Context,
+	previewID string,
 	idempotencyKey string,
 	admission *previewDeployAdmission,
 	state journal.PreviewHostState,
@@ -172,6 +173,9 @@ func (d *Daemon) recordPreviewDeployOutcome(
 		update.DestroyReason = v1.PreviewHostedDestroyEmergencyStop
 	}
 	err := d.journal.UpdatePreviewHost(ctx, update)
+	if stopped && err == nil {
+		d.resetPreviewTunnel(previewID)
+	}
 	d.previewHostMu.Unlock()
 	if stopped {
 		d.wakePreviewHostReaper()
@@ -228,7 +232,9 @@ func (d *Daemon) markPreviewHostsDestroyingLocked(
 		}
 		if err := d.journal.UpdatePreviewHost(ctx, update); err != nil {
 			errs = append(errs, err)
+			continue
 		}
+		d.resetPreviewTunnel(host.PreviewID)
 	}
 	return errors.Join(errs...)
 }
@@ -288,6 +294,9 @@ func (d *Daemon) proveUncertainPreviewDeploys(ctx context.Context) error {
 			current, found, err := d.journal.PreviewHostByIdempotencyKey(ctx, host.IdempotencyKey)
 			if err == nil && found && current.State == journal.PreviewHostUncertain && current.DestroyReason == "" {
 				err = d.journal.UpdatePreviewHost(ctx, *update)
+				if err == nil && update.State == journal.PreviewHostDestroying {
+					d.resetPreviewTunnel(host.PreviewID)
+				}
 			}
 			if err != nil {
 				errs = append(errs, err)

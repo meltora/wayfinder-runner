@@ -201,6 +201,7 @@ func (d *Daemon) switchToPending() error {
 	if d.client != nil {
 		d.client.UpdateTLSConfig(tlsCfg)
 	}
+	d.updatePreviewTunnelTLS(tlsCfg)
 	d.setControlTLS(tlsCfg)
 	d.logger.Info("certificate rotated; reconnecting with the renewed certificate", "runner_id", d.runnerID)
 	return nil
@@ -270,6 +271,7 @@ func (d *Daemon) fallBackFromRejectedRotation(err error) {
 	if d.client != nil {
 		d.client.UpdateTLSConfig(tlsCfg)
 	}
+	d.updatePreviewTunnelTLS(tlsCfg)
 	d.setControlTLS(tlsCfg)
 	d.logger.Warn("certificate rotation was not accepted; continuing with the previous certificate", "runner_id", d.runnerID)
 }

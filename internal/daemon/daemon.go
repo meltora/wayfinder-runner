@@ -120,6 +120,11 @@ type Daemon struct {
 	previewHostWake                                       chan struct{}
 	hostMemory                                            func() uint64
 	previewHostGOOS                                       func() string
+	previewTunnel                                         previewTunnel
+	previewTunnelAdvertised                               atomic.Bool
+	previewTunnelMu                                       sync.Mutex
+	previewTunnelCancel                                   context.CancelFunc
+	previewTunnelDone                                     chan struct{}
 	reviewerIdentityVerifier                              reviewerIdentityVerifier
 	reviewerIdentityVerificationCommandMu                 sync.Mutex
 	reviewerIdentityVerificationCommandActive             map[string]struct{}
@@ -499,6 +504,8 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.client = transport.NewClient(d.cfg.ControlPlaneURL, d.runnerID, Version, tlsCfg, d)
 	d.client.ReplayUnacked = d.replayUnacked
 	d.client.HeartbeatPayload = d.heartbeatPayload
+	d.previewTunnel = d.newPreviewTunnel(tlsCfg)
+	defer d.stopPreviewTunnel()
 
 	spoolCtx, stopSpool := context.WithCancel(ctx)
 	defer stopSpool()
@@ -579,6 +586,7 @@ func (d *Daemon) OnConnected(ctx context.Context) {
 	if err := d.publishCapability(ctx); err != nil {
 		d.logger.Error("publish capability manifest", "err", err)
 	}
+	d.startPreviewTunnel(ctx)
 	if d.recoveredLease.Load() {
 		if current := d.leases.Current(); current != nil {
 			if err := d.sendEvent(ctx, map[string]any{
@@ -657,6 +665,8 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 		det.PreviewLifecycleProfiles = d.previewLifecycleController.ReadyProfiles()
 	}
 	det.PreviewHosting = d.previewHostingCapability()
+	det.PreviewTunnel = det.PreviewHosting != nil && d.previewTunnel != nil
+	d.previewTunnelAdvertised.Store(det.PreviewTunnel)
 	if services.reviewerIdentityVerifier != nil {
 		det.ReviewerIdentityVerificationInstallations = services.reviewerIdentityVerifier.ReadyReviewerIdentityInstallations()
 	}
@@ -807,6 +817,7 @@ func (d *Daemon) sendEventWithStableID(ctx context.Context, eventID string, payl
 
 func (d *Daemon) OnDisconnected(err error) {
 	d.controlReady.Store(false)
+	d.stopPreviewTunnel()
 	d.logger.Warn("disconnected", "err", err)
 	d.fallBackFromRejectedRotation(err)
 }

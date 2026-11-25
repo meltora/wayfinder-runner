@@ -17,6 +17,11 @@ import (
 
 func publishPreviewHostingManifest(t *testing.T, controller *fakePreviewHostController) v1.CapabilityManifest {
 	t.Helper()
+	return publishPreviewHostingManifestWith(t, controller, nil)
+}
+
+func publishPreviewHostingManifestWith(t *testing.T, controller *fakePreviewHostController, tunnel previewTunnel) v1.CapabilityManifest {
+	t.Helper()
 	stateDir := t.TempDir()
 	events := &capturedEvents{}
 	d := &Daemon{
@@ -28,6 +33,9 @@ func publishPreviewHostingManifest(t *testing.T, controller *fakePreviewHostCont
 	}
 	if controller != nil {
 		d.previewHostController = controller
+	}
+	if tunnel != nil {
+		d.previewTunnel = tunnel
 	}
 	if _, err := d.store.EnsureKey(); err != nil {
 		t.Fatal(err)

@@ -134,7 +134,7 @@ func (d *Daemon) executePreviewDeploy(
 			return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 		}
 	}
-	if err := d.recordPreviewDeployOutcome(ctx, operation.IdempotencyKey, admission,
+	if err := d.recordPreviewDeployOutcome(ctx, operation.PreviewID, operation.IdempotencyKey, admission,
 		previewHostStateForOutcome(event.Outcome.Kind), raw); err != nil {
 		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 	}
@@ -199,6 +199,9 @@ func (d *Daemon) reportUncertainPreviewDeploy(
 	}
 	if update.State != current.State || len(update.Result) > 0 {
 		err = d.journal.UpdatePreviewHost(ctx, update)
+		if err == nil && update.State == journal.PreviewHostDestroying && current.State != journal.PreviewHostDestroying {
+			d.resetPreviewTunnel(operation.PreviewID)
+		}
 	}
 	d.previewHostMu.Unlock()
 	if err != nil {

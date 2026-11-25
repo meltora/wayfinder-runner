@@ -32,3 +32,7 @@ type Controller interface {
 	ApplyLifecycle(ctx context.Context, request LifecycleRequest) LifecycleResult
 	Recover(ctx context.Context, host journal.PreviewHost) error
 }
+
+type IngressLocator interface {
+	IngressAddress(ctx context.Context, previewID string) (string, error)
+}

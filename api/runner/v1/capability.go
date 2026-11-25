@@ -8,6 +8,8 @@ const AgentPackRevocationEvictionVersion = 1
 
 const ApprovedPlanTransportVersion = 1
 
+const PreviewTunnelTransportVersion = 1
+
 type CapabilityManifest struct {
 	AgentConfigScanTransportVersion                          string                                                           `json:"agent_config_scan_transport_version,omitempty"`
 	AgentConfigScanRepositoryIDs                             []string                                                         `json:"agent_config_scan_repository_ids,omitempty"`
@@ -40,6 +42,7 @@ type CapabilityManifest struct {
 	PreviewLifecycleProfiles                                 []PreviewLifecycleProfileCapability                              `json:"preview_lifecycle_profiles,omitempty"`
 	PreviewHostingTransportVersion                           int                                                              `json:"preview_hosting_transport_version,omitempty"`
 	PreviewHosting                                           *PreviewHostingCapability                                        `json:"preview_hosting,omitempty"`
+	PreviewTunnelTransportVersion                            int                                                              `json:"preview_tunnel_transport_version,omitempty"`
 	ReviewerIdentityVerificationTransportVersion             int                                                              `json:"reviewer_identity_verification_transport_version,omitempty"`
 	ReviewerIdentityVerificationProviders                    []string                                                         `json:"reviewer_identity_verification_providers,omitempty"`
 	ReviewerIdentityVerificationInstallations                []ReviewerIdentityVerificationInstallationCapability             `json:"reviewer_identity_verification_installations,omitempty"`

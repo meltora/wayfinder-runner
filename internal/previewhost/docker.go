@@ -80,7 +80,10 @@ type Docker struct {
 	versionChecked bool
 }
 
-var _ Controller = (*Docker)(nil)
+var (
+	_ Controller     = (*Docker)(nil)
+	_ IngressLocator = (*Docker)(nil)
+)
 
 func New(cfg Config, deps Dependencies) (*Docker, error) {
 	normalized, err := cfg.normalized()
@@ -529,6 +532,14 @@ func (d *Docker) Recover(ctx context.Context, host journal.PreviewHost) error {
 	teardownCtx, cancel := context.WithTimeout(ctx, d.cfg.TeardownTimeout)
 	defer cancel()
 	return d.teardown(teardownCtx, host.PreviewID)
+}
+
+func (d *Docker) IngressAddress(ctx context.Context, previewID string) (string, error) {
+	port, err := d.engine.HostPort(ctx, gatewayName(ResourcePrefix(d.cfg.RunnerID, previewID)), gatewayIngressPort)
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), nil
 }
 
 func (d *Docker) HostedPreviewIDs(ctx context.Context) ([]string, error) {

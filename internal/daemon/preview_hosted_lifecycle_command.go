@@ -57,11 +57,18 @@ func (d *Daemon) executeHostedPreviewLifecycle(
 		}, false
 	}
 	if apply {
+		destroying := operation.Action == v1.PreviewLifecycleDestroy
+		if destroying {
+			d.resetPreviewTunnel(operation.PreviewID)
+		}
 		lifecycleCtx, cancel := context.WithDeadline(ctx, d.previewHostDeadline(operation.LeaseExpiresAt))
 		outcome = d.previewHostController.ApplyLifecycle(lifecycleCtx, previewhost.LifecycleRequest{
 			Operation: operation, Host: host,
 		}).Outcome
 		cancel()
+		if destroying {
+			d.resetPreviewTunnel(operation.PreviewID)
+		}
 	}
 	observedAt := time.Now().UTC().Truncate(time.Millisecond)
 	if observedAt.After(operation.LeaseExpiresAt) {
