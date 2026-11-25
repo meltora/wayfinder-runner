@@ -53,6 +53,13 @@ func (d *Daemon) previewHostNow() time.Time {
 	return time.Now()
 }
 
+func (d *Daemon) previewLeaseClock() time.Time {
+	if d.previewLeaseNow != nil {
+		return d.previewLeaseNow()
+	}
+	return time.Now()
+}
+
 func (d *Daemon) previewHostLeaseMax() time.Duration {
 	seconds := d.cfg.PreviewHosting.LeaseMaxSeconds
 	if seconds <= 0 {

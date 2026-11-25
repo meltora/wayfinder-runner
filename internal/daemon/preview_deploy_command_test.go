@@ -468,7 +468,7 @@ func TestPreviewDeployResultAfterLeaseBecomesUncertain(t *testing.T) {
 			jr, _ := testJobRunner(t)
 			var clockMu sync.Mutex
 			clock := time.Now().UTC().Truncate(time.Millisecond)
-			jr.d.now = func() time.Time {
+			jr.d.previewLeaseNow = func() time.Time {
 				clockMu.Lock()
 				defer clockMu.Unlock()
 				return clock

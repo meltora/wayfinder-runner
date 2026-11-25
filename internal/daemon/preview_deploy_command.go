@@ -78,7 +78,7 @@ func (d *Daemon) executePreviewDeploy(
 	if d.Paused() {
 		return rejectCommand(v1.CommandAckReasonRunnerPaused, nil)
 	}
-	if !operation.LeaseExpiresAt.After(d.previewHostNow()) {
+	if !operation.LeaseExpiresAt.After(d.previewLeaseClock()) {
 		return rejectCommand(v1.CommandAckReasonLeaseRejected, nil)
 	}
 	content, err := validation.PreviewDeployBlueprintContent(operation.Blueprint)
@@ -120,7 +120,7 @@ func (d *Daemon) executePreviewDeploy(
 		Operation: operation, Content: content, Credential: credential,
 	})
 	admission.cancel()
-	observedAt := d.previewHostNow().UTC().Truncate(time.Millisecond)
+	observedAt := d.previewLeaseClock().UTC().Truncate(time.Millisecond)
 	outcome := result.Outcome
 	if observedAt.After(operation.LeaseExpiresAt) {
 		observedAt = operation.LeaseExpiresAt

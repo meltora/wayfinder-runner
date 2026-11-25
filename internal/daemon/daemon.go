@@ -87,6 +87,7 @@ type Daemon struct {
 	controlReady                                          atomic.Bool
 	rotationMu                                            sync.Mutex
 	now                                                   func() time.Time
+	previewLeaseNow                                       func() time.Time
 	rotationFault                                         func(point string) error
 	configureRepositoryManager                            func(*repo.Manager)
 	promotedTLS                                           atomic.Pointer[tls.Config]
