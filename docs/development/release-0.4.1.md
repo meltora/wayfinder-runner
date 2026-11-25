@@ -27,6 +27,12 @@ Draft release notes and tag checklist for the patch release after v0.4.0.
 - On 0.4.0, the MCP bridge served the `platform_deploy_preview` input schema with `"required": null`, because cloning the tool schema turned an empty string list into nil. JSON Schema requires `required` to be an array, so a client could reject or ignore the tool. The clone now keeps an empty list as `[]`.
 - A test checks every served tool schema, from both `ToolDefinitions` and `ToolDefinitionsForNames`: no keyword is null, `required` is an array of unique declared properties, and nested `properties`, `items`, `enum` and `additionalProperties` are well formed. The check is structural, written with the standard library, and is not a full JSON Schema metaschema validation.
 
+### Clear error for a state directory too long for the job socket
+
+- Under Docker isolation each job's MCP socket lives at `<state-dir>/sockets/job-<random>/mcp.sock` and is mounted into the container at the same path. A Unix socket path is limited to 108 bytes on Linux and 104 on macOS, so on 0.4.0 a long `state_dir` made every job fail with `workspace_preparation_failed` ("start MCP bridge"), and the log did not say why.
+- `our-runner start` now refuses such a configuration before it connects: `state_dir is too long for docker isolation: the job MCP socket path can reach N bytes, over the 103-byte unix socket limit; use a state_dir of at most M bytes`. The 103-byte limit fits both platforms, and the longest temporary directory name is counted, so any `state_dir` of up to 71 bytes works.
+- `our-runner doctor` reports the same as a failing `job-socket-path` check, and `OK` with the longest socket path otherwise. Direct isolation is unchanged: it already places long socket paths in the temporary directory.
+
 ### Turning preview hosting on
 
 On a runner already enrolled and configured from the dashboard, with Docker isolation and git 2.29 or later:
@@ -67,6 +73,60 @@ The runner offers preview hosting to the app only after the preview tunnel is co
 - [ ] The master tags `v0.4.1` on that commit and pushes the tag; the release workflow's preflight and GoReleaser succeed.
 - [ ] The release notes above go into the GitHub release.
 
+### 4. Job image
+
+The MCP bridge that serves the tool schemas runs inside the job container, from the `our-runner` binary that `packaging/job-image/Dockerfile` copies to `/usr/local/bin/our-runner`. The `platform_deploy_preview` schema fix therefore reaches jobs only through a job image built from the release commit; a runner on 0.4.1 with the 0.4.0 job image still serves `"required": null`.
+
+- [ ] The release workflow's "Build, push, sign and verify the job image" step builds the image on the `v0.4.1` tag with `sh packaging/job-image/build.sh ghcr.io/meltora/wayfinder-runner-job:v0.4.1 --push`. It pushes to GHCR with the workflow's `GITHUB_TOKEN`, signs the digest with Cosign and verifies the signature against the release workflow identity. No manual build or push is needed.
+- [ ] Take the digest-pinned reference from the release asset `job-image.txt`, which is covered by `checksums.txt` and its Cosign bundle, or from the workflow step summary. It has the form `ghcr.io/meltora/wayfinder-runner-job@sha256:<digest>`. The v0.4.0 reference was `ghcr.io/meltora/wayfinder-runner-job@sha256:51d3a7519af2711febc15360222eff6851d3137c9eb37d897e03578b110a851e`.
+- [ ] Verify it before use: `cosign verify <reference> --certificate-identity https://github.com/meltora/wayfinder-runner/.github/workflows/release.yml@refs/tags/v0.4.1 --certificate-oidc-issuer https://token.actions.githubusercontent.com`.
+- [ ] Set the app's `RUNNER_DEFAULT_JOB_IMAGE` to that reference. It only prefills the job image field in the runner configuration form and the enrollment wizard; it is not delivered to runners by itself.
+- [ ] For every existing dashboard-configured runner, save its configuration profile with the new job image. The delivered `job_image` comes from the stored profile (`profile.jobImage`), so a runner keeps the old image until its profile is saved. Runners started with `start --config FILE` need `job_image` changed in that file and a restart.
+- [ ] After the switch, a new job's `tools/list` serves `platform_deploy_preview` with `"required": []`.
+
+### 5. App environment switch
+
+Production last pointed at v0.3.1 and never moved to 0.4.0, so 0.4.1 is the first switch since 0.3.1. Change the four values together, after the release is published and verified:
+
+1. Download `checksums.txt`, `checksums.txt.sigstore.json`, `install.sh` and `job-image.txt` from the v0.4.1 release and verify them:
+
+   ```sh
+   cosign verify-blob checksums.txt \
+     --bundle checksums.txt.sigstore.json \
+     --certificate-identity "https://github.com/meltora/wayfinder-runner/.github/workflows/release.yml@refs/tags/v0.4.1" \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+   sha256sum --check --ignore-missing checksums.txt
+   ```
+
+2. Set:
+
+   | Variable | Value |
+   |---|---|
+   | `RUNNER_RELEASE_VERSION` | `v0.4.1` |
+   | `RUNNER_RELEASE_INSTALL_SCRIPT_URL` | `https://github.com/meltora/wayfinder-runner/releases/download/v0.4.1/install.sh` |
+   | `RUNNER_RELEASE_INSTALL_SCRIPT_SHA256` | the `install.sh` line of the verified `checksums.txt`, which equals `sha256sum install.sh` (lowercase hex) |
+   | `RUNNER_DEFAULT_JOB_IMAGE` | the content of the verified `job-image.txt`, after `cosign verify` of that reference (section 4) |
+
+3. Leave `RUNNER_RELEASE_DEFAULT_CONTROL_PLANE_URL` as it is, unless it differs from the URL stamped into the release. `our-runner version` on the v0.4.1 binary prints it; on v0.4.0 it was `https://app.meltora.dev`.
+
+Other app-side requirements from 0.3.1 to 0.4.x:
+
+- The production app must be at `a352c671f` or later, the control plane floor from [release-0.4.0.md](release-0.4.0.md) for the preview tunnel v1 and job deploy v1 contracts.
+- The active platform Agent Pack's `minimumRunnerVersion` (currently `0.3.1`) is already met by 0.4.1. No pack change is required.
+- Runners already installed on 0.3.1 keep running. The dashboard shows them the upgrade notice once `RUNNER_RELEASE_VERSION` is v0.4.1. They get the new job image only after their configuration profile is saved with it (section 4).
+- Hosted previews stay off until an operator runs `configure --preview-hosting on`, and they are reachable through the edge only after 3b (preview domain, DNS, certificate and keys).
+
+## Known issues
+
+### Subscription login works for one job, then "OAuth session expired"
+
+- **Affected:** a runner with Docker isolation and the `claude` provider signed in with a Claude subscription (OAuth in `.credentials.json`). The issue is older than 0.4.1 and 0.4.0. API key sign-in is not affected.
+- **Symptom:** once the access token in the host's `.credentials.json` has expired, one job still runs, and every later job fails within seconds with `agent_exit_failed` and `provider_error="Failed to authenticate: OAuth session expired and could not be refreshed"`.
+- **Cause:** each job gets a copy of the host login in its job home. The first job refreshes the expired access token in that copy, and the sign-in server rotates the refresh token, which invalidates the one on the host. The runner does not write the refreshed copy back and deletes the job home when the job ends. Every later job starts from the host's invalidated refresh token.
+- **Workaround:** sign in again on the host (`claude`, then `/login`, with the same `CLAUDE_CONFIG_DIR` the runner uses). No runner restart is needed, because every job copies the host login when it starts. Jobs keep working while the new access token is valid, which is a few hours, because they do not need to refresh it. The fix is tracked as RUNNER-OAUTH-WRITEBACK for 0.4.2.
+
 ## Known follow-ups (not blocking)
 
+- RUNNER-OAUTH-WRITEBACK (0.4.2): write the refreshed login back to the host atomically under a lock, or support a long-lived token, so subscription sign-in survives token refresh.
+- The runner logs only "start MCP bridge" when the job MCP bridge fails to start. It should log the underlying error.
 - Fleet-level control of preview hosting from the dashboard would need a new remote key and an app slice. It is planned only if that control is ever needed.

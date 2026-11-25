@@ -20,6 +20,7 @@ import (
 	"github.com/example/app-runner/internal/doctor"
 	"github.com/example/app-runner/internal/enroll"
 	"github.com/example/app-runner/internal/identity"
+	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/mcpbridge"
 	"github.com/example/app-runner/internal/remoteconfig"
 	"github.com/example/app-runner/internal/repo"
@@ -303,6 +304,11 @@ func cmdStart(args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if cfg.Isolation == "docker" {
+		if err := isolation.CheckJobSocketPath(cfg.StateDir); err != nil {
+			return err
+		}
 	}
 	d, err := daemon.New(cfg, slog.Default())
 	if err != nil {

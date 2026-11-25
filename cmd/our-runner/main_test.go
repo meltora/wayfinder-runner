@@ -428,6 +428,25 @@ func TestEnrollCommandOverHTTPS(t *testing.T) {
 	}
 }
 
+func TestStartCommandRefusesAStateDirTooLongForTheJobSocket(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), strings.Repeat("s", 110))
+	configPath := filepath.Join(t.TempDir(), "runner.yaml")
+	raw := fmt.Sprintf(`control_plane_url: wss://control.example.test/stream
+state_dir: %q
+transport: websocket
+isolation: docker
+job_image: registry.example.com/runner/job@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+supervisor: direct
+provider: codex
+`, stateDir)
+	if err := os.WriteFile(configPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdStart([]string{"--config", configPath}); err == nil || !strings.Contains(err.Error(), "state_dir is too long for docker isolation") {
+		t.Fatalf("cmdStart=%v", err)
+	}
+}
+
 func TestStartCommandLoadsConfigurationBeforeEnrollmentGate(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	configPath := filepath.Join(t.TempDir(), "runner.yaml")

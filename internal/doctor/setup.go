@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/example/app-runner/internal/agentpack/trustroot"
+	"github.com/example/app-runner/internal/isolation"
 )
 
 // Dependencies isolate local probes so setup diagnostics can be tested without contacting services.
@@ -49,7 +50,17 @@ func RunWithDependencies(ctx context.Context, opts Options, deps Dependencies) R
 		previewHostingCheck(opts),
 		Check{Name: "local-check-limits", Status: Warn, Detail: "Local checks do not verify provider sign-in, runner assignment, or current app permissions. Job-image runtime availability is not checked."},
 	)
+	if opts.Isolation == "docker" {
+		checks = append(checks, jobSocketPathCheck(opts.StateDir))
+	}
 	return Report{Checks: checks}
+}
+
+func jobSocketPathCheck(stateDir string) Check {
+	if err := isolation.CheckJobSocketPath(stateDir); err != nil {
+		return Check{Name: "job-socket-path", Status: Fail, Detail: err.Error()}
+	}
+	return Check{Name: "job-socket-path", Status: OK, Detail: fmt.Sprintf("the job MCP socket path is at most %d bytes", len(isolation.LongestJobSocketPath(stateDir)))}
 }
 
 func previewHostingCheck(opts Options) Check {

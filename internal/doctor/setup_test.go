@@ -195,6 +195,29 @@ func TestDockerSetupReportsTheCopiedClaudeConfigDirectoryWithoutWarning(t *testi
 		t.Fatalf("codex check = %+v, want Warn %q", codex, want)
 	}
 }
+func TestConfiguredSetupFailsAStateDirTooLongForTheJobSocket(t *testing.T) {
+	t.Parallel()
+	long := "/srv/" + strings.Repeat("s", 80)
+	report := RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude", Isolation: "docker", StateDir: long}, setupDependencies())
+	want := "state_dir is too long for docker isolation: the job MCP socket path can reach 117 bytes, over the 103-byte unix socket limit; use a state_dir of at most 71 bytes"
+	if check := findCheck(t, report, "job-socket-path"); check.Status != Fail || check.Detail != want {
+		t.Fatalf("long state_dir = %+v", check)
+	}
+	if report.ExitCode() == 0 {
+		t.Fatal("a state_dir too long for the job socket must fail doctor")
+	}
+	short := RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude", Isolation: "docker", StateDir: "/srv/our-runner"}, setupDependencies())
+	if check := findCheck(t, short, "job-socket-path"); check.Status != OK || check.Detail != "the job MCP socket path is at most 47 bytes" {
+		t.Fatalf("short state_dir = %+v", check)
+	}
+	direct := RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude", Isolation: "direct", StateDir: long}, setupDependencies())
+	for _, check := range direct.Checks {
+		if check.Name == "job-socket-path" {
+			t.Fatalf("direct isolation places long socket paths in the temp directory, got %+v", check)
+		}
+	}
+}
+
 func TestConfiguredSetupReportsPreviewHosting(t *testing.T) {
 	t.Parallel()
 	on := RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude", Isolation: "docker", PreviewHostingEnabled: true, PreviewHostingMaxConcurrent: 2}, setupDependencies())
