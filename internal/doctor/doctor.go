@@ -17,6 +17,7 @@ import (
 	"github.com/example/app-runner/internal/egresspolicy"
 	"github.com/example/app-runner/internal/identity"
 	"github.com/example/app-runner/internal/isolation"
+	"github.com/example/app-runner/internal/repo"
 	"github.com/example/app-runner/internal/safeio"
 	"github.com/example/app-runner/internal/validation"
 )
@@ -78,6 +79,7 @@ func runSystemChecks(ctx context.Context, opts Options) Report {
 	r.Checks = append(r.Checks, checkControlPlaneTCP(ctx, opts.ControlPlaneURL))
 	r.Checks = append(r.Checks, checkCert(opts.StateDir))
 	r.Checks = append(r.Checks, checkBinary("git"))
+	r.Checks = append(r.Checks, checkGitVersion(ctx))
 	r.Checks = append(r.Checks, checkBinary("docker"))
 	r.Checks = append(r.Checks, checkDockerMode(ctx))
 	mappingCheck, mapping, mappingErr := checkDockerUserMapping(ctx, opts)
@@ -292,6 +294,26 @@ func checkBinary(name string) Check {
 		return c
 	}
 	c.Status, c.Detail = OK, name+" available"
+	return c
+}
+
+var probeGitVersion = func(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "version").Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+func checkGitVersion(ctx context.Context) Check {
+	c := Check{Name: "git-version"}
+	version, err := probeGitVersion(ctx)
+	if err != nil {
+		c.Status, c.Detail = Warn, "git version unavailable; preview deploys need git "+repo.MinPreviewGitVersion+" or newer"
+		return c
+	}
+	if !repo.GitSupportsNegativeRefspecs(version) {
+		c.Status, c.Detail = Warn, version+"; preview deploys need git "+repo.MinPreviewGitVersion+" or newer"
+		return c
+	}
+	c.Status, c.Detail = OK, version
 	return c
 }
 

@@ -293,6 +293,28 @@ func TestDoctorFormattingAndExitCode(t *testing.T) {
 	}
 }
 
+func TestGitVersionWarnsBelowPreviewMinimum(t *testing.T) {
+	original := probeGitVersion
+	t.Cleanup(func() { probeGitVersion = original })
+	for _, tc := range []struct {
+		version string
+		err     error
+		status  Status
+		detail  string
+	}{
+		{"git version 2.43.0", nil, OK, "git version 2.43.0"},
+		{"git version 2.29.0", nil, OK, "git version 2.29.0"},
+		{"git version 2.28.4", nil, Warn, "git version 2.28.4; preview deploys need git 2.29 or newer"},
+		{"", errors.New("missing"), Warn, "git version unavailable; preview deploys need git 2.29 or newer"},
+	} {
+		probeGitVersion = func(context.Context) (string, error) { return tc.version, tc.err }
+		got := checkGitVersion(context.Background())
+		if got.Name != "git-version" || got.Status != tc.status || got.Detail != tc.detail {
+			t.Fatalf("%q: %+v", tc.version, got)
+		}
+	}
+}
+
 func TestRunExecutesCompleteConfiguredPreflight(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -328,14 +350,14 @@ func TestRunExecutesCompleteConfiguredPreflight(t *testing.T) {
 	if report.ExitCode() != 0 {
 		t.Fatalf("preflight failed:\n%s", Format(report))
 	}
-	if len(report.Checks) != 13 {
-		t.Fatalf("checks = %d, want 13", len(report.Checks))
+	if len(report.Checks) != 14 {
+		t.Fatalf("checks = %d, want 14", len(report.Checks))
 	}
 	names := make([]string, len(report.Checks))
 	for index, check := range report.Checks {
 		names[index] = check.Name
 	}
-	if joined := strings.Join(names, " "); !strings.Contains(joined, "docker-mode docker-user-mapping restricted-egress job-image-sandbox job-image-provider-cli check-images disk-space") {
+	if joined := strings.Join(names, " "); !strings.Contains(joined, "binary-git git-version binary-docker docker-mode docker-user-mapping restricted-egress job-image-sandbox job-image-provider-cli check-images disk-space") {
 		t.Fatalf("check order = %s", joined)
 	}
 }

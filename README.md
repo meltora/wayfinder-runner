@@ -704,6 +704,14 @@ two variables `doctor` reaches the system Docker socket and reports
 `DOCKER_HOST` in its unit. For a manually configured rootless daemon, confirm
 the service's `DOCKER_HOST` matches the socket created for the `our-runner` UID.
 
+Preview deploys from a build job (`platform_deploy_preview`) need host Git 2.29
+or newer. The runner imports unpushed job commits into the repository mirror
+under `refs/our-preview/` and protects them from the mirror's
+`fetch --prune` with the negative refspec `^refs/our-preview/*`, which older Git
+does not support. `doctor` reports this as the `git-version` row and warns on
+an older or missing Git; other job types are unaffected, and on such a host a
+preview deploy fails with `commit_import_failed`.
+
 To prove the release path on a fresh Ubuntu host, download the release
 `install.sh`, then run `packaging/scripts/fresh-host-doctor.sh` as root:
 

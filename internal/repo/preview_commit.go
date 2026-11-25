@@ -18,6 +18,8 @@ const (
 	previewMirrorNegativeRefspec = "^" + PreviewMirrorRefPrefix + "*"
 	negativeRefspecGitMajor      = 2
 	negativeRefspecGitMinor      = 29
+
+	MinPreviewGitVersion = "2.29"
 )
 
 func (m *Manager) HasCommit(ctx context.Context, url, sha string) bool {
@@ -33,7 +35,7 @@ func (m *Manager) protectPreviewRefs(ctx context.Context, mirror string) error {
 	if err != nil {
 		return err
 	}
-	if !gitSupportsNegativeRefspecs(version) {
+	if !GitSupportsNegativeRefspecs(version) {
 		return fmt.Errorf("preview commit import requires git %d.%d or newer for negative refspecs, found %q",
 			negativeRefspecGitMajor, negativeRefspecGitMinor, version)
 	}
@@ -48,7 +50,7 @@ func (m *Manager) protectPreviewRefs(ctx context.Context, mirror string) error {
 	return err
 }
 
-func gitSupportsNegativeRefspecs(version string) bool {
+func GitSupportsNegativeRefspecs(version string) bool {
 	fields := strings.Fields(version)
 	if len(fields) < 3 || fields[0] != "git" || fields[1] != "version" {
 		return false

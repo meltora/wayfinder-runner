@@ -183,7 +183,7 @@ func TestGitSupportsNegativeRefspecs(t *testing.T) {
 		"git version 2.windows":              false,
 		"not git":                            false,
 	} {
-		if got := gitSupportsNegativeRefspecs(version); got != want {
+		if got := GitSupportsNegativeRefspecs(version); got != want {
 			t.Fatalf("%q supported = %v want %v", version, got, want)
 		}
 	}
