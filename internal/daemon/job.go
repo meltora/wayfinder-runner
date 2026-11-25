@@ -881,7 +881,7 @@ func (jr *jobRunner) buildJobOutcome(ctx context.Context) jobOutcome {
 }
 
 func (jr *jobRunner) monitorLease(ctx context.Context) {
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(jr.d.leaseMonitorTick())
 	defer ticker.Stop()
 	for {
 		select {
@@ -906,7 +906,7 @@ func (jr *jobRunner) monitorLease(ctx context.Context) {
 				return
 			}
 			current := jr.d.leases.Current()
-			now := time.Now()
+			now := jr.d.leaseRenewalClock()
 			if current != nil && leaseRenewalDue(now, *current) {
 				if err := jr.requestLeaseRenewal(ctx, *current, now); err != nil {
 					jr.logger.Error("request lease renewal", "err", err)

@@ -12,6 +12,20 @@ import (
 	"github.com/example/app-runner/internal/validation"
 )
 
+func (d *Daemon) leaseRenewalClock() time.Time {
+	if d.leaseRenewalNow != nil {
+		return d.leaseRenewalNow()
+	}
+	return time.Now()
+}
+
+func (d *Daemon) leaseMonitorTick() time.Duration {
+	if d.leaseMonitorInterval > 0 {
+		return d.leaseMonitorInterval
+	}
+	return time.Second
+}
+
 func leaseRenewalDue(now time.Time, current lease.Lease) bool {
 	window := current.ExpiresAt.Sub(current.AcquiredAt)
 	if window <= 0 || !now.Before(current.ExpiresAt) {

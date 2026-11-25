@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -427,7 +428,9 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 	stateDir := t.TempDir()
 	enrollRunner(t, cp, stateDir)
 	origin := seedGitRepo(t)
-	agent := writeFakeAgent(t, "#!/bin/sh\nsleep 8\necho '{\"type\":\"result\",\"status\":\"success\"}'\n")
+	release := filepath.Join(t.TempDir(), "release")
+	agent := writeFakeAgent(t, "#!/bin/sh\ni=0\nwhile [ ! -e '"+release+"' ] && [ \"$i\" -lt 1200 ]; do sleep 0.05; i=$((i+1)); done\n"+
+		"echo '{\"type\":\"result\",\"status\":\"success\"}'\n")
 	cfg := directRunnerConfig(cp.WSURL(), stateDir)
 	cfg.Provider = "claude"
 	cfg.ProviderBinaries = map[string]string{"claude": agent}
@@ -436,6 +439,8 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var renewalNow atomic.Int64
+	d.SetLeaseRenewalClock(func() time.Time { return time.Unix(0, renewalNow.Load()) }, 20*time.Millisecond)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = d.Run(ctx) }()
@@ -443,14 +448,16 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 
 	job := withIntegrationAuthority(v1.JobSpec{
 		JobID: "job-renew", AttemptID: "att-renew", Kind: v1.JobKindPlan, FencingToken: 9,
-		LeaseExpiresAt: time.Now().Add(6 * time.Second),
+		LeaseExpiresAt: time.Now().Add(10 * time.Minute),
 		Repositories:   []v1.JobRepository{pinnedPlanRepository(t, "repo-renew", origin)},
 		Ticket:         v1.TicketContext{Key: "PROJ-RENEW", Summary: "Long planning job"},
 	})
+	observedAt := job.LeaseExpiresAt.Add(-time.Millisecond)
+	renewalNow.Store(observedAt.UnixNano())
 	if err := cp.SendCommand(ctx, v1.CommandPayload{Command: v1.CmdStartJob, Job: &job}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "lease renewal request", 8*time.Second, func() bool {
+	waitFor(t, "lease renewal request", time.Minute, func() bool {
 		return len(cp.EventsByKind("lease_renewal")) == 1
 	})
 	renewal := cp.EventsByKind("lease_renewal")[0].Payload.(map[string]any)
@@ -458,13 +465,36 @@ func TestPlanningJobRenewsBeforeItsOriginalLeaseExpires(t *testing.T) {
 		renewal["manifest_digest"] != job.ManifestDigest || renewal["fencing_token"] != float64(job.FencingToken) {
 		t.Fatalf("renewal authority = %v", renewal)
 	}
-	if err := cp.SendCommand(ctx, v1.CommandPayload{
-		Command: v1.CmdRenewLease, AttemptID: job.AttemptID, FencingToken: job.FencingToken,
-		LeaseExpiresAt: time.Now().Add(8 * time.Second),
-	}); err != nil {
+	if observed, ok := renewal["observed_at"].(string); !ok || observed != observedAt.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("renewal observed_at = %v, want the injected renewal clock %s", renewal["observed_at"], observedAt.UTC().Format(time.RFC3339Nano))
+	}
+	renew := v1.Envelope{
+		Version: v1.ProtocolVersion, Type: v1.TypeCommand, ID: "cmd-renew-lease", SentAt: time.Now(),
+		Payload: v1.CommandPayload{
+			Command: v1.CmdRenewLease, AttemptID: job.AttemptID, FencingToken: job.FencingToken,
+			LeaseExpiresAt: job.LeaseExpiresAt.Add(time.Hour),
+		},
+	}
+	if err := cp.SendCommandEnvelope(ctx, renew); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "job completion after original expiry", 12*time.Second, func() bool {
+	var renewAck map[string]any
+	waitFor(t, "lease renewal acknowledgement", time.Minute, func() bool {
+		for _, acknowledgement := range cp.CommandAcks() {
+			if acknowledgement.InReplyTo == renew.ID {
+				renewAck = acknowledgement.Payload.(map[string]any)
+				return true
+			}
+		}
+		return false
+	})
+	if renewAck["status"] != "accepted" {
+		t.Fatalf("lease renewal acknowledgement = %v", renewAck)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "job completion after renewal", time.Minute, func() bool {
 		return len(cp.EventsByKind("job_finished")) == 1
 	})
 	terminal := cp.EventsByKind("job_finished")[0].Payload.(map[string]any)

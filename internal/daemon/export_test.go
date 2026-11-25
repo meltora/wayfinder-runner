@@ -18,6 +18,11 @@ func (d *Daemon) TestRotate(ctx context.Context) error { return d.rotateCert(ctx
 
 func (d *Daemon) SetClock(now func() time.Time) { d.now = now }
 
+func (d *Daemon) SetLeaseRenewalClock(now func() time.Time, interval time.Duration) {
+	d.leaseRenewalNow = now
+	d.leaseMonitorInterval = interval
+}
+
 func (d *Daemon) RenewCertificate(ctx context.Context) error { return d.renewCertificate(ctx, false) }
 
 func (d *Daemon) FallBackAfterUnauthorizedUpgrade() {

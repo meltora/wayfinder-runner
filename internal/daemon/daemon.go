@@ -88,6 +88,8 @@ type Daemon struct {
 	rotationMu                                            sync.Mutex
 	now                                                   func() time.Time
 	previewLeaseNow                                       func() time.Time
+	leaseRenewalNow                                       func() time.Time
+	leaseMonitorInterval                                  time.Duration
 	previewEvidenceRedeployTimeout                        time.Duration
 	rotationFault                                         func(point string) error
 	configureRepositoryManager                            func(*repo.Manager)
