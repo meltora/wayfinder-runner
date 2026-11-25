@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/example/app-runner/internal/config"
 )
 
 func TestSaveAndLoadLocalFilesArePrivateAndStrict(t *testing.T) {
@@ -36,6 +38,53 @@ func TestSaveAndLoadLocalFilesArePrivateAndStrict(t *testing.T) {
 	cached, err := LoadCachedDelivery(local.StateDir)
 	if err != nil || string(cached) != string(remote) {
 		t.Fatalf("cached = %q, %v", cached, err)
+	}
+}
+
+func TestSaveAndLoadLocalKeepsPreviewHosting(t *testing.T) {
+	local := testLocal(t)
+	local.PreviewHosting = config.PreviewHostingConfig{Enabled: true, MaxConcurrent: 2}
+	if err := SaveFiles(local.StateDir, local, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(local.StateDir, LocalFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "preview_hosting:\n    enabled: true\n    max_concurrent: 2\n") {
+		t.Fatalf("local file = %s", raw)
+	}
+	loaded, err := LoadLocal(local.StateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.PreviewHosting.Enabled || loaded.PreviewHosting.MaxConcurrent != 2 {
+		t.Fatalf("loaded = %+v", loaded.PreviewHosting)
+	}
+	local.PreviewHosting = config.PreviewHostingConfig{}
+	if err := SaveFiles(local.StateDir, local, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err = os.ReadFile(filepath.Join(local.StateDir, LocalFileName)); err != nil || strings.Contains(string(raw), "preview_hosting") {
+		t.Fatalf("disabled preview hosting was written: %s %v", raw, err)
+	}
+}
+
+func TestLoadLocalRejectsUnknownPreviewHostingFields(t *testing.T) {
+	local := testLocal(t)
+	if err := SaveFiles(local.StateDir, local, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(local.StateDir, LocalFileName)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(raw, []byte("preview_hosting:\n    enabled: true\n    max_previews: 2\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLocal(local.StateDir); err == nil || !strings.Contains(err.Error(), "max_previews") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

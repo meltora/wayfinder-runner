@@ -97,7 +97,7 @@ setup:
   enroll --code-file FILE --url URL [--state-dir DIR]
                                                     one-time enrollment from a private file; use FILE=- to read stdin
   configure [--gateway URL] [--state-dir DIR] [--provider-env NAME=VALUE]... [--provider-binary PATH]
-            [--acknowledge-direct] [--non-interactive]
+            [--acknowledge-direct] [--preview-hosting on|off] [--non-interactive]
                                                     fetch this runner's configuration from the dashboard over
                                                     its mTLS identity and ask only for local settings; without
                                                     --gateway it uses the gateway address saved by enroll

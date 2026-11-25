@@ -69,6 +69,7 @@ func loadedConfigurationDoctorOptions(cfg config.Config) doctor.Options {
 		ControlPlaneURL: cfg.ControlPlaneURL, StateDir: cfg.StateDir, Isolation: cfg.Isolation,
 		JobImage: cfg.JobImage, CheckImages: declaredCheckImages(cfg.Checks), JobNetwork: cfg.JobNetwork, JobNetworkName: cfg.JobNetworkName,
 		EgressPolicyID: cfg.EgressPolicyID, WorkIntakeProposalEnabled: cfg.WorkIntakeProposal.Enabled, EgressPolicyVerifierSocket: cfg.EgressPolicyVerifierSocket,
+		PreviewHostingEnabled: cfg.PreviewHosting.Enabled, PreviewHostingMaxConcurrent: cfg.PreviewHosting.MaxConcurrent,
 		WorkIntakeProposalAdapter: cfg.WorkIntakeProposal.Adapter, WorkIntakeProposalBinary: cfg.ProviderBinaries[cfg.WorkIntakeProposal.Adapter],
 		ProviderEnvironmentNames: map[string][]string{
 			"codex": cfg.ProviderEnvironmentNames("codex"), "claude": cfg.ProviderEnvironmentNames("claude"), "opencode": cfg.ProviderEnvironmentNames("opencode"),

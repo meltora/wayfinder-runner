@@ -51,26 +51,28 @@ func (r Report) ExitCode() int {
 }
 
 type Options struct {
-	ConfigurationLoaded        bool
-	Provider                   string
-	ProviderBinary             string
-	RepositoryCount            int
-	TrustedAgentPackKeyCount   int
-	ControlPlaneURL            string
-	StateDir                   string
-	Isolation                  string
-	JobImage                   string
-	CheckImages                map[string]string
-	JobNetwork                 string
-	JobNetworkName             string
-	EgressPolicyID             string
-	WorkIntakeProposalEnabled  bool
-	WorkIntakeProposalAdapter  string
-	WorkIntakeProposalBinary   string
-	EgressPolicyVerifierSocket string
-	ProviderEnvironmentNames   map[string][]string
-	PlatformTrustedKeySet      *v1.AgentPackTrustedKeySet
-	BuildChannel               string
+	ConfigurationLoaded         bool
+	Provider                    string
+	ProviderBinary              string
+	RepositoryCount             int
+	TrustedAgentPackKeyCount    int
+	ControlPlaneURL             string
+	StateDir                    string
+	Isolation                   string
+	JobImage                    string
+	CheckImages                 map[string]string
+	JobNetwork                  string
+	JobNetworkName              string
+	EgressPolicyID              string
+	WorkIntakeProposalEnabled   bool
+	WorkIntakeProposalAdapter   string
+	WorkIntakeProposalBinary    string
+	EgressPolicyVerifierSocket  string
+	ProviderEnvironmentNames    map[string][]string
+	PlatformTrustedKeySet       *v1.AgentPackTrustedKeySet
+	BuildChannel                string
+	PreviewHostingEnabled       bool
+	PreviewHostingMaxConcurrent int
 }
 
 func runSystemChecks(ctx context.Context, opts Options) Report {

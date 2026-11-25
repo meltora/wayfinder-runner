@@ -971,8 +971,8 @@ host-owned. A delivered `agent_pack_public_keys` map and envelope
 Agent Pack trust comes only from the platform trusted key set. A delivered
 document with any other key is rejected as a whole. The host keeps
 `control_plane_url` (the gateway address), `state_dir`, `provider_environment`,
-`provider_binaries`, the direct-isolation acknowledgement and `checks` in
-`<state-dir>/runner.local.yaml`. The last valid delivered document is cached in
+`provider_binaries`, the direct-isolation acknowledgement, `checks` and
+`preview_hosting` in `<state-dir>/runner.local.yaml`. The last valid delivered document is cached in
 `<state-dir>/runner.remote.json`. Both files are written with mode 0600 only after
 the merged configuration passes the same validation as `config.yaml`.
 
@@ -996,6 +996,20 @@ environment entry is removed. Any other answer replaces the value. The binary
 prompt shows the saved path and says when it is not an executable file; the
 environment prompt only says whether a value is set and never prints it.
 `--provider-binary` and `--provider-env` still override without a prompt.
+
+Preview hosting is a host decision, so the dashboard cannot turn it on.
+`configure --preview-hosting on` sets `preview_hosting.enabled: true` in
+`runner.local.yaml` and keeps any limits already saved there
+(`max_concurrent`, `memory_budget_mb`, `lease_max_seconds`,
+`phase_timeout_seconds`, `max_extension_seconds`, `teardown_timeout_seconds`,
+with the same meaning and bounds as in `config.yaml`); `--preview-hosting off`
+removes the block. Without the flag, `configure` keeps the saved setting. A
+missing block means preview hosting is off. Invalid limits, an unknown key, or
+preview hosting together with direct isolation make `configure` save nothing
+and make `start` and `doctor` refuse the configuration. `configure` prints
+`Preview hosting: on` or `off`, `our-runner status` shows the setting and why it
+is off, and `doctor` reports it as the `preview-hosting` check. Changing it needs
+a restart.
 
 Check commands stay on the host. The dashboard cannot define, replace or remove
 them: a delivered document with a `checks` key is rejected as a whole. With a
@@ -1166,7 +1180,7 @@ again.
 our-runner enroll [--url URL] [--state-dir DIR]                # masked code prompt
 our-runner enroll --code-file FILE [--url URL] [--state-dir DIR]
 our-runner configure [--gateway URL] [--state-dir DIR] [--non-interactive] [--provider-env NAME=VALUE]
-    [--provider-binary PATH] [--acknowledge-direct]
+    [--provider-binary PATH] [--acknowledge-direct] [--preview-hosting on|off]
 our-runner doctor --state-dir DIR               # diagnostics with the fetched configuration
 our-runner doctor --config FILE
 our-runner doctor --url URL [--state-dir DIR]  # limited enrollment diagnostics

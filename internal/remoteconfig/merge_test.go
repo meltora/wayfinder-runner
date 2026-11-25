@@ -7,7 +7,73 @@ import (
 	"testing"
 
 	"github.com/example/app-runner/internal/apikey"
+	"github.com/example/app-runner/internal/config"
 )
+
+func TestMergeCarriesLocalPreviewHosting(t *testing.T) {
+	local := testLocal(t)
+	local.PreviewHosting = config.PreviewHostingConfig{Enabled: true, MaxConcurrent: 2, MemoryBudgetMB: 8192}
+	merged, err := Merge(local, parsed(t, deliveryBody(dockerConfig())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosting := merged.Config.PreviewHosting
+	if !hosting.Enabled || hosting.MaxConcurrent != 2 || hosting.MemoryBudgetMB != 8192 ||
+		hosting.LeaseMaxSeconds != config.DefaultPreviewHostingLeaseMaxSeconds || hosting.MaxExtensionSeconds != config.DefaultPreviewHostingMaxExtensionSeconds {
+		t.Fatalf("preview hosting = %+v", hosting)
+	}
+}
+
+func TestMergeLeavesPreviewHostingOffUnlessTheLocalFileEnablesIt(t *testing.T) {
+	for name, hosting := range map[string]config.PreviewHostingConfig{
+		"missing":     {},
+		"disabled":    {Enabled: false, MaxConcurrent: 5},
+		"limits only": {MemoryBudgetMB: 4096},
+	} {
+		local := testLocal(t)
+		local.PreviewHosting = hosting
+		merged, err := Merge(local, parsed(t, deliveryBody(dockerConfig())))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if merged.Config.PreviewHosting.Enabled {
+			t.Fatalf("%s: preview hosting enabled", name)
+		}
+	}
+}
+
+func TestMergeRejectsInvalidLocalPreviewHosting(t *testing.T) {
+	for name, hosting := range map[string]config.PreviewHostingConfig{
+		"too many previews": {Enabled: true, MaxConcurrent: config.MaxPreviewHostingConcurrent + 1},
+		"negative memory":   {Enabled: true, MemoryBudgetMB: -1},
+		"short lease":       {Enabled: true, LeaseMaxSeconds: 10},
+		"unknown phase":     {Enabled: true, PhaseTimeoutSeconds: map[string]int{"compile": 60}},
+		"disabled invalid":  {MaxConcurrent: config.MaxPreviewHostingConcurrent + 1},
+	} {
+		local := testLocal(t)
+		local.PreviewHosting = hosting
+		if _, err := Merge(local, parsed(t, deliveryBody(dockerConfig()))); err == nil || !strings.Contains(err.Error(), "preview_hosting") {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestMergeRefusesPreviewHostingWhenTheDashboardSelectsDirectIsolation(t *testing.T) {
+	local := testLocal(t)
+	local.AcknowledgeDirect = true
+	local.PreviewHosting = config.PreviewHostingConfig{Enabled: true}
+	if _, err := Merge(local, parsed(t, deliveryBody(directConfig()))); err == nil || !strings.Contains(err.Error(), "preview_hosting requires docker isolation") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestParseDeliveryKeepsPreviewHostingHostOwned(t *testing.T) {
+	body := dockerConfig()
+	body["preview_hosting"] = map[string]any{"enabled": true}
+	if _, err := ParseDelivery(encode(t, deliveryBody(body)), testRunnerID); err == nil || !strings.Contains(err.Error(), "preview_hosting") {
+		t.Fatalf("err = %v", err)
+	}
+}
 
 func testLocal(t *testing.T) Local {
 	t.Helper()

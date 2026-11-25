@@ -195,6 +195,23 @@ func TestDockerSetupReportsTheCopiedClaudeConfigDirectoryWithoutWarning(t *testi
 		t.Fatalf("codex check = %+v, want Warn %q", codex, want)
 	}
 }
+func TestConfiguredSetupReportsPreviewHosting(t *testing.T) {
+	t.Parallel()
+	on := RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude", Isolation: "docker", PreviewHostingEnabled: true, PreviewHostingMaxConcurrent: 2}, setupDependencies())
+	want := "enabled, at most 2 previews at once; offered to the app once the preview tunnel is connected"
+	if check := findCheck(t, on, "preview-hosting"); check.Status != OK || check.Detail != want {
+		t.Fatalf("enabled = %+v", check)
+	}
+	off := RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude", Isolation: "docker"}, setupDependencies())
+	want = "disabled: preview_hosting.enabled is not set; run our-runner configure --preview-hosting on, or set it in the --config file"
+	if check := findCheck(t, off, "preview-hosting"); check.Status != Skip || check.Detail != want {
+		t.Fatalf("disabled = %+v", check)
+	}
+	if off.ExitCode() != 0 {
+		t.Fatalf("disabled preview hosting failed doctor: %s", Format(off))
+	}
+}
+
 func TestConfiguredSetupReportsIsolationMode(t *testing.T) {
 	t.Parallel()
 	docker := RunWithDependencies(context.Background(), Options{ConfigurationLoaded: true, Provider: "claude", Isolation: "docker"}, setupDependencies())

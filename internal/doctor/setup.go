@@ -46,9 +46,17 @@ func RunWithDependencies(ctx context.Context, opts Options, deps Dependencies) R
 		registrationCheck("repository-registration", opts.RepositoryCount, "registered repositories", "repository access is not checked"),
 		platformTrustCheck(opts, deps),
 		isolationCheck(opts.Isolation),
+		previewHostingCheck(opts),
 		Check{Name: "local-check-limits", Status: Warn, Detail: "Local checks do not verify provider sign-in, runner assignment, or current app permissions. Job-image runtime availability is not checked."},
 	)
 	return Report{Checks: checks}
+}
+
+func previewHostingCheck(opts Options) Check {
+	if !opts.PreviewHostingEnabled {
+		return Check{Name: "preview-hosting", Status: Skip, Detail: "disabled: preview_hosting.enabled is not set; run our-runner configure --preview-hosting on, or set it in the --config file"}
+	}
+	return Check{Name: "preview-hosting", Status: OK, Detail: fmt.Sprintf("enabled, at most %d previews at once; offered to the app once the preview tunnel is connected", opts.PreviewHostingMaxConcurrent)}
 }
 
 func isolationCheck(isolation string) Check {

@@ -32,6 +32,7 @@ type Local struct {
 	ProviderBinaries    map[string]string             `yaml:"provider_binaries,omitempty"`
 	AcknowledgeDirect   bool                          `yaml:"acknowledge_direct,omitempty"`
 	Checks              map[string]config.CheckConfig `yaml:"checks,omitempty"`
+	PreviewHosting      config.PreviewHostingConfig   `yaml:"preview_hosting,omitempty"`
 }
 
 type localDocument struct {

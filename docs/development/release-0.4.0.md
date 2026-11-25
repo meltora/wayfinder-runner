@@ -127,6 +127,8 @@ There is no staging environment. This needs the preview domain, its DNS, the cer
 
 ## Known follow-ups (not blocking)
 
+- **Known gap, fixed in 0.4.1:** a runner configured from the dashboard (`configure`, then `start --state-dir`) can never host previews. The merge of `runner.local.yaml` and the delivered document leaves `preview_hosting.enabled` false, so no preview host controller starts and `platform_deploy_preview` is never offered. Only a runner started with `start --config FILE` and `preview_hosting.enabled: true` hosts previews on 0.4.0. See [release-0.4.1.md](release-0.4.1.md).
+
 - Readiness with the userland proxy can report about 50 ms early.
 - Job start and startup recovery still read the wall clock rather than the injected lease clock.
 - A job network leaked by a failed recovery detach waits for the next restart, since the sweep is startup-only.

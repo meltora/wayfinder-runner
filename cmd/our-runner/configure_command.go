@@ -54,6 +54,7 @@ type configureOptions struct {
 	providerBinary    string
 	acknowledgeDirect bool
 	nonInteractive    bool
+	previewHosting    string
 }
 
 func cmdConfigure(args []string) error {
@@ -87,7 +88,7 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 		case "--non-interactive":
 			opts.nonInteractive = true
 			continue
-		case "--gateway", "--state-dir", "--provider-env", "--provider-binary":
+		case "--gateway", "--state-dir", "--provider-env", "--provider-binary", "--preview-hosting":
 		default:
 			return opts, fmt.Errorf("unknown flag %s", name)
 		}
@@ -106,6 +107,11 @@ func parseConfigureFlags(args []string) (configureOptions, error) {
 		case "--state-dir":
 			opts.stateDir = value
 			opts.stateDirSet = true
+		case "--preview-hosting":
+			if value != "on" && value != "off" {
+				return opts, fmt.Errorf("--preview-hosting must be on or off")
+			}
+			opts.previewHosting = value
 		case "--provider-binary":
 			if !filepath.IsAbs(value) {
 				return opts, fmt.Errorf("--provider-binary must be an absolute path")
@@ -249,6 +255,12 @@ func cmdConfigureWithDependencies(args []string, deps configureDependencies) err
 			local.ProviderBinaries[provider] = answer
 		}
 	}
+	switch opts.previewHosting {
+	case "on":
+		local.PreviewHosting.Enabled = true
+	case "off":
+		local.PreviewHosting = config.PreviewHostingConfig{}
+	}
 	if delivery.Remote.Isolation != "direct" {
 		local.AcknowledgeDirect = false
 	} else if opts.acknowledgeDirect {
@@ -278,6 +290,7 @@ func cmdConfigureWithDependencies(args []string, deps configureDependencies) err
 	if names := merged.Config.ProviderEnvironmentNames(provider); len(names) > 0 {
 		fmt.Fprintf(deps.output, "Provider environment for %s: %s\n", providerName, strings.Join(names, ", "))
 	}
+	fmt.Fprintln(deps.output, previewHostingSummary(merged.Config.PreviewHosting))
 	fmt.Fprintf(deps.output, "Start the runner with: our-runner start%s\n", stateDirArgument(opts))
 	return nil
 }
@@ -297,10 +310,18 @@ func startingLocal(opts configureOptions) (remoteconfig.Local, error) {
 		}
 		local.AcknowledgeDirect = existing.AcknowledgeDirect
 		local.Checks = existing.Checks
+		local.PreviewHosting = existing.PreviewHosting
 	}
 	local.ControlPlaneURL = opts.gateway
 	local.StateDir = opts.stateDir
 	return local, nil
+}
+
+func previewHostingSummary(hosting config.PreviewHostingConfig) string {
+	if !hosting.Enabled {
+		return "Preview hosting: off (turn it on with our-runner configure --preview-hosting on)"
+	}
+	return fmt.Sprintf("Preview hosting: on, at most %d previews at once", hosting.MaxConcurrent)
 }
 
 func printConfigureSummary(output io.Writer, delivery remoteconfig.Delivery) {

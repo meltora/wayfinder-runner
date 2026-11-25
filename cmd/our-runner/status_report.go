@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/daemon"
 	"github.com/example/app-runner/internal/identity"
 	"github.com/example/app-runner/internal/journal"
+	"github.com/example/app-runner/internal/remoteconfig"
 )
 
 func statusReport(stateDir string, now time.Time) ([]string, error) {
@@ -21,7 +23,7 @@ func statusReport(stateDir string, now time.Time) ([]string, error) {
 		fmt.Sprint("enrolled: ", enrolled),
 	}
 	if runnerID, err := daemon.ReadRunnerID(stateDir); err == nil {
-		lines = append(lines, "runner id: "+runnerID)
+		lines = append(lines, "runner id: "+runnerID, previewHostingStatus(stateDir))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -46,6 +48,20 @@ func statusReport(stateDir string, now time.Time) ([]string, error) {
 			rejection.Code, rejection.Count, rejection.LastRejectedAt.UTC().Format(time.RFC3339)))
 	}
 	return lines, nil
+}
+
+func previewHostingStatus(stateDir string) string {
+	local, err := remoteconfig.LoadLocal(stateDir)
+	switch {
+	case errors.Is(err, remoteconfig.ErrNotConfigured):
+		return "preview hosting: off (no " + remoteconfig.LocalFileName + "; run our-runner configure --preview-hosting on, or set preview_hosting.enabled in the --config file)"
+	case err != nil:
+		return "preview hosting: unknown (" + remoteconfig.LocalFileName + " could not be read; the runner will not start until it is fixed)"
+	case !local.PreviewHosting.Enabled:
+		return "preview hosting: off (not enabled in " + remoteconfig.LocalFileName + "; run our-runner configure --preview-hosting on)"
+	}
+	hosting := config.Normalize(config.Config{PreviewHosting: local.PreviewHosting}).PreviewHosting
+	return fmt.Sprintf("preview hosting: on (at most %d previews at once)", hosting.MaxConcurrent)
 }
 
 func journalErrorClass(err error) string {

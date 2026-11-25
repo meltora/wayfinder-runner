@@ -147,7 +147,7 @@ func TestStatusReportWithoutRejectionsOmitsLastRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(lines) != 6 || lines[2] != "runner id: runner-123" {
+	if len(lines) != 7 || lines[2] != "runner id: runner-123" || lines[3] != "preview hosting: off (no runner.local.yaml; run our-runner configure --preview-hosting on, or set preview_hosting.enabled in the --config file)" {
 		t.Fatalf("lines = %q", lines)
 	}
 	tail := lines[len(lines)-3:]

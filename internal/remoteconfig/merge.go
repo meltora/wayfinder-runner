@@ -56,6 +56,7 @@ func Merge(local Local, delivery Delivery) (Merged, error) {
 	cfg.ProviderEnvironment = local.ProviderEnvironment
 	cfg.ProviderAPIKeys = local.ProviderAPIKeys
 	cfg.ProviderBinaries = local.ProviderBinaries
+	cfg.PreviewHosting = local.PreviewHosting
 	checks, omitted, err := registrableChecks(local.Checks, remote.Repositories)
 	if err != nil {
 		return out, fmt.Errorf("merged runner configuration is invalid: %w", err)
