@@ -285,7 +285,7 @@ func TestRealDockerDeployAndDestroy(t *testing.T) {
 	connect := func(name, host string) string {
 		request := "CONNECT " + host + ":443 HTTP/1.1\r\nHost: " + host + ":443\r\n\r\n"
 		output, _ := probeFromPreviewNetwork(ctx, cli, allowPrefix, allow.PreviewID, image, name,
-			"sh", "-c", `printf "$0" | nc -w 10 our-gateway 3128 | head -n 1`, request)
+			"sh", "-c", `(printf "$0"; sleep 5) | nc -w 10 our-gateway 3128 | head -n 1`, request)
 		return output
 	}
 	if status := connect("allowed", "example.com"); !strings.Contains(status, " 200") {

@@ -97,7 +97,7 @@ func TestRealDockerJobNetworkReachesOnlyIngress(t *testing.T) {
 		t.Fatalf("job container could not reach the preview ingress: %q %v", output, err)
 	}
 	request := "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
-	output, _ := cli.Exec(ctx, job, []string{"sh", "-c", `printf "$0" | nc -w 5 our-preview 3128`, request})
+	output, _ := cli.Exec(ctx, job, []string{"sh", "-c", `(printf "$0"; sleep 5) | nc -w 5 our-preview 3128`, request})
 	if strings.Contains(output, "HTTP/") {
 		t.Fatalf("job container reached the egress proxy: %q", output)
 	}
