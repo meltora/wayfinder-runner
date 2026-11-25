@@ -102,6 +102,77 @@ func TestReplaySendFailureLeavesFailedAndLaterEventsForReconnect(t *testing.T) {
 	}
 }
 
+func TestReplaySendsJournaledEnvelopeByteForByte(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	ctx := context.Background()
+	type replayPayload struct {
+		Kind              string               `json:"kind"`
+		FencingToken      uint64               `json:"fencing_token"`
+		AgentRunAuthority v1.AgentRunAuthority `json:"agent_run_authority"`
+		Note              string               `json:"note"`
+	}
+	sentAt := time.Date(2026, 11, 25, 10, 11, 12, 123456789, time.FixedZone("test", 3600))
+	first := v1.Envelope{
+		Version:  v1.ProtocolVersion,
+		Type:     v1.TypeEvent,
+		ID:       "replay-byte-identity",
+		SentAt:   sentAt,
+		RunnerID: "runner-1",
+		Payload: replayPayload{
+			Kind:         "progress",
+			FencingToken: 9007199254740993,
+			AgentRunAuthority: v1.AgentRunAuthority{
+				SchemaVersion: 1, AgentRunID: "run-1", StepRunID: "step-1", StepSequence: 18446744073709551615,
+			},
+			Note: "<a&b>",
+		},
+	}
+	firstWire, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jr.d.journal.Append(ctx, journal.Record{
+		ID: first.ID, Kind: journal.KindEvent, Payload: firstWire, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var replayed []v1.Envelope
+	if err := jr.d.replayUnacked(ctx, func(envelope v1.Envelope) error {
+		replayed = append(replayed, envelope)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed) != 1 {
+		t.Fatalf("replayed %d envelopes", len(replayed))
+	}
+	replayWire, err := json.Marshal(replayed[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	type wirePayload struct {
+		ID      string          `json:"id"`
+		SentAt  json.RawMessage `json:"sent_at"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	var want, got wirePayload
+	if err := json.Unmarshal(firstWire, &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(replayWire, &got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Payload) != string(want.Payload) {
+		t.Fatalf("replayed payload bytes differ:\n got %s\nwant %s", got.Payload, want.Payload)
+	}
+	if got.ID != want.ID || string(got.SentAt) != string(want.SentAt) {
+		t.Fatalf("replayed id/sent_at = %s/%s, want %s/%s", got.ID, got.SentAt, want.ID, want.SentAt)
+	}
+	if string(replayWire) != string(firstWire) {
+		t.Fatalf("replayed envelope bytes differ:\n got %s\nwant %s", replayWire, firstWire)
+	}
+}
+
 func TestReplayAdvancesPastCorruptDurableRows(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	ctx := context.Background()

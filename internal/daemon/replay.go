@@ -53,12 +53,17 @@ replay:
 }
 
 func decodeReplayEnvelope(record journal.Record) (v1.Envelope, bool) {
-	var envelope v1.Envelope
+	var payload json.RawMessage
+	envelope := v1.Envelope{Payload: &payload}
 	decoder := json.NewDecoder(bytes.NewReader(record.Payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&envelope); err != nil || decoder.Decode(&struct{}{}) != io.EOF ||
 		envelope.ID != record.ID || envelope.Type != v1.TypeEvent || envelope.Version != v1.ProtocolVersion {
 		return v1.Envelope{}, false
+	}
+	envelope.Payload = nil
+	if len(payload) > 0 {
+		envelope.Payload = payload
 	}
 	return envelope, true
 }
