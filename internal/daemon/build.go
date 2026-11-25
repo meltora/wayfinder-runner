@@ -72,18 +72,26 @@ func (jr *jobRunner) finalizeBuild(
 	return "succeeded", extra, nil
 }
 
+var errTrustedCommitSetIneligible = errors.New("trusted commit set is not eligible")
+
 func (jr *jobRunner) recordTrustedCommitSet(ctx context.Context, commitSet map[string]string) {
-	if err := jr.trustedCommitSetEligible(ctx, commitSet); err != nil {
+	err := jr.recordTrustedCommitSetChecked(ctx, commitSet)
+	if errors.Is(err, errTrustedCommitSetIneligible) {
 		jr.logger.Warn("trusted commit set not recorded", "manifest_id", jr.job.ManifestID, "err", err)
-		return
+	} else if err != nil {
+		jr.logger.Error("record trusted commit set", "manifest_id", jr.job.ManifestID, "err", err)
+	}
+}
+
+func (jr *jobRunner) recordTrustedCommitSetChecked(ctx context.Context, commitSet map[string]string) error {
+	if err := jr.trustedCommitSetEligible(ctx, commitSet); err != nil {
+		return fmt.Errorf("%w: %w", errTrustedCommitSetIneligible, err)
 	}
 	commits := make([]v1.PreviewObservationCommit, 0, len(commitSet))
 	for repositoryID, sha := range commitSet {
 		commits = append(commits, v1.PreviewObservationCommit{RepositoryID: repositoryID, CommitSHA: sha})
 	}
-	if err := jr.d.journal.RecordTrustedCommitSet(ctx, jr.job.ManifestID, jr.job.ManifestDigest, commits, time.Now()); err != nil {
-		jr.logger.Error("record trusted commit set", "manifest_id", jr.job.ManifestID, "err", err)
-	}
+	return jr.d.journal.RecordTrustedCommitSet(ctx, jr.job.ManifestID, jr.job.ManifestDigest, commits, time.Now())
 }
 
 func (jr *jobRunner) trustedCommitSetEligible(ctx context.Context, commitSet map[string]string) error {

@@ -17,23 +17,28 @@ import (
 )
 
 const (
-	maxSocketRequestBytes  = 1 << 20
-	maxSocketResponseBytes = 2 << 20
-	maxSocketConnections   = 16
-	requestReadTimeout     = 10 * time.Second
-	toolCallTimeout        = 31 * time.Minute
-	responseWriteTimeout   = 10 * time.Second
-	humanInputCallMargin   = 2 * time.Minute
+	maxSocketRequestBytes    = 1 << 20
+	maxSocketResponseBytes   = 2 << 20
+	maxSocketConnections     = 16
+	requestReadTimeout       = 10 * time.Second
+	toolCallTimeout          = 31 * time.Minute
+	responseWriteTimeout     = 10 * time.Second
+	humanInputCallMargin     = 2 * time.Minute
+	previewDeployToolTimeout = 50 * time.Minute
 )
 
 const (
 	HumanInputTool    = "platform_request_human_input"
 	MaxHumanInputWait = 7*time.Hour + 30*time.Minute
+	DeployPreviewTool = "platform_deploy_preview"
 )
 
 func ToolCallTimeout(tool string) time.Duration {
-	if tool == HumanInputTool {
+	switch tool {
+	case HumanInputTool:
 		return MaxHumanInputWait + humanInputCallMargin
+	case DeployPreviewTool:
+		return previewDeployToolTimeout
 	}
 	return toolCallTimeout
 }

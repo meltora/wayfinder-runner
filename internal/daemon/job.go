@@ -93,6 +93,7 @@ type jobRunner struct {
 	egressRules              *jobEgressRulesState
 	configuration            *hotConfiguration
 	agentPromptLimit         int
+	previewDeploys           previewJobDeployState
 }
 
 type checkedOutRepository struct {

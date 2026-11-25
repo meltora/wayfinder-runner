@@ -12,7 +12,7 @@ func (jr *jobRunner) jobContext() map[string]any {
 		"approved_plan_revision": jr.job.ApprovedPlanRevision,
 		"ticket":                 jr.job.Ticket,
 		"repositories":           append([]v1.JobRepository(nil), jr.job.Repositories...),
-		"capabilities":           append([]string(nil), capabilitiesForJob(jr.job.Kind)...),
+		"capabilities":           append([]string(nil), jr.d.capabilitiesForJob(jr.job.Kind)...),
 		"execution_boundaries": map[string]any{
 			"workspace_read_only":     jr.job.Kind == v1.JobKindPlan,
 			"merge_allowed":           false,

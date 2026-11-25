@@ -44,12 +44,13 @@ func (jr *jobRunner) handleToolCall(ctx context.Context, tool string, args json.
 	if err := validateToolArguments(raw, 0); err != nil {
 		return nil, err
 	}
-	if (tool == "platform_get_job_context" || tool == mcpbridge.InternalListToolsTool) && len(raw) != 0 {
+	emptyArguments := tool == "platform_get_job_context" || tool == mcpbridge.InternalListToolsTool || tool == mcpbridge.DeployPreviewTool
+	if emptyArguments && len(raw) != 0 {
 		return nil, fmt.Errorf("tool arguments must be empty")
 	}
 	key := str(raw, "idempotency_key")
 	if key == "" {
-		if tool != "platform_get_job_context" && tool != mcpbridge.InternalListToolsTool {
+		if !emptyArguments {
 			return nil, fmt.Errorf("idempotency_key is required")
 		}
 		return jr.executeToolCall(ctx, tool, raw)
@@ -177,6 +178,9 @@ func toolAllowedForJob(kind v1.JobKind, tool string) bool {
 	if isPlanPublicationTool(tool) {
 		return kind == v1.JobKindPlan
 	}
+	if tool == mcpbridge.DeployPreviewTool {
+		return kind == v1.JobKindBuild
+	}
 	if kind == v1.JobKindBuild {
 		return true
 	}
@@ -193,10 +197,14 @@ func toolAllowedForJob(kind v1.JobKind, tool string) bool {
 	}
 }
 
-func capabilitiesForJob(kind v1.JobKind) []string {
+func (d *Daemon) capabilitiesForJob(kind v1.JobKind) []string {
 	definitions := mcpbridge.ToolDefinitions()
 	capabilities := make([]string, 0, len(definitions))
+	deployAdvertised := d.previewDeployAdvertised()
 	for _, tool := range definitions {
+		if tool.Name == mcpbridge.DeployPreviewTool && !deployAdvertised {
+			continue
+		}
 		if toolAllowedForJob(kind, tool.Name) {
 			capabilities = append(capabilities, tool.Name)
 		}
@@ -207,7 +215,7 @@ func capabilitiesForJob(kind v1.JobKind) []string {
 func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[string]any) (any, error) {
 	switch tool {
 	case mcpbridge.InternalListToolsTool:
-		return capabilitiesForJob(jr.job.Kind), nil
+		return jr.d.capabilitiesForJob(jr.job.Kind), nil
 
 	case mcpbridge.InternalHookEventTool:
 		eventType := str(raw, "event_type")
@@ -384,6 +392,9 @@ func (jr *jobRunner) executeToolCall(ctx context.Context, tool string, raw map[s
 
 	case "platform_publish_preview":
 		return jr.executePreviewPublication(ctx, raw)
+
+	case mcpbridge.DeployPreviewTool:
+		return jr.executeDeployPreviewTool(ctx), nil
 
 	case "platform_publish_artifact":
 		if reservedRunnerArtifactName(str(raw, "name")) {

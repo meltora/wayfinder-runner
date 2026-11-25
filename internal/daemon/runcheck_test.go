@@ -70,10 +70,10 @@ func runCheckFixture(t *testing.T) (*jobRunner, *capturedEvents) {
 
 func TestRunCheckCapabilityAdvertisedForBuildJobsOnly(t *testing.T) {
 	jr, _ := runCheckFixture(t)
-	if buildCaps := capabilitiesForJob(v1.JobKindBuild); !slices.Contains(buildCaps, "platform_run_check") {
+	if buildCaps := jr.d.capabilitiesForJob(v1.JobKindBuild); !slices.Contains(buildCaps, "platform_run_check") {
 		t.Fatalf("build capabilities missing platform_run_check: %v", buildCaps)
 	}
-	if planCaps := capabilitiesForJob(v1.JobKindPlan); slices.Contains(planCaps, "platform_run_check") {
+	if planCaps := jr.d.capabilitiesForJob(v1.JobKindPlan); slices.Contains(planCaps, "platform_run_check") {
 		t.Fatalf("plan capabilities include platform_run_check: %v", planCaps)
 	}
 	jr.job.RequiredChecks = append(jr.job.RequiredChecks, "ghost-check")

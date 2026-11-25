@@ -177,6 +177,7 @@ var toolDefinitions = []ToolDef{
 	})},
 	{Name: "platform_publish_manual_test_plan", Description: "Publishes manual validation steps for a human reviewer.", InputSchema: manualTestPlanInputSchema()},
 	{Name: "platform_publish_preview", Description: "Publishes preview environment information bound to the runner-derived commit set.", InputSchema: previewInputSchema()},
+	{Name: DeployPreviewTool, Description: "Deploys a hosted preview of the job's current commit set and waits for the result. On success returns an internal URL reachable only from this job; otherwise returns a refused, failed or timeout status with a code. Takes no arguments.", InputSchema: closedObjectSchema(map[string]any{}, []string{})},
 	{Name: "platform_publish_artifact", Description: "Uploads a file from the job workspace as a registered artifact.", InputSchema: objectSchema(map[string]any{
 		"name": stringProp("Artifact name"), "path": stringProp("Path inside the job workspace"),
 		"content_type": stringProp("MIME type"), "idempotency_key": stringProp("Idempotency key"),
