@@ -55,6 +55,7 @@ RUN_PREVIEW_HOST_DOCKER=1 go test -count=1 -v -run 'TestRealDocker' ./internal/p
   - [x] a `CONNECT` to `our-preview:3128` from the job gets no HTTP reply, and a plain TCP connect to port 3128 is refused;
   - [x] the job container has no default route and cannot reach the public internet, the metadata address, the bridge gateway, the job network gateway or the preview app directly;
   - [x] after `DetachJob` the job network is gone and the preview is unreachable.
+- `TestRealDockerClaudeSandboxReachesPreviewIngress` skips under this command without `JOB_IMAGE`. In later releases, run it on the rootless daemon as described in `docs/TESTING.md`. It is the repeatable form of the 3a sandbox reach check.
 - [x] Docker's wording for a missing network, container and endpoint matches the matchers in `internal/previewhost/docker_cli.go` (record the daemon version).
 - [x] `docker network inspect --format '{{json .Containers}}'` on a network holding an orphaned endpoint shows the `ep-` key with a `Name`, and `docker network disconnect -f <network> <endpoint name>` removes it so that `docker network rm` succeeds. If an orphan cannot be produced on the test host, record that and the daemon version instead.
 
@@ -130,5 +131,5 @@ There is no staging environment. This needs the preview domain, its DNS, the cer
 - Job start and startup recovery still read the wall clock rather than the injected lease clock.
 - A job network leaked by a failed recovery detach waits for the next restart, since the sweep is startup-only.
 - A client that half-closes its connection before the gateway answers `CONNECT` gets `502`, because the request context is cancelled during the DNS lookup or dial. No known HTTPS client does this.
-- The 3a sandbox reach check was a one-off spike and is not in the repository; a gated integration test (rootless Docker, job image, offline Messages API) could keep it from regressing on Claude Code upgrades.
+- The 3a sandbox reach check was a one-off spike. It is now `TestRealDockerClaudeSandboxReachesPreviewIngress` (rootless Docker, job image, offline Messages API), which can catch regressions on Claude Code upgrades when it is run on the rootless daemon.
 - The orphaned `ep-` endpoint path (`disconnect -f` by endpoint name) is covered by unit tests only, since no orphan could be produced on the gate host.

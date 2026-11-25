@@ -15,59 +15,10 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/isolation"
+	"github.com/example/app-runner/internal/isolation/claudeoffline"
 	"github.com/example/app-runner/internal/provider"
 	"github.com/example/app-runner/internal/toolsummary"
 )
-
-const offlineMessagesAPI = `const http = require('http');
-const command = process.env.FAKE_BASH_COMMAND;
-let toolCalls = 0;
-function offersBash(body) {
-  return Array.isArray(body.tools) && body.tools.some((tool) => tool && tool.name === 'Bash');
-}
-function respond(res, body, content, stopReason) {
-  const message = {
-    id: 'msg_offline', type: 'message', role: 'assistant', model: body.model || 'offline',
-    content: [], stop_reason: null, stop_sequence: null,
-    usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
-  };
-  res.writeHead(200, { 'content-type': 'text/event-stream', 'request-id': 'req_offline' });
-  const send = (event, data) => res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
-  send('message_start', { type: 'message_start', message });
-  content.forEach((block, index) => {
-    if (block.type === 'text') {
-      send('content_block_start', { type: 'content_block_start', index, content_block: { type: 'text', text: '' } });
-      send('content_block_delta', { type: 'content_block_delta', index, delta: { type: 'text_delta', text: block.text } });
-    } else {
-      send('content_block_start', { type: 'content_block_start', index, content_block: { type: 'tool_use', id: block.id, name: block.name, input: {} } });
-      send('content_block_delta', { type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) } });
-    }
-    send('content_block_stop', { type: 'content_block_stop', index });
-  });
-  send('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { output_tokens: 1 } });
-  send('message_stop', { type: 'message_stop' });
-  res.end();
-}
-http.createServer((req, res) => {
-  let raw = '';
-  req.on('data', (chunk) => { raw += chunk; });
-  req.on('end', () => {
-    let body = {};
-    try { body = JSON.parse(raw || '{}'); } catch (error) { body = {}; }
-    if (!req.url.startsWith('/v1/messages') || req.url.includes('count_tokens')) {
-      res.writeHead(404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ type: 'error', error: { type: 'not_found_error', message: 'offline' } }));
-      return;
-    }
-    if (offersBash(body) && toolCalls === 0) {
-      toolCalls += 1;
-      respond(res, body, [{ type: 'tool_use', id: 'toolu_offline_1', name: 'Bash', input: { command, description: 'sandbox probe' } }], 'tool_use');
-      return;
-    }
-    respond(res, body, [{ type: 'text', text: 'done' }], 'end_turn');
-  });
-}).listen(8099, '127.0.0.1');
-`
 
 const loggingBubblewrap = `#!/bin/sh
 { echo "argv-begin"; for argument in "$@"; do printf '%s\n' "$argument"; done; echo "argv-end"; } >> /tmp/bwrap-argv.log
@@ -80,7 +31,7 @@ echo TOPSECRET > /home/runner/.claude/canary.txt
 export FAKE_BASH_COMMAND='echo sandbox-bash-ok; grep NSpid /proc/self/status; cat /home/runner/.claude/canary.txt 2>/dev/null; touch /home/runner/outside 2>/dev/null; echo "scrub=${CLAUDE_CODE_SUBPROCESS_ENV_SCRUB:-unset}"'
 node /probe/messages-api.js &
 sleep 1
-export PATH=/probe/bin:$PATH ANTHROPIC_BASE_URL=http://127.0.0.1:8099 ANTHROPIC_API_KEY=offline-probe-key CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+export PATH=/probe/bin:$PATH ANTHROPIC_BASE_URL=` + claudeoffline.BaseURL + ` ANTHROPIC_API_KEY=offline-probe-key CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 cd /home/runner/work
 timeout 120 claude "$@" > /tmp/claude.out 2>&1
 echo "==claude-exit:$?"
@@ -166,7 +117,7 @@ func runOfflineClaudeBash(t *testing.T, image string, extra ...string) offlineCl
 	if err := os.Mkdir(filepath.Join(probeDir, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeProbeFile(t, filepath.Join(probeDir, "messages-api.js"), offlineMessagesAPI, 0o644)
+	writeProbeFile(t, filepath.Join(probeDir, "messages-api.js"), claudeoffline.MessagesAPIScript(), 0o644)
 	writeProbeFile(t, filepath.Join(probeDir, "bin", "bwrap"), loggingBubblewrap, 0o755)
 	if err := os.Chmod(probeDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -215,7 +166,7 @@ func parseOfflineClaudeBashRun(t *testing.T, output string) offlineClaudeBashRun
 			section = line
 		case section == "==claude-out":
 			run.outputLines = append(run.outputLines, line)
-			if result, isError, ok := claudeToolResult(line); ok {
+			if result, isError, ok := claudeoffline.ToolResult(line); ok {
 				run.toolResult, run.toolIsError = result, isError
 			}
 		case section == "==bwrap-argv":
@@ -238,42 +189,6 @@ func parseOfflineClaudeBashRun(t *testing.T, output string) offlineClaudeBashRun
 		t.Fatalf("offline claude bash probe printed no exit status: %s", output)
 	}
 	return run
-}
-
-func claudeToolResult(line string) (string, bool, bool) {
-	var event struct {
-		Type    string `json:"type"`
-		Message struct {
-			Content []struct {
-				Type    string          `json:"type"`
-				Content json.RawMessage `json:"content"`
-				IsError bool            `json:"is_error"`
-			} `json:"content"`
-		} `json:"message"`
-	}
-	if json.Unmarshal([]byte(line), &event) != nil || event.Type != "user" {
-		return "", false, false
-	}
-	for _, block := range event.Message.Content {
-		if block.Type != "tool_result" {
-			continue
-		}
-		var text string
-		if json.Unmarshal(block.Content, &text) == nil {
-			return text, block.IsError, true
-		}
-		var parts []struct {
-			Text string `json:"text"`
-		}
-		if json.Unmarshal(block.Content, &parts) == nil {
-			var joined strings.Builder
-			for _, part := range parts {
-				joined.WriteString(part.Text)
-			}
-			return joined.String(), block.IsError, true
-		}
-	}
-	return "", false, false
 }
 
 func procArgument(argv []string) string {

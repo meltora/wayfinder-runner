@@ -171,6 +171,36 @@ read-only root, a noexec `/tmp` and no network), prints its `ok` line, fails
 with `exit_nonzero` when a test fails, and still fails in `JOB_IMAGE` when the
 check sets no image. `CHECK_IMAGE` is required only by the last test.
 
+`TestRealDockerClaudeSandboxReachesPreviewIngress` checks that Claude's own Bash
+sandbox can reach a hosted preview and nothing else. It deploys a real busybox
+preview with `previewhost` and builds the job container with
+`isolation.Docker.Wrap` and the production policy: nested sandbox, rootless
+ownership hand-off, read-only root and an internal base network. It runs the
+image's real `claude` against the offline Messages API stub in
+`internal/isolation/claudeoffline`. The stub holds its one Bash call until
+`our-preview` resolves, and the test calls `AttachJob` only after the stub
+reports that it is waiting. The preview is therefore attached mid-session, as
+it is when the daemon handles `platform_deploy_preview`. The Bash call runs a
+node probe inside the sandbox. The probe
+authenticates to the sandbox proxy with the credentials from `HTTP_PROXY` and
+never prints them. With `PreviewReach`:
+
+- `http://our-preview:8080/index.html` returns `200 preview ok` on a private address;
+- `http://example.com/` returns `403`;
+- a direct TCP connect to the preview address fails.
+
+Without `PreviewReach`, `our-preview` also returns `403`. The test fails rather
+than skips when the daemon is not rootless, because bubblewrap cannot start
+there ("Failed to make / slave"). Load the job image into the rootless daemon
+first, for example
+`docker save local/our-runner-job:<tag> | DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock docker load`:
+
+```sh
+DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock RUN_PREVIEW_HOST_DOCKER=1 \
+JOB_IMAGE=local/our-runner-job:<tag> \
+go test ./internal/previewhost/ -run TestRealDockerClaudeSandboxReachesPreviewIngress -v -count=1
+```
+
 `TestImageStoreResolvesALocallyBuiltImageByDigest` records how each image store
 names a locally built image. It builds a throwaway `FROM scratch` image with one
 small file and no network, tagged `our-runner-classic-probe:<random>` with a

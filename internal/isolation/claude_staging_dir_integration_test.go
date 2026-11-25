@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/example/app-runner/internal/isolation"
+	"github.com/example/app-runner/internal/isolation/claudeoffline"
 )
 
 const stagingDirSampler = `sample() { while :; do printf '%s ' "$(date +%s.%N)"; stat -c '%u:%g %a %n' "$PWD/.claude" "$PWD/.claude/.cc-writes" 2>&1 | tr '\n' ' '; echo; sleep 0.2; done; }
@@ -115,7 +116,7 @@ func runOfflineClaudeInWorkspace(t *testing.T, ctx context.Context, image string
 	if err := os.Mkdir(filepath.Join(probeDir, "bin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeProbeFile(t, filepath.Join(probeDir, "messages-api.js"), offlineMessagesAPI, 0o644)
+	writeProbeFile(t, filepath.Join(probeDir, "messages-api.js"), claudeoffline.MessagesAPIScript(), 0o644)
 	writeProbeFile(t, filepath.Join(probeDir, "bin", "bwrap"), loggingBubblewrap, 0o755)
 	if err := os.Chmod(probeDir, 0o755); err != nil {
 		t.Fatal(err)
