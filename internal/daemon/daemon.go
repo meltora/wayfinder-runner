@@ -111,6 +111,7 @@ type Daemon struct {
 	previewDeployCommandActive                            map[string]struct{}
 	previewDeployKeyActive                                map[string]struct{}
 	previewDeployCommands                                 sync.WaitGroup
+	previewJobDeploys                                     previewJobDeployRegistry
 	previewHostMu                                         sync.Mutex
 	previewHostReapMu                                     sync.Mutex
 	previewHostEmergencyGeneration                        uint64
@@ -740,6 +741,7 @@ func (d *Daemon) OnEventRejected(ctx context.Context, eventID, code string) erro
 	}
 	code = journal.NormalizeRejectionCode(code)
 	d.logger.Debug("event rejected by control plane", "id", eventID, "code", code)
+	d.previewJobDeployEventRejected(eventID, code)
 	return d.journal.RecordEventRejection(ctx, eventID, code, time.Now())
 }
 

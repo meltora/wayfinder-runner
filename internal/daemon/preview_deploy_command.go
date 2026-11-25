@@ -46,7 +46,7 @@ func (d *Daemon) executePreviewDeploy(
 	commandMessageID string,
 	operation v1.PreviewDeployOperation,
 	credential *v1.ProviderCredential,
-) error {
+) (err error) {
 	credentialToken := ""
 	if credential != nil {
 		credentialToken = credential.Token
@@ -57,6 +57,9 @@ func (d *Daemon) executePreviewDeploy(
 	}
 	if err := validation.PreviewDeployCommandMessageID(commandMessageID); err != nil {
 		return rejectCommand(v1.CommandAckReasonInvalidCommand, err)
+	}
+	if d.previewJobDeployCommandArrived(operation) {
+		defer func() { d.previewJobDeployCommandFinished(operation.IdempotencyKey, err) }()
 	}
 	if !d.previewDeployKeyStart(operation.IdempotencyKey) {
 		return nil
@@ -270,6 +273,7 @@ func validatedPreviewDeployResult(event v1.PreviewDeployResultEvent) ([]byte, er
 }
 
 func (d *Daemon) sendPreviewDeployResult(ctx context.Context, event v1.PreviewDeployResultEvent) error {
+	d.previewJobDeployResultSent(event)
 	_, err := d.sendEventWithStableID(ctx, v1.PreviewDeployResultEventID(event.IdempotencyKey), event)
 	return err
 }

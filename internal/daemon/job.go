@@ -385,6 +385,7 @@ func (jr *jobRunner) run() {
 	var ownership *ownershipScope
 	finish := func(outcome jobOutcome, capacityEvent *v1.ProviderCapacityExhaustedEvent) {
 		stopLeaseMonitor()
+		d.previewJobDeploys.releaseAttempt(job.AttemptID)
 		if err := ownership.Release(); err != nil {
 			jr.logger.Error("re-own job output", "err", err)
 			outcome, capacityEvent = jobOutputReclaimFailure(), nil
