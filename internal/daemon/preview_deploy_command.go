@@ -273,8 +273,10 @@ func validatedPreviewDeployResult(event v1.PreviewDeployResultEvent) ([]byte, er
 }
 
 func (d *Daemon) sendPreviewDeployResult(ctx context.Context, event v1.PreviewDeployResultEvent) error {
-	d.previewJobDeployResultSent(event)
 	_, err := d.sendEventWithStableID(ctx, v1.PreviewDeployResultEventID(event.IdempotencyKey), event)
+	if err == nil {
+		d.previewJobDeployResultSent(event)
+	}
 	return err
 }
 

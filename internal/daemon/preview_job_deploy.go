@@ -40,7 +40,8 @@ type previewJobDeployWaiter struct {
 	commitSet   map[string]string
 	arrived     chan struct{}
 	arriveOnce  sync.Once
-	done        chan previewJobDeployOutcome
+	done        chan struct{}
+	result      previewJobDeployOutcome
 	resolveOnce sync.Once
 }
 
@@ -63,7 +64,7 @@ func newPreviewJobDeployWaiter(
 		sequence:   sequence,
 		commitSet:  copied,
 		arrived:    make(chan struct{}),
-		done:       make(chan previewJobDeployOutcome, 1),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -78,7 +79,19 @@ func (w *previewJobDeployWaiter) outcome(status, code string) previewJobDeployOu
 }
 
 func (w *previewJobDeployWaiter) resolve(outcome previewJobDeployOutcome) {
-	w.resolveOnce.Do(func() { w.done <- outcome })
+	w.resolveOnce.Do(func() {
+		w.result = outcome
+		close(w.done)
+	})
+}
+
+func (w *previewJobDeployWaiter) resolved() (previewJobDeployOutcome, bool) {
+	select {
+	case <-w.done:
+		return w.result, true
+	default:
+		return previewJobDeployOutcome{}, false
+	}
 }
 
 func (w *previewJobDeployWaiter) markArrived() {
@@ -248,8 +261,12 @@ func (jr *jobRunner) awaitPreviewJobDeploy(
 ) previewJobDeployOutcome {
 	defer jr.d.previewJobDeploys.release(w.key)
 	end := func(status, code string) previewJobDeployOutcome {
-		w.resolve(w.outcome(status, code))
-		return <-w.done
+		local := w.outcome(status, code)
+		w.resolve(local)
+		if outcome, ok := w.resolved(); ok {
+			return outcome
+		}
+		return local
 	}
 	commandTimer := after(max(sentAt.Add(v1.PreviewJobDeployCommandTimeout).Sub(clock()), 0))
 	capTimer := after(max(sentAt.Add(previewJobDeployWaitCap()).Sub(clock()), 0))
@@ -260,8 +277,8 @@ func (jr *jobRunner) awaitPreviewJobDeploy(
 	arrived := w.arrived
 	for {
 		select {
-		case outcome := <-w.done:
-			return outcome
+		case <-w.done:
+			return w.result
 		case <-arrived:
 			arrived = nil
 			commandTimer = nil

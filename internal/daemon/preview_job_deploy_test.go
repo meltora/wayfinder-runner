@@ -8,6 +8,7 @@ import (
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
+	"github.com/example/app-runner/internal/lease"
 )
 
 type fakePreviewJobDeployTimer struct {
@@ -62,6 +63,16 @@ func (clock *fakePreviewJobDeployClock) advance(duration time.Duration) {
 			timer.fired = true
 			timer.ch <- clock.now
 		}
+	}
+}
+
+func (clock *fakePreviewJobDeployClock) fire(index int) {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	timer := clock.timers[index]
+	if !timer.fired {
+		timer.fired = true
+		timer.ch <- clock.now
 	}
 }
 
@@ -121,8 +132,8 @@ func assertPreviewJobDeployOpen(t *testing.T, w *previewJobDeployWaiter) {
 		t.Fatal("waiter arrived")
 	}
 	select {
-	case outcome := <-w.done:
-		t.Fatalf("waiter resolved: %+v", outcome)
+	case <-w.done:
+		t.Fatalf("waiter resolved: %+v", w.result)
 	default:
 	}
 }
@@ -415,4 +426,165 @@ func TestPreviewJobDeployRegistryOneInFlightPerAttempt(t *testing.T) {
 	if registry.forKey(first.key) != nil || registry.forEvent(first.eventID) != nil || registry.forKey(second.key) != second {
 		t.Fatal("registry index is stale")
 	}
+}
+
+func TestPreviewJobDeployMapsResultOutcomes(t *testing.T) {
+	tests := map[string]struct {
+		outcome v1.PreviewDeployOutcome
+		code    string
+	}{
+		"failed with phase":  {v1.PreviewDeployOutcome{Kind: v1.PreviewDeployFailed, Phase: v1.PreviewDeployPhaseBuild}, "build"},
+		"failed empty phase": {v1.PreviewDeployOutcome{Kind: v1.PreviewDeployFailed}, "failed"},
+		"capacity exhausted": {v1.PreviewDeployOutcome{Kind: v1.PreviewDeployCapacityExhausted}, "capacity_exhausted"},
+		"uncertain":          {v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain}, "uncertain"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			jr, _ := testJobRunner(t)
+			w, command := registerTestPreviewJobDeploy(t, jr, 1)
+			jr.d.previewJobDeployResultSent(previewDeployResultEvent(*command.PreviewDeploy, previewDeployCommandID("1"),
+				time.Now().UTC().Truncate(time.Millisecond), test.outcome))
+			outcome, ok := w.resolved()
+			if !ok {
+				t.Fatal("waiter did not resolve")
+			}
+			assertPreviewJobDeployOutcome(t, outcome, v1.PreviewJobDeployStatusFailed, test.code)
+			if outcome.EdgeHost != "" || !outcome.ExpiresAt.IsZero() {
+				t.Fatalf("failed outcome carries deploy fields: %+v", outcome)
+			}
+		})
+	}
+}
+
+func TestPreviewJobDeployFailsOnUntrustedCommitSet(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	w, command := registerTestPreviewJobDeploy(t, jr, 1)
+	controller := &fakePreviewHostController{deployOutcome: deployedPreviewOutcome()}
+	jr.d.previewHostController = controller
+	events := capturePreviewDeployEvents(t, jr.d)
+	clock := newFakePreviewJobDeployClock(time.Now())
+	result := startTestPreviewJobDeployAwait(t, jr, jr.ctx, w, clock)
+	if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command); err != nil {
+		t.Fatal(err)
+	}
+	assertPreviewJobDeployOutcome(t, receivePreviewJobDeployOutcome(t, result),
+		v1.PreviewJobDeployStatusFailed, string(v1.PreviewDeployPhaseCommitSet))
+	if deploys, _, _ := controller.counts(); deploys != 0 || len(*events) != 1 {
+		t.Fatalf("deploys=%d events=%d", deploys, len(*events))
+	}
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
+}
+
+func TestPreviewJobDeployCapBeforeArrivalIsCommandTimeout(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	w, _ := registerTestPreviewJobDeploy(t, jr, 1)
+	clock := newFakePreviewJobDeployClock(time.Now())
+	result := startTestPreviewJobDeployAwait(t, jr, jr.ctx, w, clock)
+	clock.fire(1)
+	assertPreviewJobDeployOutcome(t, receivePreviewJobDeployOutcome(t, result),
+		v1.PreviewJobDeployStatusTimeout, previewJobDeployCodeCommandTimeout)
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
+}
+
+func TestPreviewJobDeployCapAfterArrivalIsDeployTimeout(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	w, command := registerTestPreviewJobDeploy(t, jr, 1)
+	trustPreviewDeployCommits(t, jr.d, *command.PreviewDeploy)
+	controller := &fakePreviewHostController{
+		deployOutcome: deployedPreviewOutcome(), started: make(chan struct{}, 1), release: make(chan struct{}),
+	}
+	jr.d.previewHostController = controller
+	capturePreviewDeployEvents(t, jr.d)
+	clock := newFakePreviewJobDeployClock(time.Now())
+	result := startTestPreviewJobDeployAwait(t, jr, jr.ctx, w, clock)
+	executed := make(chan error, 1)
+	go func() {
+		executed <- jr.d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command)
+	}()
+	select {
+	case <-controller.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("deploy did not start")
+	}
+	clock.advance(previewJobDeployWaitCap())
+	assertPreviewJobDeployOutcome(t, receivePreviewJobDeployOutcome(t, result),
+		v1.PreviewJobDeployStatusFailed, previewJobDeployCodeDeployTimeout)
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
+	close(controller.release)
+	if err := <-executed; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPreviewJobDeployEndsWhenLeaseIdentityChanges(t *testing.T) {
+	tests := map[string]func(t *testing.T, jr *jobRunner, current lease.Lease){
+		"other fencing token": func(t *testing.T, jr *jobRunner, current lease.Lease) {
+			current.FencingToken++
+			current.ExpiresAt = current.ExpiresAt.Add(time.Hour)
+			if err := jr.d.leases.Acquire(current); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"other attempt": func(t *testing.T, jr *jobRunner, current lease.Lease) {
+			current.AttemptID = "a2"
+			current.FencingToken++
+			current.ExpiresAt = current.ExpiresAt.Add(time.Hour)
+			if err := jr.d.leases.Acquire(current); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"no lease": func(t *testing.T, jr *jobRunner, current lease.Lease) {
+			if !jr.d.leases.Release(current.AttemptID) {
+				t.Fatal("lease was not released")
+			}
+		},
+	}
+	for name, replace := range tests {
+		t.Run(name, func(t *testing.T) {
+			jr, _ := testJobRunner(t)
+			w, _ := registerTestPreviewJobDeploy(t, jr, 1)
+			current := *jr.d.leases.Current()
+			clock := newFakePreviewJobDeployClock(current.ExpiresAt.Add(-time.Minute))
+			result := startTestPreviewJobDeployAwait(t, jr, jr.ctx, w, clock)
+			replace(t, jr, current)
+			clock.fire(2)
+			assertPreviewJobDeployOutcome(t, receivePreviewJobDeployOutcome(t, result),
+				v1.PreviewJobDeployStatusFailed, previewJobDeployCodeLeaseExpired)
+			assertPreviewJobDeployRegistryEmpty(t, jr.d)
+		})
+	}
+}
+
+func TestPreviewJobDeployStaysOpenWhenResultSendFails(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	w, command := registerTestPreviewJobDeploy(t, jr, 1)
+	jr.d.eventSink = func(context.Context, any) error { return errors.New("send failed") }
+	event := previewDeployResultEvent(*command.PreviewDeploy, previewDeployCommandID("1"),
+		time.Now().UTC().Truncate(time.Millisecond), deployedPreviewOutcome())
+	if err := jr.d.sendPreviewDeployResult(context.Background(), event); err == nil {
+		t.Fatal("send did not fail")
+	}
+	assertPreviewJobDeployOpen(t, w)
+	if err := jr.d.journal.Close(); err != nil {
+		t.Fatal(err)
+	}
+	jr.d.eventSink = nil
+	if err := jr.d.sendPreviewDeployResult(context.Background(), event); err == nil {
+		t.Fatal("journal append did not fail")
+	}
+	assertPreviewJobDeployOpen(t, w)
+}
+
+func TestPreviewJobDeployAwaitTwiceReturnsBothTimes(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	w, _ := registerTestPreviewJobDeploy(t, jr, 1)
+	clock := newFakePreviewJobDeployClock(time.Now())
+	first := startTestPreviewJobDeployAwait(t, jr, jr.ctx, w, clock)
+	jr.cancel()
+	assertPreviewJobDeployOutcome(t, receivePreviewJobDeployOutcome(t, first),
+		v1.PreviewJobDeployStatusFailed, previewJobDeployCodeJobCancelled)
+	second := startTestPreviewJobDeployAwait(t, jr, context.Background(), w, clock)
+	assertPreviewJobDeployOutcome(t, receivePreviewJobDeployOutcome(t, second),
+		v1.PreviewJobDeployStatusFailed, previewJobDeployCodeJobCancelled)
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
 }
