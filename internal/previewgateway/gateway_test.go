@@ -713,15 +713,16 @@ func TestGatewayEgressRejectsConnectionToALocalAddressOutsideTheSources(t *testi
 	onJobNetwork := &addressedConn{local: rawAddr("10.2.0.3:3128"), remote: rawAddr("10.1.0.5:40000")}
 	unparseableLocal := &addressedConn{local: rawAddr("garbage"), remote: rawAddr("10.1.0.5:40001")}
 	missingLocal := &addressedConn{remote: rawAddr("10.1.0.5:40002")}
+	foreignRemote := &addressedConn{local: rawAddr("10.1.0.2:3128"), remote: rawAddr("10.2.0.3:40000")}
 	onPreviewNetwork := &addressedConn{local: rawAddr("[::ffff:10.1.0.2]:3128"), remote: rawAddr("10.1.0.5:40003")}
-	filter := newSourceFilterListener(&scriptedListener{conns: []*addressedConn{onJobNetwork, unparseableLocal, missingLocal, onPreviewNetwork}}, sources)
+	filter := newSourceFilterListener(&scriptedListener{conns: []*addressedConn{onJobNetwork, unparseableLocal, missingLocal, foreignRemote, onPreviewNetwork}}, sources)
 	conn, err := filter.Accept()
 	if err != nil || conn != onPreviewNetwork {
 		t.Fatalf("accepted = %v %v", conn, err)
 	}
-	for name, rejected := range map[string]*addressedConn{"job network": onJobNetwork, "unparseable": unparseableLocal, "missing": missingLocal} {
+	for name, rejected := range map[string]*addressedConn{"job network": onJobNetwork, "unparseable": unparseableLocal, "missing": missingLocal, "foreign remote": foreignRemote} {
 		if !rejected.closed {
-			t.Fatalf("%s local address was not closed", name)
+			t.Fatalf("%s connection was not closed", name)
 		}
 	}
 	if onPreviewNetwork.closed {
