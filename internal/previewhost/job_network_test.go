@@ -239,6 +239,31 @@ func TestJobNetworkRemovalDisconnectsOrphanedEndpoints(t *testing.T) {
 	}
 }
 
+func TestLeakedJobNetworkIsNeverAttachedToAnotherJob(t *testing.T) {
+	h := attachedHarness(t)
+	leaked := JobNetworkName(testRunnerID, testAttemptID)
+	before := len(h.engine.Connects())
+	addJobContainer(h, "our-runner-other-job")
+	if err := h.controller.AttachJob(context.Background(), testPreviewID, "attempt-2", "our-runner-other-job"); err != nil {
+		t.Fatal(err)
+	}
+	own := JobNetworkName(testRunnerID, "attempt-2")
+	if own == leaked {
+		t.Fatal("two attempts share one job network name")
+	}
+	for _, connect := range h.engine.Connects()[before:] {
+		if connect.network != own {
+			t.Fatalf("second job connected to %s: %+v", connect.network, connect)
+		}
+	}
+	if endpoints := h.engine.Endpoints(leaked); slices.Contains(endpoints, "our-runner-other-job") {
+		t.Fatalf("leaked network endpoints = %v", endpoints)
+	}
+	if spec := h.engine.Networks()[own]; spec.Labels[LabelAttemptID] != "attempt-2" {
+		t.Fatalf("second job network labels = %v", spec.Labels)
+	}
+}
+
 func TestSweepJobNetworksKeepsActiveAttempt(t *testing.T) {
 	h := attachedHarness(t)
 	addJobContainer(h, "our-runner-other-job")

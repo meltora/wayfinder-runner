@@ -1,12 +1,15 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -248,9 +251,11 @@ func TestCancelRecoveredLeaseDetachesJobNetwork(t *testing.T) {
 	}
 }
 
-func TestCancelRecoveredLeaseKeepsLeaseWhenDetachFails(t *testing.T) {
+func TestCancelRecoveredLeaseReleasesLeaseWhenDetachFails(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	d := jr.d
+	var logs bytes.Buffer
+	d.logger = slog.New(slog.NewTextHandler(&logs, nil))
 	controller := newFakeJobNetworkController()
 	controller.detachErr = errors.New("docker unavailable")
 	d.previewHostController = controller
@@ -259,14 +264,31 @@ func TestCancelRecoveredLeaseKeepsLeaseWhenDetachFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.recoveredLease.Store(true)
-	if err := d.cancelJob(context.Background(), current.AttemptID, "test"); err == nil {
-		t.Fatal("cancel succeeded although the job network was not removed")
+	if err := d.cancelJob(context.Background(), current.AttemptID, "test"); err != nil {
+		t.Fatalf("cancel failed although only the job network detach failed: %v", err)
 	}
-	if lease, err := d.journal.LoadLease(context.Background()); err != nil || lease == nil || lease.AttemptID != current.AttemptID {
+	if got := controller.detachCalls(); !slices.Equal(got, []string{current.AttemptID}) {
+		t.Fatalf("detaches = %v", got)
+	}
+	if lease, err := d.journal.LoadLease(context.Background()); err != nil || lease != nil {
 		t.Fatalf("lease after failed detach = %+v err = %v", lease, err)
 	}
-	if d.leases.Current() == nil || !d.recoveredLease.Load() {
-		t.Fatal("failed detach released the recovered lease")
+	if d.leases.Current() != nil || d.recoveredLease.Load() {
+		t.Fatal("failed detach kept the recovered lease")
+	}
+	network := previewhost.JobNetworkName(d.runnerID, current.AttemptID)
+	for _, want := range []string{"level=WARN", "network=" + network, "docker unavailable"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("log %q lacks %q", logs.String(), want)
+		}
+	}
+	controller.sweepCandidates = []string{current.AttemptID}
+	d.sweepJobPreviewNetworksAtStartup(context.Background())
+	controller.mu.Lock()
+	removed, kept := slices.Clone(controller.removed), slices.Clone(controller.kept)
+	controller.mu.Unlock()
+	if !slices.Equal(removed, []string{current.AttemptID}) || len(kept) != 0 {
+		t.Fatalf("startup sweep removed = %v kept = %v", removed, kept)
 	}
 }
 

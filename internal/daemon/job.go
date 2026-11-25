@@ -310,7 +310,9 @@ func (d *Daemon) cancelJob(ctx context.Context, attemptID, reason string) error 
 	}
 	if attacher, ok := d.previewHostController.(previewhost.JobNetworkAttacher); ok {
 		if err := attacher.DetachJob(ctx, current.AttemptID); err != nil {
-			return fmt.Errorf("remove recovered job preview network: %w", err)
+			d.logger.Warn("recovered job preview network left for the startup sweep",
+				"network", previewhost.JobNetworkName(d.runnerID, current.AttemptID),
+				"attempt_id", current.AttemptID, "err", err)
 		}
 	}
 	if err := d.journal.ClearLease(ctx, current.AttemptID); err != nil {
