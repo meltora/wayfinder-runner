@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -186,5 +187,18 @@ func TestGitSupportsNegativeRefspecs(t *testing.T) {
 		if got := GitSupportsNegativeRefspecs(version); got != want {
 			t.Fatalf("%q supported = %v want %v", version, got, want)
 		}
+	}
+}
+
+func TestMinPreviewGitVersionMatchesNegativeRefspecGate(t *testing.T) {
+	if want := strconv.Itoa(negativeRefspecGitMajor) + "." + strconv.Itoa(negativeRefspecGitMinor); MinPreviewGitVersion != want {
+		t.Fatalf("MinPreviewGitVersion = %q want %q", MinPreviewGitVersion, want)
+	}
+	if !GitSupportsNegativeRefspecs("git version " + MinPreviewGitVersion + ".0") {
+		t.Fatalf("git %s is not accepted", MinPreviewGitVersion)
+	}
+	older := strconv.Itoa(negativeRefspecGitMajor) + "." + strconv.Itoa(negativeRefspecGitMinor-1) + ".9"
+	if GitSupportsNegativeRefspecs("git version " + older) {
+		t.Fatalf("git %s is accepted", older)
 	}
 }

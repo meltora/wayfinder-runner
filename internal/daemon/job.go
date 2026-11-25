@@ -23,6 +23,7 @@ import (
 	"github.com/example/app-runner/internal/isolation"
 	"github.com/example/app-runner/internal/lease"
 	"github.com/example/app-runner/internal/mcpbridge"
+	"github.com/example/app-runner/internal/previewhost"
 	"github.com/example/app-runner/internal/provider"
 	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/refusedrequest"
@@ -305,6 +306,14 @@ func (d *Daemon) cancelJob(ctx context.Context, attemptID, reason string) error 
 		cancel()
 		if err != nil {
 			return fmt.Errorf("stop recovered job container: %w", err)
+		}
+	}
+	if attacher, ok := d.previewHostController.(previewhost.JobNetworkAttacher); ok {
+		detachCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := attacher.DetachJob(detachCtx, current.AttemptID)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("remove recovered job preview network: %w", err)
 		}
 	}
 	if err := d.journal.ClearLease(ctx, current.AttemptID); err != nil {

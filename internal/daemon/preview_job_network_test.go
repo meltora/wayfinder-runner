@@ -33,8 +33,11 @@ type fakeJobNetworkController struct {
 	kept            []string
 	removed         []string
 	attachErr       error
+	attachCtxErrs   []error
 	attachStarted   chan struct{}
 	attachRelease   chan struct{}
+	attachDone      chan error
+	detachErr       error
 }
 
 var _ previewhost.JobNetworkAttacher = (*fakeJobNetworkController)(nil)
@@ -43,16 +46,24 @@ func newFakeJobNetworkController() *fakeJobNetworkController {
 	return &fakeJobNetworkController{fakePreviewHostController: &fakePreviewHostController{}}
 }
 
-func (c *fakeJobNetworkController) AttachJob(_ context.Context, previewID, attemptID, jobContainer string) error {
+func (c *fakeJobNetworkController) AttachJob(ctx context.Context, previewID, attemptID, jobContainer string) error {
 	c.mu.Lock()
 	c.attaches = append(c.attaches, fakeJobNetworkAttach{previewID, attemptID, jobContainer})
-	started, release, err := c.attachStarted, c.attachRelease, c.attachErr
+	c.attachCtxErrs = append(c.attachCtxErrs, ctx.Err())
+	started, release, done, err := c.attachStarted, c.attachRelease, c.attachDone, c.attachErr
 	c.mu.Unlock()
 	if started != nil {
 		close(started)
 	}
 	if release != nil {
-		<-release
+		select {
+		case <-release:
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
+	}
+	if done != nil {
+		done <- err
 	}
 	return err
 }
@@ -61,6 +72,16 @@ func (c *fakeJobNetworkController) DetachJob(_ context.Context, attemptID string
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.detaches = append(c.detaches, attemptID)
+	return c.detachErr
+}
+
+type sweepOnlyPreviewHostController struct {
+	*fakePreviewHostController
+	sweeps int
+}
+
+func (c *sweepOnlyPreviewHostController) SweepJobNetworks(context.Context, func(string) bool) error {
+	c.sweeps++
 	return nil
 }
 
@@ -125,22 +146,127 @@ func TestDeployPreviewAttachFailureKeepsDeployedReply(t *testing.T) {
 }
 
 func TestDeployPreviewSkipsAttachForDirectIsolation(t *testing.T) {
-	for name, configure := range map[string]func(*jobRunner){
-		"direct isolation": func(jr *jobRunner) { jr.d.cfg.Isolation = "direct" },
-		"network none":     func(jr *jobRunner) { jr.d.cfg.JobNetwork = "none" },
-		"reach closed":     func(jr *jobRunner) { jr.previewReachOpen.Store(false) },
+	for name, tc := range map[string]struct {
+		configure func(*jobRunner)
+		code      string
+	}{
+		"direct isolation": {func(jr *jobRunner) { jr.d.cfg.Isolation = "direct" }, previewJobDeployCodeNetworkUnsupported},
+		"network none":     {func(jr *jobRunner) { jr.d.cfg.JobNetwork = "none" }, previewJobDeployCodeNetworkUnsupported},
+		"no network name":  {func(jr *jobRunner) { jr.d.cfg.JobNetworkName = "" }, previewJobDeployCodeNetworkUnsupported},
+		"codex reach closed": {func(jr *jobRunner) {
+			jr.d.cfg.Provider = "codex"
+			jr.previewReachOpen.Store(false)
+		}, previewJobDeployCodeNetworkUnsupported},
+		"reach closed":        {func(jr *jobRunner) { jr.previewReachOpen.Store(false) }, previewJobDeployCodeCapabilityMissing},
+		"claude reach closed": {func(jr *jobRunner) { jr.d.cfg.Provider = "claude"; jr.previewReachOpen.Store(false) }, previewJobDeployCodeCapabilityMissing},
 	} {
 		t.Run(name, func(t *testing.T) {
-			jr, _, controller := jobNetworkDeployFixture(t)
-			configure(jr)
-			jr.previewJobDeployed(context.Background(), previewJobDeployOutcome{
+			jr, captured, controller := jobNetworkDeployFixture(t)
+			tc.configure(jr)
+			jr.previewJobDeployed(previewJobDeployOutcome{
 				Status: v1.PreviewJobDeployStatusDeployed, PreviewID: previewDeployToolPreviewID,
 			})
-			assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusRefused, previewJobDeployCodeNetworkUnsupported)
+			assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusRefused, tc.code)
+			assertNoPreviewDeployRequest(t, jr, captured)
 			if got := controller.attachCalls(); len(got) != 0 {
 				t.Fatalf("attaches = %+v", got)
 			}
 		})
+	}
+}
+
+func TestDeployPreviewAttachOutlivesTheToolCallContext(t *testing.T) {
+	jr, captured, controller := jobNetworkDeployFixture(t)
+	callCtx, cancelCall := context.WithCancel(context.Background())
+	defer cancelCall()
+	respondToPreviewDeployRequests(jr, captured, func(event map[string]any) {
+		cancelCall()
+		deployPreviewResult(jr, event, time.Now().Add(time.Hour))
+	})
+	result, err := jr.handleToolCall(callCtx, mcpbridge.DeployPreviewTool, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, _ := result.(previewDeployToolReply)
+	assertPreviewDeployReply(t, reply, v1.PreviewJobDeployStatusDeployed, "")
+	if callCtx.Err() == nil {
+		t.Fatal("tool call context was not cancelled before the attach")
+	}
+	controller.mu.Lock()
+	ctxErrs := slices.Clone(controller.attachCtxErrs)
+	controller.mu.Unlock()
+	if len(ctxErrs) != 1 || ctxErrs[0] != nil {
+		t.Fatalf("attach context errors = %v", ctxErrs)
+	}
+}
+
+func TestDeployPreviewAttachStopsWhenTheJobContextEnds(t *testing.T) {
+	jr, _, controller := jobNetworkDeployFixture(t)
+	controller.attachStarted = make(chan struct{})
+	controller.attachRelease = make(chan struct{})
+	controller.attachDone = make(chan error, 1)
+	go jr.previewJobDeployed(previewJobDeployOutcome{
+		Status: v1.PreviewJobDeployStatusDeployed, PreviewID: previewDeployToolPreviewID,
+	})
+	select {
+	case <-controller.attachStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("attach did not start")
+	}
+	jr.cancel()
+	select {
+	case err := <-controller.attachDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("attach ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("job context end did not stop the attach")
+	}
+}
+
+func TestCancelRecoveredLeaseDetachesJobNetwork(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	controller := newFakeJobNetworkController()
+	d.previewHostController = controller
+	current := *d.leases.Current()
+	if err := d.journal.SaveLease(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	d.recoveredLease.Store(true)
+	if err := d.cancelJob(context.Background(), current.AttemptID, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if got := controller.detachCalls(); !slices.Equal(got, []string{current.AttemptID}) {
+		t.Fatalf("detaches = %v", got)
+	}
+	if lease, err := d.journal.LoadLease(context.Background()); err != nil || lease != nil {
+		t.Fatalf("lease after cancel = %+v err = %v", lease, err)
+	}
+	if d.recoveredLease.Load() {
+		t.Fatal("recovered lease flag survived the cancel")
+	}
+}
+
+func TestCancelRecoveredLeaseKeepsLeaseWhenDetachFails(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	controller := newFakeJobNetworkController()
+	controller.detachErr = errors.New("docker unavailable")
+	d.previewHostController = controller
+	current := *d.leases.Current()
+	if err := d.journal.SaveLease(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	d.recoveredLease.Store(true)
+	if err := d.cancelJob(context.Background(), current.AttemptID, "test"); err == nil {
+		t.Fatal("cancel succeeded although the job network was not removed")
+	}
+	if lease, err := d.journal.LoadLease(context.Background()); err != nil || lease == nil || lease.AttemptID != current.AttemptID {
+		t.Fatalf("lease after failed detach = %+v err = %v", lease, err)
+	}
+	if d.leases.Current() == nil || !d.recoveredLease.Load() {
+		t.Fatal("failed detach released the recovered lease")
 	}
 }
 
@@ -223,7 +349,7 @@ func TestDeployPreviewDoesNotInterleaveWithRunningAttach(t *testing.T) {
 func TestPreviewJobNetworkIsNotAttachedAfterJobEnd(t *testing.T) {
 	jr, _, controller := jobNetworkDeployFixture(t)
 	jr.detachPreviewJobNetwork()
-	jr.previewJobDeployed(context.Background(), previewJobDeployOutcome{
+	jr.previewJobDeployed(previewJobDeployOutcome{
 		Status: v1.PreviewJobDeployStatusDeployed, PreviewID: previewDeployToolPreviewID,
 	})
 	if got := controller.attachCalls(); len(got) != 0 {
@@ -281,6 +407,19 @@ func TestStartupSweepWithoutLiveAttemptRemovesAll(t *testing.T) {
 
 func TestStartupSweepSkipsWithoutJobNetworkSupport(t *testing.T) {
 	jr, _ := testJobRunner(t)
-	jr.d.previewHostController = &fakePreviewHostController{}
-	jr.d.sweepJobPreviewNetworksAtStartup(context.Background())
+	d := jr.d
+	if err := d.journal.SaveLease(context.Background(), *d.leases.Current()); err != nil {
+		t.Fatal(err)
+	}
+	d.previewHostController = nil
+	d.sweepJobPreviewNetworksAtStartup(context.Background())
+	sweepOnly := &sweepOnlyPreviewHostController{fakePreviewHostController: &fakePreviewHostController{}}
+	if _, ok := previewhost.Controller(sweepOnly).(previewhost.JobNetworkAttacher); ok {
+		t.Fatal("sweep-only controller satisfies JobNetworkAttacher")
+	}
+	d.previewHostController = sweepOnly
+	d.sweepJobPreviewNetworksAtStartup(context.Background())
+	if sweepOnly.sweeps != 0 {
+		t.Fatalf("sweeps = %d without job network support", sweepOnly.sweeps)
+	}
 }

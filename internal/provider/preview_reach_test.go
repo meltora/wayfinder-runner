@@ -48,35 +48,48 @@ func TestClaudeSandboxAllowsOurPreviewOnlyWhenReachIsOpen(t *testing.T) {
 }
 
 func TestClaudeSandboxPreviewReachKeepsOtherHostsBlocked(t *testing.T) {
-	p := testParams(t)
-	p.Job.Kind = v1.JobKindBuild
-	p.DockerIsolation = true
-	p.PreviewReach = true
-	network := claudeSandboxNetwork(t, p)
-	if network["strictAllowlist"] != true {
-		t.Fatalf("strictAllowlist = %#v", network["strictAllowlist"])
-	}
-	for key := range network {
-		if key != "strictAllowlist" && key != "allowedDomains" {
-			t.Fatalf("sandbox network gained %q: %#v", key, network)
-		}
-	}
-	domains := network["allowedDomains"].([]any)
-	if len(domains) != 1 || domains[0] != v1.PreviewJobDeployInternalHost {
-		t.Fatalf("allowedDomains = %#v", domains)
-	}
-	for _, domain := range domains {
-		value := domain.(string)
-		if strings.ContainsAny(value, "*?") || strings.HasPrefix(value, ".") {
-			t.Fatalf("allowedDomains carries a wildcard: %q", value)
-		}
-	}
-	for _, blocked := range []string{"example.com", "our-preview.example.com", "evil-our-preview", "host.docker.internal", "localhost", "169.254.169.254"} {
-		for _, domain := range domains {
-			if domain == blocked {
-				t.Fatalf("allowedDomains allows %q", blocked)
+	for name, tc := range map[string]struct {
+		elevated bool
+		want     []any
+	}{
+		"reach only":         {false, []any{v1.PreviewJobDeployInternalHost}},
+		"reach and elevated": {true, []any{v1.PreviewJobDeployInternalHost, "registry.npmjs.org"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := testParams(t)
+			p.Job.Kind = v1.JobKindBuild
+			p.DockerIsolation = true
+			p.PreviewReach = true
+			if tc.elevated {
+				p.Elevated = testElevatedGrants()
 			}
-		}
+			network := claudeSandboxNetwork(t, p)
+			if network["strictAllowlist"] != true {
+				t.Fatalf("strictAllowlist = %#v", network["strictAllowlist"])
+			}
+			for key := range network {
+				if key != "strictAllowlist" && key != "allowedDomains" {
+					t.Fatalf("sandbox network gained %q: %#v", key, network)
+				}
+			}
+			domains := network["allowedDomains"].([]any)
+			if !reflect.DeepEqual(domains, tc.want) {
+				t.Fatalf("allowedDomains = %#v want %#v", domains, tc.want)
+			}
+			for _, domain := range domains {
+				value := domain.(string)
+				if strings.ContainsAny(value, "*?") || strings.HasPrefix(value, ".") {
+					t.Fatalf("allowedDomains carries a wildcard: %q", value)
+				}
+			}
+			for _, blocked := range []string{"example.com", "our-preview.example.com", "evil-our-preview", "host.docker.internal", "localhost", "169.254.169.254"} {
+				for _, domain := range domains {
+					if domain == blocked {
+						t.Fatalf("allowedDomains allows %q", blocked)
+					}
+				}
+			}
+		})
 	}
 }
 

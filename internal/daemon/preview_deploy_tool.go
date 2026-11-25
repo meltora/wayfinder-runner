@@ -27,6 +27,7 @@ const (
 	previewJobDeployCodeEventSendFailed      = "event_send_failed"
 	previewJobDeployCodeInvalidResult        = "invalid_result"
 	previewJobNetworkSweepTimeout            = 30 * time.Second
+	previewJobNetworkAttachTimeout           = 60 * time.Second
 )
 
 type previewJobDeployState struct {
@@ -158,7 +159,11 @@ func (jr *jobRunner) requestPreviewJobDeploy(ctx context.Context, commitSet map[
 		return localPreviewJobDeployOutcome(v1.PreviewJobDeployStatusRefused, previewJobDeployCodeCapabilityMissing)
 	}
 	if attach && !jr.previewJobNetworkSupported() {
-		return localPreviewJobDeployOutcome(v1.PreviewJobDeployStatusRefused, previewJobDeployCodeNetworkUnsupported)
+		code := previewJobDeployCodeNetworkUnsupported
+		if jr.previewJobNetworkConfigured() && jr.previewReachProviderSupported() {
+			code = previewJobDeployCodeCapabilityMissing
+		}
+		return localPreviewJobDeployOutcome(v1.PreviewJobDeployStatusRefused, code)
 	}
 	sequence, refusal, err := jr.previewDeploys.reserve(func(sequence uint64) (bool, error) {
 		return jr.d.journal.HasRecord(ctx, jr.previewJobDeployEventID(sequence))
@@ -172,18 +177,22 @@ func (jr *jobRunner) requestPreviewJobDeploy(ctx context.Context, commitSet map[
 	}
 	outcome := checkedPreviewJobDeployOutcome(jr.sendPreviewJobDeployRequest(ctx, sequence, commitSet))
 	if outcome.Status == v1.PreviewJobDeployStatusDeployed && attach {
-		jr.previewJobDeployed(ctx, outcome)
+		jr.previewJobDeployed(outcome)
 	}
 	jr.previewDeploys.finish(outcome)
 	return outcome
 }
 
+func (jr *jobRunner) previewReachProviderSupported() bool {
+	return jr.d.cfg.Provider != "codex"
+}
+
 func (jr *jobRunner) previewReachAllowed() bool {
-	return jr.d.cfg.Provider != "codex" && jr.previewJobNetworkConfigured() &&
+	return jr.previewReachProviderSupported() && jr.previewJobNetworkConfigured() &&
 		slices.Contains(jr.d.capabilitiesForJob(jr.job.Kind), mcpbridge.DeployPreviewTool)
 }
 
-func (jr *jobRunner) previewJobDeployed(ctx context.Context, outcome previewJobDeployOutcome) {
+func (jr *jobRunner) previewJobDeployed(outcome previewJobDeployOutcome) {
 	attacher, ok := jr.d.previewHostController.(previewhost.JobNetworkAttacher)
 	if !ok {
 		jr.logger.Warn("preview job network skipped: hosting cannot attach job networks")
@@ -200,7 +209,9 @@ func (jr *jobRunner) previewJobDeployed(ctx context.Context, outcome previewJobD
 		return
 	}
 	container := isolation.ContainerName(jr.d.runnerID, jr.job.AttemptID)
-	if err := attacher.AttachJob(ctx, outcome.PreviewID, jr.job.AttemptID, container); err != nil {
+	attachCtx, cancel := context.WithTimeout(jr.ctx, previewJobNetworkAttachTimeout)
+	defer cancel()
+	if err := attacher.AttachJob(attachCtx, outcome.PreviewID, jr.job.AttemptID, container); err != nil {
 		jr.logger.Warn("preview job network attach failed", "preview_id", outcome.PreviewID, "err", err)
 	}
 }
