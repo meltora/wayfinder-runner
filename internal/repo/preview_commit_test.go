@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -141,6 +142,33 @@ func TestImportPreviewCommitAcceptsBundleWithBasis(t *testing.T) {
 	}
 	if !m.HasCommit(ctx, origin, sha) {
 		t.Fatal("mirror lacks the imported commit")
+	}
+}
+
+func TestImportPreviewCommitInParallelProtectsRefsOnce(t *testing.T) {
+	origin := seedOrigin(t)
+	m := NewManager(t.TempDir())
+	m.AllowLocal = true
+	ctx := context.Background()
+	mirror, err := m.Register(ctx, origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha, bundle := unpushedPreviewCommit(t, origin)
+	errs := make([]error, 6)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Go(func() { errs[i] = m.ImportPreviewCommit(ctx, origin, bundle, sha) })
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("import %d: %v", i, err)
+		}
+	}
+	fetch := strings.Split(gitOutputForTest(t, mirror, "config", "--get-all", "remote.origin.fetch"), "\n")
+	if len(fetch) != 2 || fetch[1] != "^refs/our-preview/*" {
+		t.Fatalf("mirror fetch refspecs = %q", fetch)
 	}
 }
 

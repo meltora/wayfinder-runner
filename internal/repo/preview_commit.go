@@ -86,6 +86,8 @@ func (m *Manager) ImportPreviewCommit(ctx context.Context, url, bundlePath, sha 
 	if info, err := os.Lstat(mirror); err != nil || !info.IsDir() {
 		return fmt.Errorf("repository mirror is not registered")
 	}
+	m.previewImportMu.Lock()
+	defer m.previewImportMu.Unlock()
 	if err := m.protectPreviewRefs(ctx, mirror); err != nil {
 		return err
 	}

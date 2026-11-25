@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/example/app-runner/internal/redact"
 	"github.com/example/app-runner/internal/validation"
@@ -26,6 +27,8 @@ type Manager struct {
 
 	testGitEnvironment []string
 	testGitObserver    func(args, env []string)
+
+	previewImportMu sync.Mutex
 }
 
 func NewManager(root string) *Manager {
