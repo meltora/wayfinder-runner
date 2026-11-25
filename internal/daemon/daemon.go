@@ -41,7 +41,7 @@ import (
 	"github.com/example/app-runner/internal/validation"
 )
 
-var Version = "0.3.1"
+var Version = "0.4.0"
 
 const capabilityRefreshInterval = 5 * time.Minute
 
