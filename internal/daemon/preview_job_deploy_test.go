@@ -108,9 +108,21 @@ func startTestPreviewJobDeployAwait(
 	clock *fakePreviewJobDeployClock,
 ) <-chan previewJobDeployOutcome {
 	t.Helper()
+	return startTestPreviewJobDeployAwaitUntil(t, jr, ctx, w, clock, time.Time{})
+}
+
+func startTestPreviewJobDeployAwaitUntil(
+	t *testing.T,
+	jr *jobRunner,
+	ctx context.Context,
+	w *previewJobDeployWaiter,
+	clock *fakePreviewJobDeployClock,
+	callDeadline time.Time,
+) <-chan previewJobDeployOutcome {
+	t.Helper()
 	result := make(chan previewJobDeployOutcome, 1)
 	sentAt := clock.Now()
-	go func() { result <- jr.awaitPreviewJobDeploy(ctx, w, sentAt, clock.Now, clock.After) }()
+	go func() { result <- jr.awaitPreviewJobDeploy(ctx, w, sentAt, callDeadline, clock.Now, clock.After) }()
 	clock.waitTimers(t, 3)
 	return result
 }

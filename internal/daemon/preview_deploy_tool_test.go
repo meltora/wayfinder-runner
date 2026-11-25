@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,6 +37,7 @@ func deployPreviewFixture(t *testing.T) (*jobRunner, *capturedEvents, map[string
 		origin := filepath.Join(t.TempDir(), "origin.git")
 		agentGit(t, repository.WorkDir, "clone", "-q", "--bare", repository.WorkDir, origin)
 		repository.URL = origin
+		repository.StartSHA = want[repository.ID]
 		if _, err := manager.Register(context.Background(), origin); err != nil {
 			t.Fatal(err)
 		}
@@ -278,7 +280,7 @@ func TestDeployPreviewEmitsRequestedEventWithVectorIDs(t *testing.T) {
 	if err != nil || v1.FormatPreviewJobDeployTime(requestedAt) != event["requested_at"] || requestedAt.Before(before) {
 		t.Fatalf("requested_at = %v err = %v", event["requested_at"], err)
 	}
-	if !strings.HasPrefix(event["observed_at"].(string), strings.TrimSuffix(event["requested_at"].(string), "Z")) {
+	if !observedAt.Equal(requestedAt) {
 		t.Fatalf("observed_at %v does not match requested_at %v", event["observed_at"], event["requested_at"])
 	}
 	last := jr.previewDeploys.lastDeployed()
@@ -372,6 +374,52 @@ func TestDeployPreviewImportsUnpushedCommitIntoMirror(t *testing.T) {
 	}
 	if refs := trustedGitForTest(t, mirrors["primary"], "for-each-ref", repo.PreviewMirrorRefPrefix); refs != "" {
 		t.Fatalf("an already mirrored commit was imported again: %s", refs)
+	}
+}
+
+func TestDeployPreviewBundlesOnlyCommitsAfterTheBasis(t *testing.T) {
+	jr, _, want := deployPreviewFixture(t)
+	secondary := jr.repositories[1]
+	if err := os.WriteFile(filepath.Join(secondary.WorkDir, "unpushed.txt"), []byte("unpushed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commitSet, err := jr.previewCommitSet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := commitSet["secondary"]
+	bundlePath, cleanup, err := jr.bundleTrustedCommit(context.Background(), secondary, sha, want["secondary"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	verify := trustedGitForTest(t, secondary.Trusted.gitDir, "bundle", "verify", bundlePath)
+	if !strings.Contains(verify, want["secondary"]) {
+		t.Fatalf("bundle does not require the basis %s:\n%s", want["secondary"], verify)
+	}
+	full, fullCleanup, err := jr.bundleTrustedCommit(context.Background(), secondary, sha, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fullCleanup()
+	thinInfo, err := os.Stat(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullInfo, err := os.Stat(full)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if thinInfo.Size() >= fullInfo.Size() {
+		t.Fatalf("basis bundle %d bytes is not smaller than the full bundle %d bytes", thinInfo.Size(), fullInfo.Size())
+	}
+	empty, emptyCleanup, err := jr.bundleTrustedCommit(context.Background(), secondary, want["secondary"], sha)
+	if err != nil || empty != "" {
+		t.Fatalf("ancestor of the basis bundled to %q err = %v", empty, err)
+	}
+	emptyCleanup()
+	if exported := trustedGitForTest(t, secondary.Trusted.gitDir, "for-each-ref", repo.PreviewExportRefPrefix); exported != "" {
+		t.Fatalf("trusted repository keeps export refs: %s", exported)
 	}
 }
 
@@ -488,6 +536,11 @@ func TestDeployPreviewReplyShapes(t *testing.T) {
 			outcome: previewJobDeployOutcome{Status: v1.PreviewJobDeployStatusTimeout, Code: previewJobDeployCodeCommandTimeout},
 			want:    `{"status":"timeout","code":"command_timeout"}`,
 		},
+		"deployed without expiry": {
+			outcome: previewJobDeployOutcome{Status: v1.PreviewJobDeployStatusDeployed, EdgeHost: previewDeployToolEdgeHost,
+				CommitSet: map[string]string{"api": strings.Repeat("a", 40)}},
+			want: `{"status":"failed","code":"invalid_result"}`,
+		},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -500,4 +553,172 @@ func TestDeployPreviewReplyShapes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeployPreviewDeployedWithoutExpiryIsNotRecorded(t *testing.T) {
+	var state previewJobDeployState
+	outcome := checkedPreviewJobDeployOutcome(previewJobDeployOutcome{
+		Status: v1.PreviewJobDeployStatusDeployed, EdgeHost: previewDeployToolEdgeHost, Sequence: 1,
+		CommitSet: map[string]string{"api": strings.Repeat("a", 40)},
+	})
+	assertPreviewJobDeployOutcome(t, outcome, v1.PreviewJobDeployStatusFailed, previewJobDeployCodeInvalidResult)
+	if outcome.EdgeHost != "" || outcome.Sequence != 1 {
+		t.Fatalf("checked outcome = %+v", outcome)
+	}
+	state.finish(outcome)
+	if state.lastDeployed() != nil {
+		t.Fatal("an invalid deployed result was recorded")
+	}
+}
+
+func TestDeployPreviewSendFailureReleasesTheRequest(t *testing.T) {
+	jr, captured, _ := deployPreviewFixture(t)
+	failed := false
+	jr.d.eventSink = func(ctx context.Context, payload any) error {
+		if err := captured.sink(ctx, payload); err != nil {
+			return err
+		}
+		event, ok := payload.(map[string]any)
+		if !ok || event["kind"] != v1.EventPreviewDeployRequested {
+			return nil
+		}
+		if !failed {
+			failed = true
+			return errors.New("event transport unavailable")
+		}
+		deployPreviewResult(jr, event, time.Now().Add(2*time.Hour).Truncate(time.Millisecond))
+		return nil
+	}
+	assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusFailed, previewJobDeployCodeEventSendFailed)
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
+	if jr.previewDeploys.inFlight {
+		t.Fatal("a failed send left the request in flight")
+	}
+	assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusDeployed, "")
+	if last := jr.previewDeploys.lastDeployed(); last == nil || last.Sequence != 2 {
+		t.Fatalf("last deploy = %+v", last)
+	}
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
+}
+
+func TestDeployPreviewImportFailureReleasesTheRequest(t *testing.T) {
+	jr, captured, _ := deployPreviewFixture(t)
+	secondary := &jr.repositories[1]
+	if err := os.WriteFile(filepath.Join(secondary.WorkDir, "unpushed.txt"), []byte("unpushed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registeredURL := secondary.URL
+	unregistered := filepath.Join(t.TempDir(), "unregistered.git")
+	agentGit(t, secondary.WorkDir, "clone", "-q", "--bare", secondary.WorkDir, unregistered)
+	secondary.URL = unregistered
+	assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusFailed, previewJobDeployCodeCommitImportFailed)
+	assertNoPreviewDeployRequest(t, jr, captured)
+	if jr.previewDeploys.sequence != 0 || jr.previewDeploys.inFlight {
+		t.Fatalf("import failure consumed a request: sequence=%d inFlight=%v", jr.previewDeploys.sequence, jr.previewDeploys.inFlight)
+	}
+	secondary.URL = registeredURL
+	respondToPreviewDeployRequests(jr, captured, func(event map[string]any) {
+		deployPreviewResult(jr, event, time.Now().Add(2*time.Hour).Truncate(time.Millisecond))
+	})
+	assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusDeployed, "")
+	if last := jr.previewDeploys.lastDeployed(); last == nil || last.Sequence != 1 {
+		t.Fatalf("last deploy = %+v", last)
+	}
+}
+
+func TestDeployPreviewSkipsJournaledSequences(t *testing.T) {
+	jr, captured, _ := deployPreviewFixture(t)
+	for sequence := uint64(1); sequence <= 2; sequence++ {
+		inserted, err := jr.d.journal.AppendIfNew(context.Background(), journal.Record{
+			ID: jr.previewJobDeployEventID(sequence), Kind: journal.KindEvent, CreatedAt: time.Now(),
+			Payload: []byte(`{"payload":{"kind":"` + v1.EventPreviewDeployRequested + `"}}`),
+		})
+		if err != nil || !inserted {
+			t.Fatalf("pre-journal sequence %d inserted=%v err=%v", sequence, inserted, err)
+		}
+	}
+	respondToPreviewDeployRequests(jr, captured, func(event map[string]any) {
+		deployPreviewResult(jr, event, time.Now().Add(2*time.Hour).Truncate(time.Millisecond))
+	})
+	assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusDeployed, "")
+	events := captured.byKind(v1.EventPreviewDeployRequested)
+	if len(events) != 1 || events[0]["request_id"] != v1.PreviewDeployRequestID(jr.job.JobID, jr.job.LeaseID, 3) {
+		t.Fatalf("request events = %v", events)
+	}
+	if last := jr.previewDeploys.lastDeployed(); last == nil || last.Sequence != 3 {
+		t.Fatalf("last deploy = %+v", last)
+	}
+	for range v1.PreviewJobDeployMaxRequests - 3 {
+		assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusDeployed, "")
+	}
+	assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusRefused, previewJobDeployCodeLimitReached)
+	if got := len(journaledPreviewDeployRequests(t, jr)); got != v1.PreviewJobDeployMaxRequests {
+		t.Fatalf("journaled requests = %d", got)
+	}
+	if got := len(captured.byKind(v1.EventPreviewDeployRequested)); got != v1.PreviewJobDeployMaxRequests-2 {
+		t.Fatalf("sent requests = %d", got)
+	}
+}
+
+func TestDeployPreviewFinalizeRequestSkipsJobNetworkCheck(t *testing.T) {
+	jr, captured, want := deployPreviewFixture(t)
+	jr.d.cfg.Isolation = "direct"
+	respondToPreviewDeployRequests(jr, captured, func(event map[string]any) {
+		deployPreviewResult(jr, event, time.Now().Add(2*time.Hour).Truncate(time.Millisecond))
+	})
+	outcome := jr.requestPreviewJobDeploy(context.Background(), want, false)
+	assertPreviewJobDeployOutcome(t, outcome, v1.PreviewJobDeployStatusDeployed, "")
+	if len(captured.byKind(v1.EventPreviewDeployRequested)) != 1 {
+		t.Fatal("finalize request was not sent")
+	}
+}
+
+func TestDeployPreviewWaitCapHonoursCallDeadline(t *testing.T) {
+	now := time.Now()
+	for name, test := range map[string]struct {
+		deadline time.Time
+		want     time.Time
+	}{
+		"no deadline":    {time.Time{}, now.Add(previewJobDeployWaitCap())},
+		"near deadline":  {now.Add(10 * time.Minute), now.Add(10*time.Minute - previewJobDeployCapMargin)},
+		"later deadline": {now.Add(2 * time.Hour), now.Add(previewJobDeployWaitCap())},
+	} {
+		t.Run(name, func(t *testing.T) {
+			jr, _ := testJobRunner(t)
+			w, _ := registerTestPreviewJobDeploy(t, jr, 1)
+			clock := newFakePreviewJobDeployClock(now)
+			result := startTestPreviewJobDeployAwaitUntil(t, jr, jr.ctx, w, clock, test.deadline)
+			clock.mu.Lock()
+			capAt := clock.timers[1].at
+			clock.mu.Unlock()
+			if !capAt.Equal(test.want) {
+				t.Fatalf("cap at %v want %v", capAt, test.want)
+			}
+			clock.fire(1)
+			assertPreviewJobDeployOutcome(t, receivePreviewJobDeployOutcome(t, result),
+				v1.PreviewJobDeployStatusTimeout, previewJobDeployCodeCommandTimeout)
+			assertPreviewJobDeployRegistryEmpty(t, jr.d)
+		})
+	}
+}
+
+func TestDeployPreviewToolStopsWaitingBeforeCallDeadline(t *testing.T) {
+	jr, captured, _ := deployPreviewFixture(t)
+	respondToPreviewDeployRequests(jr, captured, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), previewJobDeployCapMargin+2*time.Second)
+	defer cancel()
+	started := time.Now()
+	result, err := jr.handleToolCall(ctx, mcpbridge.DeployPreviewTool, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, _ := result.(previewDeployToolReply)
+	assertPreviewDeployReply(t, reply, v1.PreviewJobDeployStatusTimeout, previewJobDeployCodeCommandTimeout)
+	if elapsed := time.Since(started); elapsed > v1.PreviewJobDeployCommandTimeout/2 {
+		t.Fatalf("waited %v past the call deadline margin", elapsed)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("the reply arrived after the call deadline")
+	}
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
 }

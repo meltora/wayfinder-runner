@@ -237,6 +237,17 @@ func previewJobDeployWaitCap() time.Duration {
 	return mcpbridge.ToolCallTimeout(v1.PreviewJobDeployTool) - previewJobDeployCapMargin
 }
 
+func previewJobDeployCapAt(sentAt, callDeadline time.Time) time.Time {
+	capAt := sentAt.Add(previewJobDeployWaitCap())
+	if callDeadline.IsZero() {
+		return capAt
+	}
+	if limit := callDeadline.Add(-previewJobDeployCapMargin); limit.Before(capAt) {
+		return limit
+	}
+	return capAt
+}
+
 func (jr *jobRunner) previewJobDeployLeaseTimer(
 	clock func() time.Time,
 	after func(time.Duration) <-chan time.Time,
@@ -256,6 +267,7 @@ func (jr *jobRunner) awaitPreviewJobDeploy(
 	ctx context.Context,
 	w *previewJobDeployWaiter,
 	sentAt time.Time,
+	callDeadline time.Time,
 	clock func() time.Time,
 	after func(time.Duration) <-chan time.Time,
 ) previewJobDeployOutcome {
@@ -269,7 +281,7 @@ func (jr *jobRunner) awaitPreviewJobDeploy(
 		return local
 	}
 	commandTimer := after(max(sentAt.Add(v1.PreviewJobDeployCommandTimeout).Sub(clock()), 0))
-	capTimer := after(max(sentAt.Add(previewJobDeployWaitCap()).Sub(clock()), 0))
+	capTimer := after(max(previewJobDeployCapAt(sentAt, callDeadline).Sub(clock()), 0))
 	leaseTimer, expired := jr.previewJobDeployLeaseTimer(clock, after)
 	if expired {
 		return end(v1.PreviewJobDeployStatusFailed, previewJobDeployCodeLeaseExpired)
