@@ -58,12 +58,19 @@ RUN_PREVIEW_HOST_DOCKER=1 go test -count=1 -v -run 'TestRealDocker' ./internal/p
 - [ ] Docker's wording for a missing network, container and endpoint matches the matchers in `internal/previewhost/docker_cli.go` (record the daemon version).
 - [ ] `docker network inspect --format '{{json .Containers}}'` on a network holding an orphaned endpoint shows the `ep-` key with a `Name`, and `docker network disconnect -f <network> <endpoint name>` removes it so that `docker network rm` succeeds. If an orphan cannot be produced on the test host, record that and the daemon version instead.
 
-### 3. End to end (staging or local stack with the app at `a352c671f` or later)
+### 3a. Local end to end (blocks the tag; requires the user's approval in the runner tab, together with the real-Docker gate)
 
-- [ ] A Claude build job under Docker isolation with the restricted job network calls `platform_deploy_preview` and gets `deployed`; its inner sandbox proxy reaches `our-preview` on the private address at `:8080`.
-- [ ] `run_network_policy.agent_sandbox_network` reports `preview_only` for that job.
+Run locally against an isolated app at `a352c671f` or later, backed by a disposable database seeded with the e2e seed (never the dev database), and a runner built from `main` under Docker isolation with the restricted job network. This is the only check that shows Claude's inner sandbox proxy allows a private address, so the release depends on it.
+
+- [ ] A Claude build job calls `platform_deploy_preview` and gets `deployed`, and its inner sandbox proxy reaches `our-preview` on the private address at `:8080`.
+- [ ] The app accepts `run_network_policy.agent_sandbox_network` = `preview_only` for that job.
 - [ ] The job's final `preview` evidence is accepted and `create_preview` closes through the built-in observation.
-- [ ] The preview is served at its edge URL through the tunnel.
+
+### 3b. Edge through the tunnel (after the release, before hosted previews are enabled in production)
+
+There is no staging environment. This needs the preview domain, its DNS, the certificate and the keys.
+
+- [ ] A deployed preview is served at its edge URL through the tunnel.
 
 ### 4. Cut
 
