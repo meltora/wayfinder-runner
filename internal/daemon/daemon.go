@@ -666,7 +666,6 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	}
 	det.PreviewHosting = d.previewHostingCapability()
 	det.PreviewTunnel = det.PreviewHosting != nil && d.previewTunnel != nil
-	d.previewTunnelAdvertised.Store(det.PreviewTunnel)
 	if services.reviewerIdentityVerifier != nil {
 		det.ReviewerIdentityVerificationInstallations = services.reviewerIdentityVerifier.ReadyReviewerIdentityInstallations()
 	}
@@ -693,10 +692,15 @@ func (d *Daemon) publishCapability(ctx context.Context) error {
 	if err := det.Sign(&m, key); err != nil {
 		return fmt.Errorf("sign capability manifest: %w", err)
 	}
-	return d.sendEvent(ctx, map[string]any{
+	if err := d.sendEvent(ctx, map[string]any{
 		"kind":     "capability_manifest",
 		"manifest": m,
-	})
+	}); err != nil {
+		d.previewTunnelAdvertised.Store(false)
+		return err
+	}
+	d.previewTunnelAdvertised.Store(det.PreviewTunnel)
+	return nil
 }
 
 func (d *Daemon) capabilityRefreshLoop(ctx context.Context, interval time.Duration) {
