@@ -466,14 +466,29 @@ func TestPreviewDeployResultAfterLeaseBecomesUncertain(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			jr, _ := testJobRunner(t)
+			var clockMu sync.Mutex
+			clock := time.Now().UTC().Truncate(time.Millisecond)
+			jr.d.now = func() time.Time {
+				clockMu.Lock()
+				defer clockMu.Unlock()
+				return clock
+			}
 			command := validPreviewDeployCommand()
-			command.PreviewDeploy.LeaseExpiresAt = time.Now().Add(30 * time.Millisecond).UTC().Truncate(time.Millisecond)
+			command.PreviewDeploy.LeaseExpiresAt = clock.Add(time.Minute)
 			sealTestPreviewDeploy(command.PreviewDeploy)
 			trustPreviewDeployCommits(t, jr.d, *command.PreviewDeploy)
-			controller := &fakePreviewHostController{deployOutcome: outcome, release: make(chan struct{})}
+			controller := &fakePreviewHostController{
+				deployOutcome: outcome, started: make(chan struct{}, 1), release: make(chan struct{}),
+			}
 			jr.d.previewHostController = controller
 			events := capturePreviewDeployEvents(t, jr.d)
-			go func() { time.Sleep(60 * time.Millisecond); close(controller.release) }()
+			go func() {
+				<-controller.started
+				clockMu.Lock()
+				clock = clock.Add(2 * time.Minute)
+				clockMu.Unlock()
+				close(controller.release)
+			}()
 			if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command); err != nil {
 				t.Fatal(err)
 			}
