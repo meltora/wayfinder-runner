@@ -91,8 +91,9 @@ The event is manifest-bound like the other job events. It carries the standard j
 
 ## J6 Final evidence
 
-- **When.** At the end of a build job (`finalizeBuild`), the runner publishes preview evidence only on the path that publishes review-ready, and only if this job has deployed at least one preview. It does this after the final commit set is recorded and before review-ready.
-  - If the latest deployed preview from this job does not have the final commit set's digest, the runner first requests a deploy of the final commit set (J2, counted toward the limit of 6) and waits for it (J3).
+- **When.** At the end of a build job (`finalizeBuild`), the runner publishes preview evidence only on the path that publishes review-ready, only when a review-ready intent was recorded, and only if this job has deployed at least one preview. It does this after the final commit set is recorded and before review-ready.
+  - If the latest deployed preview from this job does not have the final commit set's digest, or its `expires_at` is not more than 5 minutes after the runner's clock, the runner first requests a deploy of the final commit set (J2, counted toward the limit of 6) and waits for it (J3).
+  - The evidence event id is `"preview-evidence-" + hex(sha256(job_id + "\0" + lease_id + "\0" + commit_set_digest))`. At most one evidence event is journaled per id; a replay always sends the journaled payload.
   - If that deploy does not succeed, no evidence is published. The build itself still finishes, and the failure is logged.
 - **What.** The evidence is the existing `preview` event:
   - `url`: `https://<edge_host>`, taken from the deploy command, never from the agent.
