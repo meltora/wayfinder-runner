@@ -45,6 +45,14 @@ func TestPreviewDeployRequestIDMatchesSpecBytes(t *testing.T) {
 	}
 }
 
+func TestPreviewJobEvidenceEventIDVector(t *testing.T) {
+	got := PreviewJobEvidenceEventID("job-1", "lease-1", strings.Repeat("a", 64))
+	want := "preview-evidence-e7eb1ca1fcc92a3ee426b1341e7bc171742b3e4bc3a893f9fb8d14fcbf376244"
+	if got != want {
+		t.Fatalf("evidence event id = %s, want %s", got, want)
+	}
+}
+
 func TestPreviewCommitSetDigestVectors(t *testing.T) {
 	two := []PreviewObservationCommit{{RepositoryID: "repo-a", CommitSHA: strings.Repeat("a", 40)}, {RepositoryID: "repo-b", CommitSHA: strings.Repeat("b", 40)}}
 	if got := PreviewLifecycleCommitSetDigest(two); got != "f71b0c108391637c3339a88f666a2528d14cff81ab3015c0e1d3dc39b9febb58" {

@@ -72,6 +72,10 @@ func PreviewDeployRequestedEventID(requestID string) string {
 	return "preview-deploy-requested-" + previewJobDeployHash(requestID)
 }
 
+func PreviewJobEvidenceEventID(jobID, leaseID, commitSetDigest string) string {
+	return "preview-evidence-" + previewJobDeployHash(jobID+"\x00"+leaseID+"\x00"+commitSetDigest)
+}
+
 func PreviewJobDeployIdempotencyKey(requestID string) string {
 	return "preview-deploy-" + previewJobDeployHash("job-request\x00"+requestID)
 }

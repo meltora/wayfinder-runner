@@ -183,6 +183,46 @@ func (jr *jobRunner) requestPreviewJobDeploy(ctx context.Context, commitSet map[
 	return outcome
 }
 
+func (jr *jobRunner) publishFinalPreviewEvidence(ctx context.Context, final map[string]string) {
+	deployed := jr.previewDeploys.lastDeployed()
+	if deployed == nil {
+		return
+	}
+	commits, err := v1.PreviewCommitSetFromMap(final)
+	if err != nil {
+		jr.logger.Warn("final preview evidence skipped: invalid final commit set", "err", err)
+		return
+	}
+	digest := v1.PreviewLifecycleCommitSetDigest(commits)
+	if deployed.CommitSetDigest != digest {
+		outcome := jr.requestPreviewJobDeploy(ctx, final, false)
+		if outcome.Status != v1.PreviewJobDeployStatusDeployed {
+			jr.logger.Warn("final preview evidence skipped: final commit set was not deployed",
+				"status", outcome.Status, "code", outcome.Code)
+			return
+		}
+		deployed = &outcome
+	}
+	if deployed.EdgeHost == "" {
+		jr.logger.Warn("final preview evidence skipped: deploy result has no edge host")
+		return
+	}
+	if err := jr.d.leases.Validate(jr.job.AttemptID, jr.job.FencingToken); err != nil {
+		jr.logger.Warn("final preview evidence skipped: lease validation failed", "err", err)
+		return
+	}
+	fields := map[string]any{
+		"url": "https://" + deployed.EdgeHost, "health": "healthy",
+		"expires_at":        deployed.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		"known_limitations": []string{}, "commit_set": copyCommitSet(final),
+	}
+	eventID := v1.PreviewJobEvidenceEventID(jr.job.JobID, jr.job.LeaseID, digest)
+	payload := manifestBoundEvent(jr.job, "preview", fields, time.Now().UTC())
+	if _, err := jr.d.sendEventWithStableID(ctx, eventID, payload); err != nil {
+		jr.logger.Warn("final preview evidence not sent", "event_id", eventID, "err", err)
+	}
+}
+
 func (jr *jobRunner) previewReachProviderSupported() bool {
 	return jr.d.cfg.Provider != "codex"
 }

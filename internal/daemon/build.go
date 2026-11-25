@@ -65,6 +65,7 @@ func (jr *jobRunner) finalizeBuild(
 		return "failed", extra, nil
 	}
 	if publishReviewReady {
+		jr.publishFinalPreviewEvidence(ctx, commitSet)
 		if err := jr.publishFinalReviewReady(ctx, commitSet); err != nil {
 			return "failed", nil, fmt.Errorf("publish review readiness: %w", err)
 		}
