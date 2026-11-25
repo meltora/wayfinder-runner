@@ -14,19 +14,24 @@ This is the frozen contract between the runner and Meltora for P5f. It covers ho
 - **Success reply:** `{"status":"deployed","url":"<internal url>","expires_at":"<RFC3339 ms>","commit_set":{…}}`.
   - The internal URL is reachable only from this job's container (J5) and is never the edge URL.
 - **Failure reply:** `{"status":"refused"|"failed"|"timeout","code":"<code>"}`.
-  - `refused` carries a J3 rejection code.
-  - `failed` carries the `preview_deploy_result` failure code.
+  - `refused` carries a J3 rejection code, or one of the local codes below.
+  - `failed` carries the result's failure phase. If the result kind is `capacity_exhausted` or `uncertain`, it carries that kind instead. If the runner rejected the matched command, it carries the rejection reason; in that case the app learns of it through the command acknowledgement.
   - `timeout` means no command arrived in time. The deploy may still finish later.
+- **Local codes.** These are runner-local, and no event is sent:
+  - `request_in_flight`
+  - `deploy_limit_reached`
+  - `runner_capability_missing`
+  - `job_network_unsupported`: the job has no Docker job network, for example `--network none` or direct isolation, so J5 reach is impossible.
+  - `commit_set_unavailable`, sent as `failed`: the commit set could not be resolved or recorded.
 
 ## J2 Event `preview_deploy_requested`
 
-The event is manifest-bound like the other job events.
+The event is manifest-bound like the other job events. It carries the standard job event envelope: `manifest_id`, `manifest_digest`, `attempt_id`, `observed_at`, plus the fields below.
 
 | Field | Value |
 |---|---|
 | `schema_version` | `1` |
 | `job_id`, `lease_id`, `fencing_token` | The job's current lease. |
-| `execution_manifest_id`, `execution_manifest_digest` | The job's execution manifest. |
 | `request_id` | `"preview-deploy-request-" + hex(sha256(job_id + "\0" + lease_id + "\0" + decimal(sequence)))`. The sequence is per job and lease, starts at 1 and increases by 1 per sent request. |
 | `commit_set` | P5d rules: 1–16 entries, ascending `repository_id`, each value a 40-character lowercase hex sha. |
 | `commit_set_digest` | The P5d commit set digest of `commit_set`. |
@@ -39,7 +44,7 @@ The event is manifest-bound like the other job events.
 
 - **Acceptance.** The app answers an accepted request by sending the normal P5d `preview_deploy` command to the same runner. Its `idempotency_key` is `"preview-deploy-" + hex(sha256("job-request" + "\0" + request_id))`.
   - The P5d command wire format and digests are unchanged.
-  - The runner matches the command to the open request by that key. It treats the command as the request's answer only when `workflow_run_id`, `execution_manifest_id` and `commit_set_digest` also equal the job's.
+  - The runner matches the command to the open request by that key. It treats the command as the request's answer only when `execution_manifest_id` and `commit_set_digest` also equal the job's manifest id and the request's digest. The job does not carry a workflow run id, so `workflow_run_id` is not compared.
   - A command that matches the key but not those fields still runs through the normal P5d path, but it does not answer the tool.
 - **Rejection.** The app rejects a request through the existing event rejection path, with one of these permanent codes:
   - `not_build_job`
@@ -51,7 +56,8 @@ The event is manifest-bound like the other job events.
   - `emergency_stop_active`
 
   The standard job event codes can also arrive: `lease_not_found`, `lease_not_active`, `lease_expired`, `delivery_conflict` and `decision_expired`. For these, and for the seven codes above, the runner ends the wait at once and returns `refused` with the code passed through verbatim. Any other final rejection code is returned as `refused` with code `rejected`.
-- **Retryable rejection.** `timestamp_out_of_window` is not final. The runner handles it the same way as for the other job events and keeps waiting. The 2-minute timeout below still applies.
+- **Retryable rejection.** `timestamp_out_of_window` is not final. The runner handles it the same way as for the other job events: it records it and replays the event on reconnect with the same event id, and it keeps waiting. The 2-minute timeout below still applies.
+- **Replays.** An event that was rejected or not acknowledged may be replayed on reconnect with the same event id. The app answers a replayed event by its event id and never mints a second command for it.
 - **Result.** The tool returns when the runner's own `preview_deploy_result` for the matched command is final:
   - succeeded: `deployed`
   - any failure: `failed`
@@ -79,7 +85,7 @@ The event is manifest-bound like the other job events.
 
 ## J6 Final evidence
 
-- **When.** At the end of a build job (`finalizeBuild`), after the final commit set is recorded and before review-ready, the runner publishes preview evidence only if this job has deployed at least one preview.
+- **When.** At the end of a build job (`finalizeBuild`), the runner publishes preview evidence only on the path that publishes review-ready, and only if this job has deployed at least one preview. It does this after the final commit set is recorded and before review-ready.
   - If the latest deployed preview from this job does not have the final commit set's digest, the runner first requests a deploy of the final commit set (J2, counted toward the limit of 6) and waits for it (J3).
   - If that deploy does not succeed, no evidence is published. The build itself still finishes, and the failure is logged.
 - **What.** The evidence is the existing `preview` event:
