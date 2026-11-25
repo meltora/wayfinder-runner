@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "generator": "PREVIEW_JOB_DEPLOY_VECTORS_UPDATE=1 go test ./api/runner/v1 -run TestPreviewJobDeployV1VectorsAreCurrent",
+  "conventions": {
+    "commit_set_digest": "the P5d commit set digest: hex(sha256(compact JSON array of {\"commit_sha\",\"repository_id\"} objects, keys in that order, ascending repository_id))",
+    "envelope": "events show only the preview_deploy_requested fields; the runner sends them inside the standard job event envelope (kind, manifest_kind, manifest_id, manifest_digest, attempt_id, observed_at), whose job_id, lease_id and fencing_token are the same values",
+    "event_id": "preview-deploy-requested- + hex(sha256(request_id))",
+    "hash": "sha256 lowercase hex",
+    "separator": "\\u0000",
+    "time": "RFC3339 ms UTC"
+  },
+  "request_ids": [
+    {
+      "job_id": "job-p5f-1",
+      "lease_id": "lease-p5f-1",
+      "sequence": 1,
+      "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+      "event_id": "preview-deploy-requested-661697229b9faa39988ccf80b827376202fa1dd8001a12ab33839c04ad1ac9d5",
+      "idempotency_key": "preview-deploy-5acc3a9c760806dda42b1a4c83fc0099c85e126c2f61b49225c9db42833c6654"
+    },
+    {
+      "job_id": "job-p5f-1",
+      "lease_id": "lease-p5f-1",
+      "sequence": 2,
+      "request_id": "preview-deploy-request-3d38ecad015152ee723a4454c5ff3c32bd9c4a6e6b15baa9c25df3de98f5a2d9",
+      "event_id": "preview-deploy-requested-ac102e93ed962ab102fcc995e0aee7d6e20ef9f63b54068e6228eadda9044b01",
+      "idempotency_key": "preview-deploy-2c3d00b3fa1e705f88e81296b023f9778740beac4b453ed780bc60f79f698a11"
+    },
+    {
+      "job_id": "job-p5f-1",
+      "lease_id": "lease-p5f-1",
+      "sequence": 6,
+      "request_id": "preview-deploy-request-3a2d43f98b82d6e2cd9f2b080bb5077a47d7fb5e4ebda3b57ee5878be16430b3",
+      "event_id": "preview-deploy-requested-995a5bd700452bb04645f90557a28dd3effe9412a550ace99b4d9ff1a44d9c76",
+      "idempotency_key": "preview-deploy-864a868c17ec0dccea05d24d28455d3a2a684e61d3a63094b805a01840b49de1"
+    }
+  ],
+  "commit_sets": [
+    {
+      "name": "two_repositories",
+      "input_map": {
+        "repo-a": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "repo-b": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "commit_set": [
+        {
+          "repository_id": "repo-a",
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "repository_id": "repo-b",
+          "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "commit_set_digest": "f71b0c108391637c3339a88f666a2528d14cff81ab3015c0e1d3dc39b9febb58"
+    },
+    {
+      "name": "one_repository",
+      "input_map": {
+        "repo-a": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "commit_set": [
+        {
+          "repository_id": "repo-a",
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "commit_set_digest": "4cd0caabb02a04e7dc4e319408f4daa8aef8bb9f5638b24222bd852789560454"
+    }
+  ],
+  "events": [
+    {
+      "name": "requested_two_repositories",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "repository_id": "repo-b",
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "commit_set_digest": "f71b0c108391637c3339a88f666a2528d14cff81ab3015c0e1d3dc39b9febb58",
+        "requested_at": "2030-08-14T12:45:06.789Z"
+      },
+      "expect": "ok"
+    },
+    {
+      "name": "requested_one_repository_sequence_6",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-3a2d43f98b82d6e2cd9f2b080bb5077a47d7fb5e4ebda3b57ee5878be16430b3",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "commit_set_digest": "4cd0caabb02a04e7dc4e319408f4daa8aef8bb9f5638b24222bd852789560454",
+        "requested_at": "2030-08-14T12:45:06.000Z"
+      },
+      "expect": "ok"
+    },
+    {
+      "name": "schema_version_2",
+      "rule": "schema_version must be 1",
+      "event": {
+        "schema_version": 2,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "repository_id": "repo-b",
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "commit_set_digest": "f71b0c108391637c3339a88f666a2528d14cff81ab3015c0e1d3dc39b9febb58",
+        "requested_at": "2030-08-14T12:45:06.789Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "request_id_bad_prefix",
+      "rule": "request_id must match preview-deploy-request-<64 hex>",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "repository_id": "repo-b",
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "commit_set_digest": "f71b0c108391637c3339a88f666a2528d14cff81ab3015c0e1d3dc39b9febb58",
+        "requested_at": "2030-08-14T12:45:06.789Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "fencing_token_zero",
+      "rule": "fencing_token must be 1..2^53-1",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 0,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "repository_id": "repo-b",
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "commit_set_digest": "f71b0c108391637c3339a88f666a2528d14cff81ab3015c0e1d3dc39b9febb58",
+        "requested_at": "2030-08-14T12:45:06.789Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit_set_unsorted",
+      "rule": "commit_set must be ascending by repository_id",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [
+          {
+            "repository_id": "repo-b",
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "commit_set_digest": "c42da2a9f484970ee2818edfee81550efa921dbd586ab97ae43134585665eb08",
+        "requested_at": "2030-08-14T12:45:06.789Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit_set_empty",
+      "rule": "commit_set must have 1-16 entries",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [],
+        "commit_set_digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "requested_at": "2030-08-14T12:45:06.789Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit_sha_64_hex",
+      "rule": "commit_sha must be 40 lowercase hex characters",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "commit_set_digest": "e180772034234d83897423c46286e2ef8aa49b9551a80d38fca0ed2c39c9bb42",
+        "requested_at": "2030-08-14T12:45:06.789Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "commit_set_digest_mismatch",
+      "rule": "commit_set_digest must equal the digest of commit_set",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "repository_id": "repo-b",
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "commit_set_digest": "4cd0caabb02a04e7dc4e319408f4daa8aef8bb9f5638b24222bd852789560454",
+        "requested_at": "2030-08-14T12:45:06.789Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "requested_at_nanoseconds",
+      "rule": "requested_at must carry exactly 3 fractional digits",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "repository_id": "repo-b",
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "commit_set_digest": "f71b0c108391637c3339a88f666a2528d14cff81ab3015c0e1d3dc39b9febb58",
+        "requested_at": "2030-08-14T12:45:06.789123456Z"
+      },
+      "expect": "invalid"
+    },
+    {
+      "name": "requested_at_offset",
+      "rule": "requested_at must be UTC with a Z suffix",
+      "event": {
+        "schema_version": 1,
+        "job_id": "job-p5f-1",
+        "lease_id": "lease-p5f-1",
+        "fencing_token": 7,
+        "request_id": "preview-deploy-request-83dd81540c70d6ce4ee2db94e4545a51d6b2b75455a956bb94968e8273b98e77",
+        "commit_set": [
+          {
+            "repository_id": "repo-a",
+            "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "repository_id": "repo-b",
+            "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "commit_set_digest": "f71b0c108391637c3339a88f666a2528d14cff81ab3015c0e1d3dc39b9febb58",
+        "requested_at": "2030-08-14T13:45:06.789+01:00"
+      },
+      "expect": "invalid"
+    }
+  ],
+  "refusal_codes": [
+    {
+      "code": "not_build_job",
+      "reply": "not_build_job",
+      "final": true
+    },
+    {
+      "code": "no_approved_blueprint",
+      "reply": "no_approved_blueprint",
+      "final": true
+    },
+    {
+      "code": "commit_set_mismatch",
+      "reply": "commit_set_mismatch",
+      "final": true
+    },
+    {
+      "code": "request_in_flight",
+      "reply": "request_in_flight",
+      "final": true
+    },
+    {
+      "code": "deploy_limit_reached",
+      "reply": "deploy_limit_reached",
+      "final": true
+    },
+    {
+      "code": "runner_capability_missing",
+      "reply": "runner_capability_missing",
+      "final": true
+    },
+    {
+      "code": "emergency_stop_active",
+      "reply": "emergency_stop_active",
+      "final": true
+    },
+    {
+      "code": "lease_not_found",
+      "reply": "lease_not_found",
+      "final": true
+    },
+    {
+      "code": "lease_not_active",
+      "reply": "lease_not_active",
+      "final": true
+    },
+    {
+      "code": "lease_expired",
+      "reply": "lease_expired",
+      "final": true
+    },
+    {
+      "code": "delivery_conflict",
+      "reply": "delivery_conflict",
+      "final": true
+    },
+    {
+      "code": "decision_expired",
+      "reply": "decision_expired",
+      "final": true
+    },
+    {
+      "code": "timestamp_out_of_window",
+      "reply": "",
+      "final": false
+    },
+    {
+      "code": "unknown_x",
+      "reply": "rejected",
+      "final": true
+    }
+  ]
+}
