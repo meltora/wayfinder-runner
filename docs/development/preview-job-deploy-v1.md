@@ -20,9 +20,14 @@ This is the frozen contract between the runner and Meltora for P5f. It covers ho
 - **Local codes.** These are runner-local, and no event is sent:
   - `request_in_flight`
   - `deploy_limit_reached`
-  - `runner_capability_missing`
-  - `job_network_unsupported`: the job has no Docker job network, for example `--network none` or direct isolation, so J5 reach is impossible.
+  - `runner_capability_missing`: also returned when the job could have J5 reach but reach was not opened at job start, for example because the tunnel came up after the job started.
+  - `job_network_unsupported`: J5 reach is impossible for this job. Either the job has no Docker job network (`--network none` or direct isolation), or the agent is Codex. Codex enforces a domain allowlist only behind its experimental `network_proxy` feature, which the runner does not use ([preview-job-network.md](../preview-job-network.md)).
   - `commit_set_unavailable`, sent as `failed`: the commit set could not be resolved or recorded.
+  - `commit_import_failed`, sent as `failed`: an unpushed commit of the set could not be imported into the repository mirror.
+  - `event_send_failed`, sent as `failed`: the request event could not be recorded or sent.
+  - `invalid_result`, sent as `failed`: the matched result said deployed but carried no `expires_at`.
+
+  The `failed` local codes go only into the tool reply to the agent and never reach the app wire.
 
 ## J2 Event `preview_deploy_requested`
 
@@ -81,7 +86,8 @@ The event is manifest-bound like the other job events. It carries the standard j
   - The gateway's egress proxy accepts connections only from the preview's own network, never from the job network.
   - The job container gains no other route.
 - When the job ends, or a newer job preview replaces the old one, the runner removes the job network.
-- None of this is visible on the wire.
+- The network, its name and the alias are not on the wire. The one wire-visible effect is `run_network_policy.agent_sandbox_network`. A Claude job under Docker with reach open reports `preview_only`, and never `deny_all`, because its inner sandbox allows exactly `our-preview`.
+- `agent_sandbox_network` describes only the baseline of the agent CLI sandbox. Hosts from applied `network_access` grants are reported separately, in `elevated_capability_outcomes` and, under run guardrails schema version 2, in `run_network_policy.egress_rules`.
 
 ## J6 Final evidence
 
