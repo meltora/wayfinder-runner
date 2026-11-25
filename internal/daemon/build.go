@@ -244,6 +244,7 @@ func (jr *jobRunner) buildFinalizationOutcome(err error) jobOutcome {
 	cancelled := jr.cancelled && !jr.leaseLost
 	jr.procMu.Unlock()
 	if cancelled {
+		jr.logger.Warn("build finalization interrupted by cancellation", "err", err)
 		return jobOutcome{State: v1.JobFinishedCancelled, FailureCode: v1.JobFailureCancelled}
 	}
 	return buildFinalizationFailure(err)

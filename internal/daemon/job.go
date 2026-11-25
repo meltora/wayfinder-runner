@@ -861,21 +861,23 @@ func (jr *jobRunner) run() {
 	}
 
 	if job.Kind == v1.JobKindBuild {
-		rm := repo.NewManager(filepath.Join(d.cfg.StateDir, "repos"))
-		rm.AllowLocal = d.cfg.AllowUnsafeDirect
-		state, _, err := jr.finalizeBuild(ctx, rm, true)
-		if err != nil {
-			finish(jr.buildFinalizationOutcome(err), nil)
-			return
-		}
-		if state == "failed" {
-			finish(jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureRequiredChecks, FailureMessage: "one or more required checks failed"}, nil)
-			return
-		}
-		finish(jobOutcome{State: v1.JobFinishedSucceeded}, nil)
+		finish(jr.buildJobOutcome(ctx), nil)
 		return
 	}
 	finish(jr.planExitOutcome(ctx), nil)
+}
+
+func (jr *jobRunner) buildJobOutcome(ctx context.Context) jobOutcome {
+	rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
+	rm.AllowLocal = jr.d.cfg.AllowUnsafeDirect
+	state, _, err := jr.finalizeBuild(ctx, rm, true)
+	if err != nil {
+		return jr.buildFinalizationOutcome(err)
+	}
+	if state == "failed" {
+		return jobOutcome{State: v1.JobFinishedFailed, FailureCode: v1.JobFailureRequiredChecks, FailureMessage: "one or more required checks failed"}
+	}
+	return jobOutcome{State: v1.JobFinishedSucceeded}
 }
 
 func (jr *jobRunner) monitorLease(ctx context.Context) {

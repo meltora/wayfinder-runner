@@ -13,7 +13,6 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/repo"
-	"github.com/example/app-runner/internal/validation"
 )
 
 const previewEvidenceRedeployEdgeHost = "zyxwvutsrqponmlkjihgfedcba.previews.example.test"
@@ -502,17 +501,19 @@ func TestFinalizeBuildCancelledDuringRedeployPublishesNoEvidence(t *testing.T) {
 	}
 }
 
-func TestFinalizeBuildCancelDuringRedeployFinishesCancelled(t *testing.T) {
+func TestBuildJobInterruptedDuringFinalRedeployFinishesWithCompletionOutcome(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		interrupt func(*jobRunner)
 		state     v1.JobFinishedState
 		code      v1.JobFinishedFailureCode
+		log       string
 	}{
 		{
 			name:      "cancel",
 			interrupt: func(jr *jobRunner) { jr.d.cancelActiveJob("test cancel") },
 			state:     v1.JobFinishedCancelled, code: v1.JobFailureCancelled,
+			log: "build finalization interrupted by cancellation",
 		},
 		{
 			name: "lease lost",
@@ -523,11 +524,13 @@ func TestFinalizeBuildCancelDuringRedeployFinishesCancelled(t *testing.T) {
 				jr.procMu.Unlock()
 				jr.cancel()
 			},
-			state: v1.JobFinishedFailed, code: v1.JobFailureBuildFinalization,
+			state: v1.JobFinishedQuarantined, code: v1.JobFailureLeaseLost,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			jr, captured, _ := previewEvidenceFixture(t)
+			logs := &bytes.Buffer{}
+			jr.logger = slog.New(slog.NewTextHandler(&lockedWriter{buffer: logs}, nil))
 			jr.d.jobMu.Lock()
 			jr.d.activeJob = jr
 			jr.d.jobMu.Unlock()
@@ -542,19 +545,19 @@ func TestFinalizeBuildCancelDuringRedeployFinishesCancelled(t *testing.T) {
 			})
 			assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusDeployed, "")
 			makePreviewStale(t, jr)
-			rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
-			rm.AllowLocal = true
-			_, _, err := jr.finalizeBuild(jr.ctx, rm, true)
-			if err == nil {
-				t.Fatal("finalize succeeded after the interruption")
-			}
+			outcome := jr.buildJobOutcome(jr.ctx)
+			jr.d.cfg.Isolation = "direct"
+			jr.completeJob(outcome, nil)
 			assertNoPreviewEvidence(t, captured)
-			outcome := jr.buildFinalizationOutcome(err)
-			if outcome.State != tc.state || outcome.FailureCode != tc.code {
-				t.Fatalf("job outcome = %+v, want %s/%s", outcome, tc.state, tc.code)
+			finished := captured.byKind("job_finished")
+			if len(finished) != 1 {
+				t.Fatalf("job_finished events = %d", len(finished))
 			}
-			if err := validation.JobFinishedEvent(jr.jobFinishedEvent(outcome)); err != nil {
-				t.Fatalf("job_finished rejected: %v", err)
+			if finished[0]["state"] != string(tc.state) || finished[0]["failure_code"] != string(tc.code) {
+				t.Fatalf("job_finished = %v, want %s/%s", finished[0], tc.state, tc.code)
+			}
+			if tc.log != "" && (!strings.Contains(logs.String(), tc.log) || !strings.Contains(logs.String(), "level=WARN")) {
+				t.Fatalf("logs = %q, want WARN %q", logs.String(), tc.log)
 			}
 		})
 	}
