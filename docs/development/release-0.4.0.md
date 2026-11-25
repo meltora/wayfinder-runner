@@ -48,15 +48,32 @@ Run on a host with Docker, from the release commit:
 RUN_PREVIEW_HOST_DOCKER=1 go test -count=1 -v -run 'TestRealDocker' ./internal/previewhost/
 ```
 
-- [ ] `TestRealDockerDeployAndDestroy` passes. It shows that, in allow mode, a `CONNECT example.com:443` from the preview network gets `200`, a host that is not allowlisted gets `403`, and the allowlisted host is unreachable without the proxy.
-- [ ] `TestRealDockerJobNetworkReachesOnlyIngress` passes. It shows that:
-  - [ ] the gateway gets an IPv4 address on the `inhibit_ipv4` preview network, it is visible through `InterfaceAddrs`, and the egress proxy binds on it (deploy reaches `deployed`);
-  - [ ] the job container gets `preview ok` from `http://our-preview:8080/index.html`;
-  - [ ] a `CONNECT` to `our-preview:3128` from the job gets no HTTP reply, and a plain TCP connect to port 3128 is refused;
-  - [ ] the job container has no default route and cannot reach the public internet, the metadata address, the bridge gateway, the job network gateway or the preview app directly;
-  - [ ] after `DetachJob` the job network is gone and the preview is unreachable.
-- [ ] Docker's wording for a missing network, container and endpoint matches the matchers in `internal/previewhost/docker_cli.go` (record the daemon version).
-- [ ] `docker network inspect --format '{{json .Containers}}'` on a network holding an orphaned endpoint shows the `ep-` key with a `Name`, and `docker network disconnect -f <network> <endpoint name>` removes it so that `docker network rm` succeeds. If an orphan cannot be produced on the test host, record that and the daemon version instead.
+- [x] `TestRealDockerDeployAndDestroy` passes. It shows that, in allow mode, a `CONNECT example.com:443` from the preview network gets `200`, a host that is not allowlisted gets `403`, and the allowlisted host is unreachable without the proxy.
+- [x] `TestRealDockerJobNetworkReachesOnlyIngress` passes. It shows that:
+  - [x] the gateway gets an IPv4 address on the `inhibit_ipv4` preview network, it is visible through `InterfaceAddrs`, and the egress proxy binds on it (deploy reaches `deployed`);
+  - [x] the job container gets `preview ok` from `http://our-preview:8080/index.html`;
+  - [x] a `CONNECT` to `our-preview:3128` from the job gets no HTTP reply, and a plain TCP connect to port 3128 is refused;
+  - [x] the job container has no default route and cannot reach the public internet, the metadata address, the bridge gateway, the job network gateway or the preview app directly;
+  - [x] after `DetachJob` the job network is gone and the preview is unreachable.
+- [x] Docker's wording for a missing network, container and endpoint matches the matchers in `internal/previewhost/docker_cli.go` (record the daemon version).
+- [x] `docker network inspect --format '{{json .Containers}}'` on a network holding an orphaned endpoint shows the `ep-` key with a `Name`, and `docker network disconnect -f <network> <endpoint name>` removes it so that `docker network rm` succeeds. If an orphan cannot be produced on the test host, record that and the daemon version instead.
+
+#### Gate 2 record (2026-11-25)
+
+- **Host:** Docker 29.6.1 (client and server), API 1.55, `overlay2`, rootful default context, AppArmor and seccomp.
+- **Commit:** runner `99e3390`. Both tests passed on two consecutive runs, and no `our-preview*` container or network was left behind.
+- **First run:** the allowlisted `CONNECT` got `502`. Busybox `nc` half-closed the connection as soon as `printf` ended. The gateway's HTTP server then cancelled the request context, and the DNS lookup failed with "operation was canceled". `99e3390` keeps the probe's input open in both tests, `(printf "$0"; sleep 5) | nc …`. Real HTTPS clients do not half-close before the `200`.
+- **Docker wording:**
+
+  | Operation | Daemon message | Matcher |
+  |---|---|---|
+  | `network inspect`, `network disconnect`, `network rm` on a missing network | `network <name> not found` | `networkMissing` |
+  | `network disconnect --force` of a missing endpoint or container name | `endpoint <name> not found` | `endpointMissing` |
+  | `network disconnect` without `--force` of a missing container, `rm -f -v` of a missing container | `No such container: <name>` | `containerMissing` |
+  | `network disconnect` of a live container that is not on the network, with or without `--force` | `container <id> is not connected to network <name>` | `containerNotConnected` |
+  | `volume rm -f` of a missing volume | none; exit status 0 | not needed |
+
+- **Orphan endpoint:** an orphan was not produced on Docker 29.6.1; producing one needs an unclean daemon stop. A normal endpoint in `{{json .Containers}}` has the keys `EndpointID`, `IPv4Address`, `IPv6Address`, `MacAddress` and `Name`, which matches the parser's `map[string]struct{ Name string }`.
 
 ### 3a. Local end to end (blocks the tag; requires the user's approval in the runner tab, together with the real-Docker gate)
 
@@ -83,3 +100,5 @@ There is no staging environment. This needs the preview domain, its DNS, the cer
 - Readiness with the userland proxy can report about 50 ms early.
 - Job start and startup recovery still read the wall clock rather than the injected lease clock.
 - A job network leaked by a failed recovery detach waits for the next restart, since the sweep is startup-only.
+- A client that half-closes its connection before the gateway answers `CONNECT` gets `502`, because the request context is cancelled during the DNS lookup or dial. No known HTTPS client does this.
+- The orphaned `ep-` endpoint path (`disconnect -f` by endpoint name) is covered by unit tests only, since no orphan could be produced on the gate host.
