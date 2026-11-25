@@ -114,6 +114,26 @@ func TestAttachJobConnectsContainerAndGatewayAlias(t *testing.T) {
 	}
 }
 
+func TestAttachJobRejectsInvalidJobContainer(t *testing.T) {
+	h := deployedHarness(t, testContent())
+	before := len(h.engine.Events())
+	for _, container := range []string{"", "-rm", "--force", "job container", "job/container", "." + testJobContainer, strings.Repeat("a", 129)} {
+		if err := h.controller.AttachJob(context.Background(), testPreviewID, testAttemptID, container); err == nil {
+			t.Fatalf("job container %q accepted", container)
+		}
+	}
+	if events := h.engine.Events(); len(events) != before {
+		t.Fatalf("invalid job container reached the engine: %v", events[before:])
+	}
+	if _, exists := h.engine.Networks()[JobNetworkName(testRunnerID, testAttemptID)]; exists {
+		t.Fatal("job network created for an invalid job container")
+	}
+	addJobContainer(h, "0123456789abcdef0123")
+	if err := h.controller.AttachJob(context.Background(), testPreviewID, testAttemptID, "0123456789abcdef0123"); err != nil {
+		t.Fatalf("container id rejected: %v", err)
+	}
+}
+
 func TestJobNetworkIsRemovedAtJobEndAndOnReplace(t *testing.T) {
 	h := attachedHarness(t)
 	name := JobNetworkName(testRunnerID, testAttemptID)

@@ -30,6 +30,9 @@ func (d *Docker) AttachJob(ctx context.Context, previewID, attemptID, jobContain
 	if previewID == "" || attemptID == "" || jobContainer == "" {
 		return errors.New("job preview network requires a preview id, an attempt id and a job container")
 	}
+	if !dockerObjectNamePattern.MatchString(jobContainer) && !dockerContainerIDPattern.MatchString(jobContainer) {
+		return errors.New("job preview network requires a valid job container name")
+	}
 	labels := JobNetworkLabels(d.cfg.RunnerID, attemptID)
 	if err := d.removeJobNetworks(ctx, labels); err != nil {
 		return err

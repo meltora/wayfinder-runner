@@ -92,6 +92,9 @@ func newGateway(cfg Config, resolver Resolver, dialer Dialer, logger *slog.Logge
 	if cfg.EgressListen == "" && len(cfg.EgressSources) > 0 {
 		return nil, errors.New("preview gateway egress sources need an egress listen address")
 	}
+	if cfg.EgressListen != "" && len(cfg.EgressSources) == 0 {
+		return nil, errors.New("preview gateway egress listen address needs at least one egress source")
+	}
 	for _, source := range cfg.EgressSources {
 		if !source.IsValid() {
 			return nil, errors.New("preview gateway egress source is not a valid prefix")
@@ -550,24 +553,24 @@ func (listener *sourceFilterListener) Accept() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		if listener.permits(conn.RemoteAddr()) {
+		if listener.permits(conn.RemoteAddr()) && listener.permits(conn.LocalAddr()) {
 			return conn, nil
 		}
 		_ = conn.Close()
 	}
 }
 
-func (listener *sourceFilterListener) permits(remote net.Addr) bool {
-	if remote == nil {
+func (listener *sourceFilterListener) permits(endpoint net.Addr) bool {
+	if endpoint == nil {
 		return false
 	}
-	address, err := netip.ParseAddrPort(remote.String())
+	address, err := netip.ParseAddrPort(endpoint.String())
 	if err != nil {
 		return false
 	}
-	source := address.Addr().Unmap()
+	ip := address.Addr().Unmap()
 	for _, prefix := range listener.sources {
-		if prefix.Contains(source) {
+		if prefix.Contains(ip) {
 			return true
 		}
 	}

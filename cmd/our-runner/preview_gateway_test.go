@@ -10,6 +10,7 @@ func TestParsePreviewGatewayFlags(t *testing.T) {
 	cfg, err := parsePreviewGatewayFlags([]string{
 		"--ingress-listen", ":8080", "--ingress-target", "app:3000",
 		"--egress-listen", ":3128", "--allow=registry.npmjs.org", "--allow", "api.github.com",
+		"--egress-source", "172.25.0.0/16",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,11 +51,11 @@ func TestParsePreviewGatewayFlagsEgressSource(t *testing.T) {
 	if !slices.Equal(cfg.EgressSources, want) {
 		t.Fatalf("egress sources = %v", cfg.EgressSources)
 	}
-	none, err := parsePreviewGatewayFlags([]string{"--ingress-listen", ":8080", "--ingress-target", "app:3000", "--egress-listen", ":3128"})
-	if err != nil || len(none.EgressSources) != 0 {
-		t.Fatalf("cfg = %+v err = %v", none, err)
-	}
 	for name, args := range map[string][]string{
+		"egress without source": {"--ingress-listen", ":8080", "--ingress-target", "app:3000", "--egress-listen", ":3128"},
+		"allow without source": {
+			"--ingress-listen", ":8080", "--ingress-target", "app:3000", "--egress-listen", ":3128", "--allow", "a.example.com",
+		},
 		"source without egress": {"--ingress-listen", ":8080", "--ingress-target", "app:3000", "--egress-source", "10.0.0.0/8"},
 		"empty source":          {"--ingress-listen", ":8080", "--ingress-target", "app:3000", "--egress-listen", ":3128", "--egress-source="},
 		"bare address":          {"--ingress-listen", ":8080", "--ingress-target", "app:3000", "--egress-listen", ":3128", "--egress-source", "10.0.0.1"},

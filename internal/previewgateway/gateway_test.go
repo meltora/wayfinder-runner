@@ -141,6 +141,9 @@ func startGateway(t *testing.T, cfg Config, target string, answers [][]netip.Add
 	if cfg.EgressListen == "" {
 		cfg.EgressListen = "127.0.0.1:0"
 	}
+	if len(cfg.EgressSources) == 0 {
+		cfg.EgressSources = loopbackSources
+	}
 	g, err := newGateway(cfg, h.resolver, h.dialer, slog.New(slog.NewTextHandler(h.logs, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -304,7 +307,10 @@ func TestConnectTriesEachCheckedAddressInOrder(t *testing.T) {
 	unreachable := closed.Addr().String()
 	_ = closed.Close()
 	failFirst := &orderedDialer{targets: []string{unreachable, echo}}
-	g, err := newGateway(Config{IngressListen: "x:1", IngressTarget: "app:1", EgressListen: "x:2", Allow: []string{"api.example.com"}},
+	g, err := newGateway(Config{
+		IngressListen: "x:1", IngressTarget: "app:1", EgressListen: "x:2", Allow: []string{"api.example.com"},
+		EgressSources: loopbackSources,
+	},
 		resolverFunc(func(context.Context, string, string) ([]netip.Addr, error) {
 			return public("93.184.216.34", "1.1.1.1"), nil
 		}),
@@ -607,6 +613,7 @@ func TestTunnelIdleTimeoutClosesAQuietTunnel(t *testing.T) {
 	cfg := Config{
 		IngressListen: "127.0.0.1:0", IngressTarget: "app:1", EgressListen: "127.0.0.1:0",
 		Allow: []string{"api.example.com"}, AllowAddress: func(address netip.Addr) bool { return address == loopback },
+		EgressSources: loopbackSources,
 	}
 	resolver := &recordingResolver{answers: [][]netip.Addr{{loopback}}}
 	g, err := newGateway(cfg, resolver, &redirectDialer{target: echoServer(t)}, nil)
@@ -650,6 +657,9 @@ func TestNewGatewayValidatesConfig(t *testing.T) {
 			IngressListen: ":8080", IngressTarget: "app:1", EgressSources: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
 		},
 		"invalid source": {IngressListen: ":8080", IngressTarget: "app:1", EgressListen: ":3128", EgressSources: []netip.Prefix{{}}},
+		"egress without sources": {
+			IngressListen: ":8080", IngressTarget: "app:1", EgressListen: ":3128", Allow: []string{"a.example.com"},
+		},
 	} {
 		if _, err := newGateway(cfg, resolver, dialer, nil); err == nil {
 			t.Fatalf("%s accepted", name)
@@ -657,6 +667,68 @@ func TestNewGatewayValidatesConfig(t *testing.T) {
 	}
 	if _, err := newGateway(Config{IngressListen: ":8080", IngressTarget: "app:1"}, nil, dialer, nil); err == nil {
 		t.Fatal("missing resolver accepted")
+	}
+}
+
+var loopbackSources = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+
+type addressedConn struct {
+	net.Conn
+	local, remote net.Addr
+	closed        bool
+}
+
+func (conn *addressedConn) LocalAddr() net.Addr { return conn.local }
+
+func (conn *addressedConn) RemoteAddr() net.Addr { return conn.remote }
+
+func (conn *addressedConn) Close() error {
+	conn.closed = true
+	return nil
+}
+
+func (conn *addressedConn) Read([]byte) (int, error) {
+	panic("filtered connection was read")
+}
+
+type scriptedListener struct {
+	conns []*addressedConn
+}
+
+func (listener *scriptedListener) Accept() (net.Conn, error) {
+	if len(listener.conns) == 0 {
+		return nil, net.ErrClosed
+	}
+	conn := listener.conns[0]
+	listener.conns = listener.conns[1:]
+	return conn, nil
+}
+
+func (listener *scriptedListener) Close() error { return nil }
+
+func (listener *scriptedListener) Addr() net.Addr { return rawAddr("10.1.0.2:3128") }
+
+func TestGatewayEgressRejectsConnectionToALocalAddressOutsideTheSources(t *testing.T) {
+	sources := []netip.Prefix{netip.MustParsePrefix("10.1.0.0/16")}
+	onJobNetwork := &addressedConn{local: rawAddr("10.2.0.3:3128"), remote: rawAddr("10.1.0.5:40000")}
+	unparseableLocal := &addressedConn{local: rawAddr("garbage"), remote: rawAddr("10.1.0.5:40001")}
+	missingLocal := &addressedConn{remote: rawAddr("10.1.0.5:40002")}
+	onPreviewNetwork := &addressedConn{local: rawAddr("[::ffff:10.1.0.2]:3128"), remote: rawAddr("10.1.0.5:40003")}
+	filter := newSourceFilterListener(&scriptedListener{conns: []*addressedConn{onJobNetwork, unparseableLocal, missingLocal, onPreviewNetwork}}, sources)
+	conn, err := filter.Accept()
+	if err != nil || conn != onPreviewNetwork {
+		t.Fatalf("accepted = %v %v", conn, err)
+	}
+	for name, rejected := range map[string]*addressedConn{"job network": onJobNetwork, "unparseable": unparseableLocal, "missing": missingLocal} {
+		if !rejected.closed {
+			t.Fatalf("%s local address was not closed", name)
+		}
+	}
+	if onPreviewNetwork.closed {
+		t.Fatal("preview network connection was closed")
+	}
+	if _, err := filter.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("accept after script = %v", err)
 	}
 }
 

@@ -57,6 +57,9 @@ func parsePreviewGatewayFlags(args []string) (previewgateway.Config, error) {
 	if len(sources) > 0 && cfg.EgressListen == "" {
 		return previewgateway.Config{}, errors.New("preview-gateway --egress-source requires --egress-listen")
 	}
+	if cfg.EgressListen != "" && len(sources) == 0 {
+		return previewgateway.Config{}, errors.New("preview-gateway --egress-listen requires at least one --egress-source")
+	}
 	for _, source := range sources {
 		prefix, err := netip.ParsePrefix(source)
 		if err != nil {
