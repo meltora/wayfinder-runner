@@ -2,11 +2,13 @@ package previewhost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,6 +96,115 @@ func (cli DockerCLI) ConnectNetwork(ctx context.Context, network, container, ali
 		return fmt.Errorf("connect network: %w: %s", err, strings.TrimSpace(output))
 	}
 	return nil
+}
+
+func (cli DockerCLI) NetworkSubnets(ctx context.Context, name string) ([]netip.Prefix, error) {
+	output, err := cli.run(ctx, "network", "inspect", "--format", "{{json .IPAM.Config}}", name)
+	if err != nil {
+		return nil, fmt.Errorf("inspect network subnets: %w: %s", err, strings.TrimSpace(output))
+	}
+	var config []struct {
+		Subnet string
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &config); err != nil {
+		return nil, errors.New("docker returned an invalid network IPAM configuration")
+	}
+	var subnets []netip.Prefix
+	for _, entry := range config {
+		if entry.Subnet == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(entry.Subnet)
+		if err != nil {
+			return nil, errors.New("docker returned an invalid network subnet")
+		}
+		subnets = append(subnets, prefix.Masked())
+	}
+	return subnets, nil
+}
+
+func (cli DockerCLI) NetworkContainers(ctx context.Context, name string) ([]string, error) {
+	output, err := cli.run(ctx, "network", "inspect", "--format", "{{range $id, $endpoint := .Containers}}{{$id}} {{end}}", name)
+	if err != nil {
+		if ctx.Err() == nil && dockerMissing(output) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("inspect network containers: %w: %s", err, strings.TrimSpace(output))
+	}
+	ids := strings.Fields(output)
+	for _, id := range ids {
+		if !dockerContainerIDPattern.MatchString(id) {
+			return nil, errors.New("docker returned an invalid container identifier")
+		}
+	}
+	return ids, nil
+}
+
+func (cli DockerCLI) DisconnectNetwork(ctx context.Context, network, container string, force bool) error {
+	args := []string{"network", "disconnect"}
+	if force {
+		args = append(args, "--force")
+	}
+	output, err := cli.run(ctx, append(args, network, container)...)
+	if err != nil && (ctx.Err() != nil || !(dockerMissing(output) || strings.Contains(strings.ToLower(output), "is not connected"))) {
+		return fmt.Errorf("disconnect network: %w: %s", err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+func (cli DockerCLI) RemoveNetwork(ctx context.Context, name string) error {
+	output, err := cli.run(ctx, "network", "rm", name)
+	if err != nil && (ctx.Err() != nil || !dockerMissing(output)) {
+		return fmt.Errorf("remove network: %w: %s", err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
+func (cli DockerCLI) ListNetworks(ctx context.Context, labels map[string]string) ([]NetworkSummary, error) {
+	if len(labels) == 0 {
+		return nil, errors.New("network listing requires at least one label")
+	}
+	for key, value := range labels {
+		if key == "" || value == "" {
+			return nil, errors.New("network listing requires non-empty labels")
+		}
+	}
+	args := append([]string{"network", "ls", "--no-trunc", "--format", "{{.Name}}"}, labelArgs("--filter", prefixLabels(labels))...)
+	output, err := cli.run(ctx, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list networks: %w: %s", err, strings.TrimSpace(output))
+	}
+	names := strings.Fields(output)
+	if len(names) == 0 {
+		return nil, nil
+	}
+	for _, name := range names {
+		if !dockerObjectNamePattern.MatchString(name) {
+			return nil, errors.New("docker returned an invalid network name")
+		}
+	}
+	inspectArgs := append([]string{"network", "inspect", "--format", `{{json .Name}}{{"\t"}}{{json .Labels}}`}, names...)
+	output, err = cli.run(ctx, inspectArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("inspect networks: %w: %s", err, strings.TrimSpace(output))
+	}
+	var networks []NetworkSummary
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		nameJSON, labelsJSON, found := strings.Cut(strings.TrimSpace(line), "\t")
+		if !found {
+			return nil, errors.New("docker returned an invalid network listing")
+		}
+		var network NetworkSummary
+		if json.Unmarshal([]byte(nameJSON), &network.Name) != nil || json.Unmarshal([]byte(labelsJSON), &network.Labels) != nil ||
+			!dockerObjectNamePattern.MatchString(network.Name) {
+			return nil, errors.New("docker returned an invalid network listing")
+		}
+		if !labelsMatch(network.Labels, labels) {
+			continue
+		}
+		networks = append(networks, network)
+	}
+	return networks, nil
 }
 
 func (cli DockerCLI) ImagePresent(ctx context.Context, image string) (bool, error) {

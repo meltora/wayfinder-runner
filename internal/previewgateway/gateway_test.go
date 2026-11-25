@@ -646,6 +646,10 @@ func TestNewGatewayValidatesConfig(t *testing.T) {
 		"target without port":  {IngressListen: ":8080", IngressTarget: "app"},
 		"allow without egress": {IngressListen: ":8080", IngressTarget: "app:1", Allow: []string{"a.example.com"}},
 		"empty allowed host":   {IngressListen: ":8080", IngressTarget: "app:1", EgressListen: ":3128", Allow: []string{"."}},
+		"sources without egress": {
+			IngressListen: ":8080", IngressTarget: "app:1", EgressSources: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")},
+		},
+		"invalid source": {IngressListen: ":8080", IngressTarget: "app:1", EgressListen: ":3128", EgressSources: []netip.Prefix{{}}},
 	} {
 		if _, err := newGateway(cfg, resolver, dialer, nil); err == nil {
 			t.Fatalf("%s accepted", name)
@@ -654,4 +658,121 @@ func TestNewGatewayValidatesConfig(t *testing.T) {
 	if _, err := newGateway(Config{IngressListen: ":8080", IngressTarget: "app:1"}, nil, dialer, nil); err == nil {
 		t.Fatal("missing resolver accepted")
 	}
+}
+
+type rawAddr string
+
+func (addr rawAddr) Network() string { return "tcp" }
+
+func (addr rawAddr) String() string { return string(addr) }
+
+func assertClosedWithoutResponse(t *testing.T, address string) {
+	t.Helper()
+	conn, err := net.Dial("tcp", address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_, _ = io.WriteString(conn, "CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n")
+	data, err := io.ReadAll(conn)
+	if len(data) != 0 {
+		t.Fatalf("foreign source got a response: %q", data)
+	}
+	var timeout net.Error
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		t.Fatal("foreign source connection was left open")
+	}
+}
+
+func TestGatewayEgressRejectsForeignSource(t *testing.T) {
+	foreign := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	local := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("127.0.0.0/8")}
+
+	t.Run("filter", func(t *testing.T) {
+		for name, test := range map[string]struct {
+			sources []netip.Prefix
+			accept  bool
+		}{
+			"foreign": {foreign, false},
+			"local":   {local, true},
+		} {
+			t.Run(name, func(t *testing.T) {
+				raw := listen(t)
+				filter := newSourceFilterListener(raw, test.sources)
+				t.Cleanup(func() { _ = filter.Close() })
+				accepted := make(chan net.Conn, 1)
+				go func() {
+					conn, err := filter.Accept()
+					if err == nil {
+						accepted <- conn
+					}
+				}()
+				if test.accept {
+					conn, err := net.Dial("tcp", raw.Addr().String())
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() { _ = conn.Close() }()
+					select {
+					case server := <-accepted:
+						_ = server.Close()
+					case <-time.After(5 * time.Second):
+						t.Fatal("local source was not accepted")
+					}
+					return
+				}
+				assertClosedWithoutResponse(t, raw.Addr().String())
+				select {
+				case <-accepted:
+					t.Fatal("foreign source reached Accept")
+				case <-time.After(50 * time.Millisecond):
+				}
+			})
+		}
+	})
+
+	t.Run("unparseable remote", func(t *testing.T) {
+		filter := newSourceFilterListener(nil, local)
+		for _, remote := range []net.Addr{nil, rawAddr("garbage"), rawAddr("127.0.0.1"), rawAddr("[::ffff:10.1.2.3]:1")} {
+			want := remote != nil && remote.String() == "[::ffff:10.1.2.3]:1"
+			if got := filter.permits(remote); got != want {
+				t.Fatalf("permits(%v) = %v", remote, got)
+			}
+		}
+	})
+
+	t.Run("gateway", func(t *testing.T) {
+		loopback := netip.MustParseAddr("127.0.0.1")
+		cfg := Config{
+			Allow:        []string{"api.example.com"},
+			AllowAddress: func(address netip.Addr) bool { return address == loopback },
+		}
+		cfg.EgressSources = foreign
+		h := startGateway(t, cfg, echoServer(t), [][]netip.Addr{{loopback}}, 0)
+		assertClosedWithoutResponse(t, h.egress)
+		if len(h.resolver.Calls()) != 0 || len(h.dialer.Dialed()) != 0 {
+			t.Fatalf("foreign source was served: %v %v", h.resolver.Calls(), h.dialer.Dialed())
+		}
+		ingress, err := net.Dial("tcp", h.ingress)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = ingress.SetDeadline(time.Now().Add(5 * time.Second))
+		_, _ = io.WriteString(ingress, "ping")
+		_ = ingress.(*net.TCPConn).CloseWrite()
+		body, err := io.ReadAll(ingress)
+		_ = ingress.Close()
+		if err != nil || string(body) != "ping" {
+			t.Fatalf("ingress echo = %q %v", body, err)
+		}
+
+		cfg.EgressSources = local
+		allowed := startGateway(t, cfg, echoServer(t), [][]netip.Addr{{loopback}}, 0)
+		conn, reader, status := allowed.connect("api.example.com:443")
+		if status != http.StatusOK {
+			t.Fatalf("status = %d", status)
+		}
+		assertEcho(t, conn, reader, "client hello")
+	})
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,6 +44,7 @@ type Config struct {
 	EgressListen  string
 	Allow         []string
 	AllowAddress  func(netip.Addr) bool
+	EgressSources []netip.Prefix
 }
 
 type gateway struct {
@@ -86,6 +88,14 @@ func newGateway(cfg Config, resolver Resolver, dialer Dialer, logger *slog.Logge
 	}
 	if cfg.EgressListen == "" && len(cfg.Allow) > 0 {
 		return nil, errors.New("preview gateway allow list needs an egress listen address")
+	}
+	if cfg.EgressListen == "" && len(cfg.EgressSources) > 0 {
+		return nil, errors.New("preview gateway egress sources need an egress listen address")
+	}
+	for _, source := range cfg.EgressSources {
+		if !source.IsValid() {
+			return nil, errors.New("preview gateway egress source is not a valid prefix")
+		}
 	}
 	if resolver == nil || dialer == nil {
 		return nil, errors.New("preview gateway needs a resolver and a dialer")
@@ -131,6 +141,9 @@ func (g *gateway) serve(ctx context.Context, ingress, egress net.Listener) error
 			MaxHeaderBytes:    maxHeaderBytes,
 			ErrorLog:          slog.NewLogLogger(slog.DiscardHandler, slog.LevelError),
 			BaseContext:       func(net.Listener) context.Context { return ctx },
+		}
+		if len(g.cfg.EgressSources) > 0 {
+			egress = newSourceFilterListener(egress, g.cfg.EgressSources)
 		}
 		egressLimited := newLimitListener(egress, g.limit)
 		go func() { errs <- server.Serve(egressLimited) }()
@@ -520,6 +533,45 @@ func (listener *limitListener) Accept() (net.Conn, error) {
 func (listener *limitListener) Close() error {
 	listener.once.Do(func() { close(listener.done) })
 	return listener.Listener.Close()
+}
+
+type sourceFilterListener struct {
+	net.Listener
+	sources []netip.Prefix
+}
+
+func newSourceFilterListener(listener net.Listener, sources []netip.Prefix) *sourceFilterListener {
+	return &sourceFilterListener{Listener: listener, sources: slices.Clone(sources)}
+}
+
+func (listener *sourceFilterListener) Accept() (net.Conn, error) {
+	for {
+		conn, err := listener.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if listener.permits(conn.RemoteAddr()) {
+			return conn, nil
+		}
+		_ = conn.Close()
+	}
+}
+
+func (listener *sourceFilterListener) permits(remote net.Addr) bool {
+	if remote == nil {
+		return false
+	}
+	address, err := netip.ParseAddrPort(remote.String())
+	if err != nil {
+		return false
+	}
+	source := address.Addr().Unmap()
+	for _, prefix := range listener.sources {
+		if prefix.Contains(source) {
+			return true
+		}
+	}
+	return false
 }
 
 type limitedConn struct {

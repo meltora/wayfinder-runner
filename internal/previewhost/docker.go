@@ -154,11 +154,12 @@ func (d *Docker) Deploy(ctx context.Context, request DeployRequest) DeployResult
 }
 
 type deployment struct {
-	request   DeployRequest
-	prefix    string
-	labels    map[string]string
-	workspace string
-	env       environment
+	request       DeployRequest
+	prefix        string
+	labels        map[string]string
+	workspace     string
+	env           environment
+	egressSources []netip.Prefix
 }
 
 func (d *Docker) deploy(ctx context.Context, request DeployRequest) ([]v1.PreviewObservationCheck, *phaseFailure) {
@@ -294,15 +295,19 @@ func (d *Docker) baseSpec(run *deployment, image string) ContainerSpec {
 }
 
 func (d *Docker) services(ctx context.Context, run *deployment, log *tailBuffer) error {
-	network := NetworkSpec{
-		Name: run.prefix, Labels: run.labels, Internal: true,
-		Options: map[string]string{
-			"com.docker.network.bridge.inhibit_ipv4": "true",
-			"com.docker.network.enable_ipv6":         "false",
-		},
-	}
+	network := NetworkSpec{Name: run.prefix, Labels: run.labels, Internal: true, Options: isolatedNetworkOptions()}
 	if err := d.engine.CreateNetwork(ctx, network); err != nil {
 		return err
+	}
+	if egressAllowed(run.request.Content) {
+		subnets, err := d.engine.NetworkSubnets(ctx, run.prefix)
+		if err != nil {
+			return err
+		}
+		if len(subnets) == 0 {
+			return errors.New("preview network has no subnet to restrict egress to")
+		}
+		run.egressSources = subnets
 	}
 	if err := d.startGateway(ctx, run); err != nil {
 		return err

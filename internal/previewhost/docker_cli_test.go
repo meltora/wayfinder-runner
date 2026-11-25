@@ -2,6 +2,8 @@ package previewhost
 
 import (
 	"context"
+	"maps"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -327,5 +329,81 @@ esac`)
 	installFakeDocker(t, `echo "Cannot connect to the Docker daemon" >&2; exit 1`)
 	if _, err := cli.ServerVersion(context.Background()); err == nil {
 		t.Fatal("unreachable docker daemon reported a version")
+	}
+}
+
+func TestDockerCLIJobNetworkVerbs(t *testing.T) {
+	log := installFakeDocker(t, `
+case "$*" in
+*IPAM*) echo '[{"Subnet":"172.25.0.0/16"},{"Subnet":""},{"Subnet":"fd00:9::/64","Gateway":"fd00:9::1"}]' ;;
+*Containers*) echo '0123456789abcdef 89abcdef01234567 ' ;;
+*Labels*) printf '"our-preview-job-0787555948ce"\t{"com.ourplatform.attempt-id":"attempt-1","com.ourplatform.preview-job-network":"runner-1"}\n' ;;
+"network ls"*) echo our-preview-job-0787555948ce ;;
+"network disconnect"*) echo 'Error response from daemon: container x is not connected to network y' >&2; exit 1 ;;
+"network rm"*) echo 'Error response from daemon: network our-preview-job-0787555948ce not found' >&2; exit 1 ;;
+esac`)
+	cli := DockerCLI{TempDir: privateDir(t)}
+	ctx := context.Background()
+	name := JobNetworkName(testRunnerID, testAttemptID)
+	subnets, err := cli.NetworkSubnets(ctx, name)
+	if err != nil || !slices.Equal(subnets, []netip.Prefix{netip.MustParsePrefix("172.25.0.0/16"), netip.MustParsePrefix("fd00:9::/64")}) {
+		t.Fatalf("subnets = %v %v", subnets, err)
+	}
+	containers, err := cli.NetworkContainers(ctx, name)
+	if err != nil || !slices.Equal(containers, []string{"0123456789abcdef", "89abcdef01234567"}) {
+		t.Fatalf("containers = %v %v", containers, err)
+	}
+	if err := cli.DisconnectNetwork(ctx, name, "0123456789abcdef", true); err != nil {
+		t.Fatalf("disconnecting a container that is not connected: %v", err)
+	}
+	if err := cli.RemoveNetwork(ctx, name); err != nil {
+		t.Fatalf("removing a missing network: %v", err)
+	}
+	networks, err := cli.ListNetworks(ctx, JobNetworkLabels(testRunnerID, testAttemptID))
+	if err != nil || len(networks) != 1 || networks[0].Name != name ||
+		!maps.Equal(networks[0].Labels, JobNetworkLabels(testRunnerID, testAttemptID)) {
+		t.Fatalf("networks = %+v %v", networks, err)
+	}
+	if _, err := cli.ListNetworks(ctx, nil); err == nil {
+		t.Fatal("unfiltered network listing was accepted")
+	}
+	if _, err := cli.ListNetworks(ctx, map[string]string{LabelPreviewJobNetwork: ""}); err == nil {
+		t.Fatal("empty label filter was accepted")
+	}
+	want := []string{
+		"network inspect --format {{json .IPAM.Config}} " + name,
+		"network inspect --format {{range $id, $endpoint := .Containers}}{{$id}} {{end}} " + name,
+		"network disconnect --force " + name + " 0123456789abcdef",
+		"network rm " + name,
+		"network ls --no-trunc --format {{.Name}} --filter label=com.ourplatform.attempt-id=attempt-1 " +
+			"--filter label=com.ourplatform.preview-job-network=runner-1",
+		"network inspect --format {{json .Name}}{{\"\t\"}}{{json .Labels}} " + name,
+	}
+	if calls := readCalls(t, log); !slices.Equal(calls, want) {
+		t.Fatalf("calls = %q", calls)
+	}
+
+	installFakeDocker(t, `
+case "$*" in
+*IPAM*) echo '[{"Subnet":"not-a-subnet"}]' ;;
+*Containers*) echo 'not-an-id' ;;
+"network disconnect"*) echo 'permission denied' >&2; exit 1 ;;
+"network rm"*) echo 'network has active endpoints' >&2; exit 1 ;;
+"network ls"*) echo 'bad/name' ;;
+esac`)
+	if _, err := cli.NetworkSubnets(ctx, name); err == nil {
+		t.Fatal("invalid subnet accepted")
+	}
+	if _, err := cli.NetworkContainers(ctx, name); err == nil {
+		t.Fatal("invalid container id accepted")
+	}
+	if err := cli.DisconnectNetwork(ctx, name, "0123456789abcdef", true); err == nil {
+		t.Fatal("disconnect failure ignored")
+	}
+	if err := cli.RemoveNetwork(ctx, name); err == nil {
+		t.Fatal("network removal failure ignored")
+	}
+	if _, err := cli.ListNetworks(ctx, JobNetworkLabels(testRunnerID, testAttemptID)); err == nil {
+		t.Fatal("invalid network name accepted")
 	}
 }

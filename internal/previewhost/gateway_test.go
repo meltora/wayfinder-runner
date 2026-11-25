@@ -199,7 +199,7 @@ func TestGatewayContainerPolicyAndArguments(t *testing.T) {
 		"none": {testContent(), []string{"--ingress-listen", ":8080", "--ingress-target", "app:3000"}},
 		"allow": {allowContent(), []string{
 			"--ingress-listen", ":8080", "--ingress-target", "app:3000", "--egress-listen", ":3128",
-			"--allow", "registry.npmjs.org", "--allow", "api.github.com",
+			"--allow", "registry.npmjs.org", "--allow", "api.github.com", "--egress-source", "10.89.0.0/24",
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {

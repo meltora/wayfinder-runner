@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/netip"
 	"os"
 	"slices"
 	"strconv"
@@ -42,6 +43,96 @@ type fakeEngine struct {
 	connects   []fakeConnect
 	connectErr error
 	hostPorts  []string
+	subnets    map[string][]netip.Prefix
+	subnetErr  error
+	endpoints  map[string][]string
+	listNetErr error
+}
+
+var fakeDefaultSubnet = netip.MustParsePrefix("10.89.0.0/24")
+
+func (engine *fakeEngine) NetworkSubnets(ctx context.Context, name string) ([]netip.Prefix, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	engine.record("subnets " + name)
+	if engine.subnetErr != nil {
+		return nil, engine.subnetErr
+	}
+	if _, exists := engine.networks[name]; !exists {
+		return nil, fmt.Errorf("network %s does not exist", name)
+	}
+	if subnets, set := engine.subnets[name]; set {
+		return slices.Clone(subnets), nil
+	}
+	return []netip.Prefix{fakeDefaultSubnet}, nil
+}
+
+func (engine *fakeEngine) NetworkContainers(ctx context.Context, name string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return slices.Clone(engine.endpoints[name]), nil
+}
+
+func (engine *fakeEngine) DisconnectNetwork(ctx context.Context, network, container string, force bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	engine.record("disconnect " + network + " " + container + " " + strconv.FormatBool(force))
+	engine.endpoints[network] = slices.DeleteFunc(engine.endpoints[network], func(name string) bool { return name == container })
+	return nil
+}
+
+func (engine *fakeEngine) RemoveNetwork(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	engine.record("rmnet " + name)
+	if len(engine.endpoints[name]) > 0 {
+		return fmt.Errorf("network %s has active endpoints", name)
+	}
+	delete(engine.networks, name)
+	delete(engine.endpoints, name)
+	return nil
+}
+
+func (engine *fakeEngine) ListNetworks(ctx context.Context, labels map[string]string) ([]NetworkSummary, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.listNetErr != nil {
+		return nil, engine.listNetErr
+	}
+	var networks []NetworkSummary
+	for _, name := range slices.Sorted(maps.Keys(engine.networks)) {
+		if spec := engine.networks[name]; labelsMatch(spec.Labels, labels) {
+			networks = append(networks, NetworkSummary{Name: name, Labels: maps.Clone(spec.Labels)})
+		}
+	}
+	return networks, nil
+}
+
+func (engine *fakeEngine) Networks() map[string]NetworkSpec {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return maps.Clone(engine.networks)
+}
+
+func (engine *fakeEngine) Endpoints(network string) []string {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	return slices.Clone(engine.endpoints[network])
 }
 
 func (engine *fakeEngine) HostPortCalls() []string {
@@ -106,6 +197,7 @@ func (engine *fakeEngine) ConnectNetwork(ctx context.Context, network, container
 		return fmt.Errorf("container %s does not exist", container)
 	}
 	engine.connects = append(engine.connects, fakeConnect{network: network, container: container, alias: alias})
+	engine.endpoints[network] = append(engine.endpoints[network], container)
 	return nil
 }
 
@@ -128,6 +220,8 @@ func newFakeEngine() *fakeEngine {
 		networks:   map[string]NetworkSpec{},
 		containers: map[string]ContainerSpec{},
 		stopped:    map[string]bool{},
+		subnets:    map[string][]netip.Prefix{},
+		endpoints:  map[string][]string{},
 		version:    "27.3.1",
 	}
 }
@@ -361,20 +455,15 @@ func (engine *fakeEngine) Remove(ctx context.Context, objects Objects) error {
 	}
 	for _, name := range objects.Containers {
 		delete(engine.containers, name)
+		for network, members := range engine.endpoints {
+			engine.endpoints[network] = slices.DeleteFunc(members, func(member string) bool { return member == name })
+		}
 	}
 	for _, name := range objects.Networks {
 		delete(engine.networks, name)
+		delete(engine.endpoints, name)
 	}
 	return nil
-}
-
-func labelsMatch(have, want map[string]string) bool {
-	for key, value := range want {
-		if have[key] != value {
-			return false
-		}
-	}
-	return true
 }
 
 type fakeWorkspaces struct {

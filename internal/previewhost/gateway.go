@@ -222,6 +222,9 @@ func (d *Docker) gatewaySpec(run *deployment, image string) ContainerSpec {
 		for _, host := range content.Egress.Hosts {
 			command = append(command, "--allow", host)
 		}
+		for _, source := range run.egressSources {
+			command = append(command, "--egress-source", source.String())
+		}
 	}
 	return ContainerSpec{
 		Name: gatewayName(run.prefix), Image: image, Network: edgeName(run.prefix), Labels: run.labels,

@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
@@ -34,11 +36,12 @@ func parsePreviewGatewayFlags(args []string) (previewgateway.Config, error) {
 	set := flag.NewFlagSet("preview-gateway", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	var cfg previewgateway.Config
-	var allow repeatedFlag
+	var allow, sources repeatedFlag
 	set.StringVar(&cfg.IngressListen, "ingress-listen", "", "")
 	set.StringVar(&cfg.IngressTarget, "ingress-target", "", "")
 	set.StringVar(&cfg.EgressListen, "egress-listen", "", "")
 	set.Var(&allow, "allow", "")
+	set.Var(&sources, "egress-source", "")
 	if err := set.Parse(args); err != nil {
 		return previewgateway.Config{}, err
 	}
@@ -50,6 +53,16 @@ func parsePreviewGatewayFlags(args []string) (previewgateway.Config, error) {
 	}
 	if len(allow) > 0 && cfg.EgressListen == "" {
 		return previewgateway.Config{}, errors.New("preview-gateway --allow requires --egress-listen")
+	}
+	if len(sources) > 0 && cfg.EgressListen == "" {
+		return previewgateway.Config{}, errors.New("preview-gateway --egress-source requires --egress-listen")
+	}
+	for _, source := range sources {
+		prefix, err := netip.ParsePrefix(source)
+		if err != nil {
+			return previewgateway.Config{}, fmt.Errorf("preview-gateway --egress-source %q is not a CIDR prefix", source)
+		}
+		cfg.EgressSources = append(cfg.EgressSources, prefix.Masked())
 	}
 	cfg.Allow = allow
 	return cfg, nil

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"net/netip"
 )
 
 const (
@@ -26,6 +27,11 @@ type NetworkSpec struct {
 	Labels   map[string]string
 	Internal bool
 	Options  map[string]string
+}
+
+type NetworkSummary struct {
+	Name   string
+	Labels map[string]string
 }
 
 type Mount struct {
@@ -72,6 +78,11 @@ type Engine interface {
 	ImportImage(ctx context.Context, tag string, tar io.Reader, changes []string) error
 	CreateNetwork(ctx context.Context, spec NetworkSpec) error
 	ConnectNetwork(ctx context.Context, network, container, alias string) error
+	NetworkSubnets(ctx context.Context, name string) ([]netip.Prefix, error)
+	NetworkContainers(ctx context.Context, name string) ([]string, error)
+	DisconnectNetwork(ctx context.Context, network, container string, force bool) error
+	RemoveNetwork(ctx context.Context, name string) error
+	ListNetworks(ctx context.Context, labels map[string]string) ([]NetworkSummary, error)
 	RunDetached(ctx context.Context, spec ContainerSpec) error
 	RunOnce(ctx context.Context, spec ContainerSpec) (string, error)
 	Exec(ctx context.Context, container string, command []string) (string, error)
