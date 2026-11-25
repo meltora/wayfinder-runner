@@ -27,8 +27,9 @@ const (
 )
 
 var (
-	dockerContainerIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
-	dockerObjectNamePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+	dockerContainerIDPattern    = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
+	dockerOrphanEndpointPattern = regexp.MustCompile(`^ep-[0-9a-f]{12,64}$`)
+	dockerObjectNamePattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 )
 
 type DockerCLI struct {
@@ -52,13 +53,67 @@ func (cli DockerCLI) runWithInput(ctx context.Context, input io.Reader, args ...
 	return output.String(), err
 }
 
-func dockerMissing(output string) bool {
-	lower := strings.ToLower(output)
-	return strings.Contains(lower, "no such") || strings.Contains(lower, "not found")
+type dockerSoftLine func(lower string) bool
+
+func dockerOnlySoft(output string, soft ...dockerSoftLine) bool {
+	return dockerOnlySoftBesides(output, nil, soft...)
 }
 
-func dockerRemovalInProgress(output string) bool {
-	return strings.Contains(strings.ToLower(output), "already in progress")
+func dockerOnlySoftBesides(output string, removed []string, soft ...dockerSoftLine) bool {
+	matched := false
+	for _, line := range strings.Split(output, "\n") {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if lower == "" || lower == "[]" || slices.ContainsFunc(removed, func(name string) bool { return strings.ToLower(name) == lower }) {
+			continue
+		}
+		if !slices.ContainsFunc(soft, func(match dockerSoftLine) bool { return match(lower) }) {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}
+
+func anyName(names []string, match func(lower, name string) bool) dockerSoftLine {
+	return func(lower string) bool {
+		return slices.ContainsFunc(names, func(name string) bool { return match(lower, strings.ToLower(name)) })
+	}
+}
+
+func networkMissing(names ...string) dockerSoftLine {
+	return anyName(names, func(lower, name string) bool {
+		return strings.HasSuffix(lower, "network "+name+" not found") || strings.HasSuffix(lower, "no such network: "+name)
+	})
+}
+
+func containerMissing(names ...string) dockerSoftLine {
+	return anyName(names, func(lower, name string) bool {
+		return strings.HasSuffix(lower, "no such container: "+name)
+	})
+}
+
+func endpointMissing(name string) dockerSoftLine {
+	return anyName([]string{name}, func(lower, name string) bool {
+		return strings.HasSuffix(lower, "endpoint "+name+" not found")
+	})
+}
+
+func containerNotConnected(lower string) bool {
+	return strings.Contains(lower, "is not connected to")
+}
+
+func containerRemovalInProgress(ids ...string) dockerSoftLine {
+	return anyName(ids, func(lower, id string) bool {
+		return strings.HasSuffix(lower, "removal of container "+id+" is already in progress")
+	})
+}
+
+func imageMissing(lower string) bool {
+	return strings.Contains(lower, "no such image: ")
+}
+
+func volumeMissing(lower string) bool {
+	return strings.HasSuffix(lower, ": no such volume")
 }
 
 func ownedByCurrentUser(info os.FileInfo) bool {
@@ -126,16 +181,20 @@ func (cli DockerCLI) NetworkSubnets(ctx context.Context, name string) ([]netip.P
 func (cli DockerCLI) NetworkContainers(ctx context.Context, name string) ([]string, error) {
 	output, err := cli.run(ctx, "network", "inspect", "--format", "{{range $id, $endpoint := .Containers}}{{$id}} {{end}}", name)
 	if err != nil {
-		if ctx.Err() == nil && dockerMissing(output) {
+		if ctx.Err() == nil && dockerOnlySoft(output, networkMissing(name)) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("inspect network containers: %w: %s", err, strings.TrimSpace(output))
 	}
-	ids := strings.Fields(output)
-	for _, id := range ids {
+	var ids []string
+	for _, id := range strings.Fields(output) {
+		if dockerOrphanEndpointPattern.MatchString(id) {
+			continue
+		}
 		if !dockerContainerIDPattern.MatchString(id) {
 			return nil, errors.New("docker returned an invalid container identifier")
 		}
+		ids = append(ids, id)
 	}
 	return ids, nil
 }
@@ -146,7 +205,8 @@ func (cli DockerCLI) DisconnectNetwork(ctx context.Context, network, container s
 		args = append(args, "--force")
 	}
 	output, err := cli.run(ctx, append(args, network, container)...)
-	if err != nil && (ctx.Err() != nil || !(dockerMissing(output) || strings.Contains(strings.ToLower(output), "is not connected"))) {
+	soft := []dockerSoftLine{networkMissing(network), containerMissing(container), endpointMissing(container), containerNotConnected}
+	if err != nil && (ctx.Err() != nil || !dockerOnlySoft(output, soft...)) {
 		return fmt.Errorf("disconnect network: %w: %s", err, strings.TrimSpace(output))
 	}
 	return nil
@@ -154,7 +214,7 @@ func (cli DockerCLI) DisconnectNetwork(ctx context.Context, network, container s
 
 func (cli DockerCLI) RemoveNetwork(ctx context.Context, name string) error {
 	output, err := cli.run(ctx, "network", "rm", name)
-	if err != nil && (ctx.Err() != nil || !dockerMissing(output)) {
+	if err != nil && (ctx.Err() != nil || !dockerOnlySoft(output, networkMissing(name))) {
 		return fmt.Errorf("remove network: %w: %s", err, strings.TrimSpace(output))
 	}
 	return nil
@@ -212,7 +272,7 @@ func (cli DockerCLI) ImagePresent(ctx context.Context, image string) (bool, erro
 	if err == nil {
 		return true, nil
 	}
-	if ctx.Err() == nil && dockerMissing(output) {
+	if ctx.Err() == nil && dockerOnlySoft(output, imageMissing) {
 		return false, nil
 	}
 	return false, fmt.Errorf("inspect image: %w", err)
@@ -394,7 +454,7 @@ func (cli DockerCLI) Exec(ctx context.Context, container string, command []strin
 func (cli DockerCLI) Running(ctx context.Context, container string) (bool, error) {
 	output, err := cli.run(ctx, "container", "inspect", "--format", "{{.State.Running}}", container)
 	if err != nil {
-		if ctx.Err() == nil && dockerMissing(output) {
+		if ctx.Err() == nil && dockerOnlySoft(output, containerMissing(container)) {
 			return false, nil
 		}
 		return false, fmt.Errorf("inspect container: %w", err)
@@ -494,17 +554,20 @@ func (cli DockerCLI) Remove(ctx context.Context, objects Objects) error {
 	steps := []struct {
 		args []string
 		ids  []string
+		soft []dockerSoftLine
 	}{
-		{[]string{"rm", "-f", "-v"}, objects.Containers},
-		{[]string{"network", "rm"}, objects.Networks},
-		{[]string{"volume", "rm", "-f"}, objects.Volumes},
+		{[]string{"rm", "-f", "-v"}, objects.Containers, []dockerSoftLine{
+			containerMissing(objects.Containers...), containerRemovalInProgress(objects.Containers...),
+		}},
+		{[]string{"network", "rm"}, objects.Networks, []dockerSoftLine{networkMissing(objects.Networks...)}},
+		{[]string{"volume", "rm", "-f"}, objects.Volumes, []dockerSoftLine{volumeMissing}},
 	}
 	for _, step := range steps {
 		if len(step.ids) == 0 {
 			continue
 		}
 		output, err := cli.run(ctx, append(step.args, step.ids...)...)
-		if err != nil && (ctx.Err() != nil || !(dockerMissing(output) || dockerRemovalInProgress(output))) {
+		if err != nil && (ctx.Err() != nil || !dockerOnlySoftBesides(output, step.ids, step.soft...)) {
 			return fmt.Errorf("remove preview resources: %w: %s", err, strings.TrimSpace(output))
 		}
 	}
