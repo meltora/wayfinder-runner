@@ -29,7 +29,15 @@ const (
 	previewJobNetworkSweepTimeout            = 30 * time.Second
 	previewJobNetworkAttachTimeout           = 60 * time.Second
 	previewJobEvidenceExpiryMargin           = 5 * time.Minute
+	previewJobEvidenceRedeployTimeout        = 5 * time.Minute
 )
+
+func (d *Daemon) previewJobEvidenceRedeployWait() time.Duration {
+	if d.previewEvidenceRedeployTimeout > 0 {
+		return d.previewEvidenceRedeployTimeout
+	}
+	return previewJobEvidenceRedeployTimeout
+}
 
 type previewJobDeployState struct {
 	mu       sync.Mutex
@@ -156,6 +164,15 @@ func (jr *jobRunner) executeDeployPreviewTool(ctx context.Context) previewDeploy
 }
 
 func (jr *jobRunner) requestPreviewJobDeploy(ctx context.Context, commitSet map[string]string, attach bool) previewJobDeployOutcome {
+	return jr.requestPreviewJobDeployWaitingOn(ctx, jr.ctx, commitSet, attach)
+}
+
+func (jr *jobRunner) requestPreviewJobDeployWaitingOn(
+	ctx context.Context,
+	waitCtx context.Context,
+	commitSet map[string]string,
+	attach bool,
+) previewJobDeployOutcome {
 	if !jr.d.previewDeployAdvertised() {
 		return localPreviewJobDeployOutcome(v1.PreviewJobDeployStatusRefused, previewJobDeployCodeCapabilityMissing)
 	}
@@ -176,7 +193,7 @@ func (jr *jobRunner) requestPreviewJobDeploy(ctx context.Context, commitSet map[
 	if refusal != "" {
 		return localPreviewJobDeployOutcome(v1.PreviewJobDeployStatusRefused, refusal)
 	}
-	outcome := checkedPreviewJobDeployOutcome(jr.sendPreviewJobDeployRequest(ctx, sequence, commitSet))
+	outcome := checkedPreviewJobDeployOutcome(jr.sendPreviewJobDeployRequest(ctx, waitCtx, sequence, commitSet))
 	if outcome.Status == v1.PreviewJobDeployStatusDeployed && attach {
 		jr.previewJobDeployed(outcome)
 	}
@@ -200,7 +217,15 @@ func (jr *jobRunner) publishFinalPreviewEvidence(ctx context.Context, final map[
 	digest := v1.PreviewLifecycleCommitSetDigest(commits)
 	fresh := deployed.ExpiresAt.After(jr.d.previewHostNow().Add(previewJobEvidenceExpiryMargin))
 	if deployed.CommitSetDigest != digest || !fresh {
-		outcome := jr.requestPreviewJobDeploy(ctx, final, false)
+		waitCtx, cancel := context.WithTimeout(jr.ctx, jr.d.previewJobEvidenceRedeployWait())
+		outcome := jr.requestPreviewJobDeployWaitingOn(ctx, waitCtx, final, false)
+		timedOut := outcome.Code == previewJobDeployCodeJobCancelled && errors.Is(waitCtx.Err(), context.DeadlineExceeded)
+		cancel()
+		if timedOut {
+			jr.logger.Warn("final preview evidence skipped: final redeploy wait timed out",
+				"reason", "timeout", "timeout", jr.d.previewJobEvidenceRedeployWait().String())
+			return
+		}
 		if outcome.Status != v1.PreviewJobDeployStatusDeployed {
 			jr.logger.Warn("final preview evidence skipped: final commit set was not deployed",
 				"status", outcome.Status, "code", outcome.Code)
@@ -306,7 +331,12 @@ func (jr *jobRunner) previewJobDeployEventID(sequence uint64) string {
 	return v1.PreviewDeployRequestedEventID(v1.PreviewDeployRequestID(jr.job.JobID, jr.job.LeaseID, sequence))
 }
 
-func (jr *jobRunner) sendPreviewJobDeployRequest(ctx context.Context, sequence uint64, commitSet map[string]string) previewJobDeployOutcome {
+func (jr *jobRunner) sendPreviewJobDeployRequest(
+	ctx context.Context,
+	waitCtx context.Context,
+	sequence uint64,
+	commitSet map[string]string,
+) previewJobDeployOutcome {
 	failed := func(code string, err error) previewJobDeployOutcome {
 		jr.logger.Warn("preview deploy request not sent", "code", code, "sequence", sequence, "err", err)
 		return localPreviewJobDeployOutcome(v1.PreviewJobDeployStatusFailed, code)
@@ -371,7 +401,7 @@ func (jr *jobRunner) sendPreviewJobDeployRequest(ctx context.Context, sequence u
 		return failed(previewJobDeployCodeEventSendFailed, err)
 	}
 	callDeadline, _ := ctx.Deadline()
-	return jr.awaitPreviewJobDeploy(jr.ctx, w, sentAt, callDeadline, time.Now, time.After)
+	return jr.awaitPreviewJobDeploy(waitCtx, w, sentAt, callDeadline, time.Now, time.After)
 }
 
 func (jr *jobRunner) importPreviewCommits(ctx context.Context, commitSet map[string]string) error {

@@ -69,11 +69,16 @@ func (d *Daemon) previewHostLeaseMax() time.Duration {
 }
 
 func (d *Daemon) previewHostDeadline(lease time.Time) time.Time {
-	limit := time.Now().Add(d.previewHostLeaseMax())
-	if lease.After(limit) {
+	now := time.Now()
+	limit := now.Add(d.previewHostLeaseMax())
+	deadline := lease
+	if d.previewLeaseNow != nil {
+		deadline = now.Add(lease.Sub(d.previewLeaseClock()))
+	}
+	if deadline.After(limit) {
 		return limit
 	}
-	return lease
+	return deadline
 }
 
 func previewHostExpired(host journal.PreviewHost, now time.Time) bool {
@@ -129,7 +134,7 @@ func (d *Daemon) admitPreviewDeploy(
 		memory += existing.MemoryMB
 	}
 	if len(occupied) >= d.previewHostMaxConcurrent() || memory > d.previewHostMemoryBudgetMB() {
-		event := previewDeployResultEvent(operation, commandMessageID, previewDeployObservedAt(operation),
+		event := previewDeployResultEvent(operation, commandMessageID, d.previewDeployObservedAt(operation),
 			v1.PreviewDeployOutcome{Kind: v1.PreviewDeployCapacityExhausted})
 		raw, err := validatedPreviewDeployResult(event)
 		if err != nil {

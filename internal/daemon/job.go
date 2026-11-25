@@ -865,7 +865,7 @@ func (jr *jobRunner) run() {
 		rm.AllowLocal = d.cfg.AllowUnsafeDirect
 		state, _, err := jr.finalizeBuild(ctx, rm, true)
 		if err != nil {
-			finish(buildFinalizationFailure(err), nil)
+			finish(jr.buildFinalizationOutcome(err), nil)
 			return
 		}
 		if state == "failed" {

@@ -271,6 +271,36 @@ func TestPreviewJobDeployTimesOutWithoutCommand(t *testing.T) {
 	assertPreviewJobDeployRegistryEmpty(t, jr.d)
 }
 
+func TestPreviewJobDeployCommandTimeoutAppliesInsideEvidenceRedeployCap(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	w, _ := registerTestPreviewJobDeploy(t, jr, 1)
+	waitCtx, cancel := context.WithTimeout(jr.ctx, previewJobEvidenceRedeployTimeout)
+	defer cancel()
+	clock := newFakePreviewJobDeployClock(time.Now())
+	result := startTestPreviewJobDeployAwait(t, jr, waitCtx, w, clock)
+	clock.advance(v1.PreviewJobDeployCommandTimeout)
+	assertPreviewJobDeployOutcome(t, receivePreviewJobDeployOutcome(t, result),
+		v1.PreviewJobDeployStatusTimeout, previewJobDeployCodeCommandTimeout)
+	if waitCtx.Err() != nil {
+		t.Fatalf("evidence redeploy cap fired before the command timeout: %v", waitCtx.Err())
+	}
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
+
+	arrived, _ := registerTestPreviewJobDeploy(t, jr, 2)
+	capCtx, capCancel := context.WithTimeout(jr.ctx, 50*time.Millisecond)
+	defer capCancel()
+	capClock := newFakePreviewJobDeployClock(time.Now())
+	capped := startTestPreviewJobDeployAwait(t, jr, capCtx, arrived, capClock)
+	arrived.markArrived()
+	capClock.advance(v1.PreviewJobDeployCommandTimeout)
+	outcome := receivePreviewJobDeployOutcome(t, capped)
+	assertPreviewJobDeployOutcome(t, outcome, v1.PreviewJobDeployStatusFailed, previewJobDeployCodeJobCancelled)
+	if !errors.Is(capCtx.Err(), context.DeadlineExceeded) || jr.ctx.Err() != nil {
+		t.Fatalf("cap ctx = %v job ctx = %v", capCtx.Err(), jr.ctx.Err())
+	}
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
+}
+
 func TestPreviewJobDeployArrivalDisarmsCommandTimer(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	w, command := registerTestPreviewJobDeploy(t, jr, 1)

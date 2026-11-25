@@ -95,6 +95,7 @@ The event is manifest-bound like the other job events. It carries the standard j
   - If the latest deployed preview from this job does not have the final commit set's digest, or its `expires_at` is not more than 5 minutes after the runner's clock, the runner first requests a deploy of the final commit set (J2, counted toward the limit of 6) and waits for it (J3).
   - The evidence event id is `"preview-evidence-" + hex(sha256(job_id + "\0" + lease_id + "\0" + commit_set_digest))`. At most one evidence event is journaled per id; a replay always sends the journaled payload.
   - If that deploy does not succeed, no evidence is published. The build itself still finishes, and the failure is logged.
+  - The wait for that final redeploy is capped at 5 minutes. When the cap is reached, no evidence is published, a warning with reason `timeout` is logged, and review-ready is still published. The 2-minute J3 command timeout still applies inside the cap.
 - **What.** The evidence is the existing `preview` event:
   - `url`: `https://<edge_host>`, taken from the deploy command, never from the agent.
   - `commit_set`: the final commit set in the `preview` event's existing object form, `{"<repository_id>": "<40-hex sha>"}` with 1–16 entries. This is not the ordered array form used by J2 and the P5d command. The app canonicalises it by sorting on `repository_id` before it compares the digest with the review-ready commit set.

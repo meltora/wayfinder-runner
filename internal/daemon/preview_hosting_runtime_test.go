@@ -801,7 +801,7 @@ func TestInterruptedPreviewDeployRecoveryNeverOverwritesAStoredResult(t *testing
 	events := capturePreviewHostingEvents(d)
 	command := validPreviewDeployCommand()
 	stored := previewDeployResultEvent(*command.PreviewDeploy, previewDeployCommandID("1"),
-		previewDeployObservedAt(*command.PreviewDeploy), deployedPreviewOutcome())
+		d.previewDeployObservedAt(*command.PreviewDeploy), deployedPreviewOutcome())
 	raw, err := validatedPreviewDeployResult(stored)
 	if err != nil {
 		t.Fatal(err)
@@ -979,6 +979,23 @@ func TestPreviewDeployAndLifecycleDeadlinesAreClampedToLeaseMax(t *testing.T) {
 	controller.mu.Unlock()
 	if lifecycleDeadline.IsZero() || lifecycleDeadline.After(time.Now().Add(121*time.Second)) {
 		t.Fatalf("lifecycle deadline=%s", lifecycleDeadline)
+	}
+}
+
+func TestPreviewHostDeadlineIsRelativeToTheLeaseClock(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	d := jr.d
+	d.cfg.PreviewHosting.LeaseMaxSeconds = 7200
+	start := time.Now()
+	d.previewLeaseNow = func() time.Time { return start.Add(30 * time.Minute) }
+	deadline := d.previewHostDeadline(start.Add(time.Hour))
+	remaining := time.Until(deadline)
+	if remaining > 31*time.Minute || remaining < 29*time.Minute {
+		t.Fatalf("deadline in %s, want about 30m", remaining)
+	}
+	d.previewLeaseNow = func() time.Time { return start.Add(-3 * time.Hour) }
+	if remaining := time.Until(d.previewHostDeadline(start.Add(time.Hour))); remaining > 2*time.Hour+time.Second {
+		t.Fatalf("deadline in %s exceeds lease max", remaining)
 	}
 }
 

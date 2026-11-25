@@ -13,6 +13,7 @@ import (
 
 	v1 "github.com/example/app-runner/api/runner/v1"
 	"github.com/example/app-runner/internal/repo"
+	"github.com/example/app-runner/internal/validation"
 )
 
 const previewEvidenceRedeployEdgeHost = "zyxwvutsrqponmlkjihgfedcba.previews.example.test"
@@ -498,6 +499,110 @@ func TestFinalizeBuildCancelledDuringRedeployPublishesNoEvidence(t *testing.T) {
 	}
 	if outcome := buildFinalizationFailure(err); outcome.State != v1.JobFinishedFailed || outcome.FailureCode != v1.JobFailureBuildFinalization || outcome.FailureMessage != "build finalization failed" {
 		t.Fatalf("job outcome = %+v", outcome)
+	}
+}
+
+func TestFinalizeBuildCancelDuringRedeployFinishesCancelled(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		interrupt func(*jobRunner)
+		state     v1.JobFinishedState
+		code      v1.JobFinishedFailureCode
+	}{
+		{
+			name:      "cancel",
+			interrupt: func(jr *jobRunner) { jr.d.cancelActiveJob("test cancel") },
+			state:     v1.JobFinishedCancelled, code: v1.JobFailureCancelled,
+		},
+		{
+			name: "lease lost",
+			interrupt: func(jr *jobRunner) {
+				jr.procMu.Lock()
+				jr.leaseLost = true
+				jr.cancelled = true
+				jr.procMu.Unlock()
+				jr.cancel()
+			},
+			state: v1.JobFinishedFailed, code: v1.JobFailureBuildFinalization,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jr, captured, _ := previewEvidenceFixture(t)
+			jr.d.jobMu.Lock()
+			jr.d.activeJob = jr
+			jr.d.jobMu.Unlock()
+			requests := 0
+			respondToPreviewDeployRequests(jr, captured, func(event map[string]any) {
+				requests++
+				if requests == 1 {
+					deployPreviewResultAt(jr, event, previewDeployToolEdgeHost, time.Now().Add(time.Hour).Truncate(time.Millisecond))
+					return
+				}
+				tc.interrupt(jr)
+			})
+			assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusDeployed, "")
+			makePreviewStale(t, jr)
+			rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
+			rm.AllowLocal = true
+			_, _, err := jr.finalizeBuild(jr.ctx, rm, true)
+			if err == nil {
+				t.Fatal("finalize succeeded after the interruption")
+			}
+			assertNoPreviewEvidence(t, captured)
+			outcome := jr.buildFinalizationOutcome(err)
+			if outcome.State != tc.state || outcome.FailureCode != tc.code {
+				t.Fatalf("job outcome = %+v, want %s/%s", outcome, tc.state, tc.code)
+			}
+			if err := validation.JobFinishedEvent(jr.jobFinishedEvent(outcome)); err != nil {
+				t.Fatalf("job_finished rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestFinalizeBuildCapsUnansweredRedeployWait(t *testing.T) {
+	jr, captured, _ := previewEvidenceFixture(t)
+	logs := &bytes.Buffer{}
+	jr.logger = slog.New(slog.NewTextHandler(&lockedWriter{buffer: logs}, nil))
+	jr.d.previewEvidenceRedeployTimeout = 20 * time.Millisecond
+	requests := 0
+	respondToPreviewDeployRequests(jr, captured, func(event map[string]any) {
+		requests++
+		if requests == 1 {
+			deployPreviewResultAt(jr, event, previewDeployToolEdgeHost, time.Now().Add(time.Hour).Truncate(time.Millisecond))
+		}
+	})
+	assertPreviewDeployReply(t, callDeployPreview(t, jr), v1.PreviewJobDeployStatusDeployed, "")
+	makePreviewStale(t, jr)
+	rm := repo.NewManager(filepath.Join(jr.d.cfg.StateDir, "repos"))
+	rm.AllowLocal = true
+	done := make(chan struct{})
+	var state string
+	var err error
+	go func() {
+		defer close(done)
+		state, _, err = jr.finalizeBuild(context.Background(), rm, true)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("finalize did not return after the redeploy wait timeout")
+	}
+	if err != nil || state != "succeeded" {
+		t.Fatalf("state = %q err = %v", state, err)
+	}
+	if requests != 2 {
+		t.Fatalf("request events = %d", requests)
+	}
+	assertNoPreviewEvidence(t, captured)
+	assertReviewReadySent(t, captured)
+	assertPreviewJobDeployRegistryEmpty(t, jr.d)
+	if jr.ctx.Err() != nil {
+		t.Fatalf("job context ended: %v", jr.ctx.Err())
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "final preview evidence skipped") ||
+		!strings.Contains(logs.String(), "reason=timeout") {
+		t.Fatalf("logs = %s", logs.String())
 	}
 }
 

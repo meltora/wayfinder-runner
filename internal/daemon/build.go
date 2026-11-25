@@ -239,6 +239,16 @@ func (jr *jobRunner) pushBranch(ctx context.Context, repository checkedOutReposi
 
 var errProviderCredentialUnavailable = errors.New("provider credential unavailable")
 
+func (jr *jobRunner) buildFinalizationOutcome(err error) jobOutcome {
+	jr.procMu.Lock()
+	cancelled := jr.cancelled && !jr.leaseLost
+	jr.procMu.Unlock()
+	if cancelled {
+		return jobOutcome{State: v1.JobFinishedCancelled, FailureCode: v1.JobFailureCancelled}
+	}
+	return buildFinalizationFailure(err)
+}
+
 func buildFinalizationFailure(err error) jobOutcome {
 	message := "build finalization failed"
 	var resultErr *agentResultError

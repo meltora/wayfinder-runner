@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +171,63 @@ func TestReplaySendsJournaledEnvelopeByteForByte(t *testing.T) {
 	}
 	if string(replayWire) != string(firstWire) {
 		t.Fatalf("replayed envelope bytes differ:\n got %s\nwant %s", replayWire, firstWire)
+	}
+}
+
+func TestReplayPreservesNullAndAbsentPayloadByteForByte(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload any
+		want    string
+	}{
+		{name: "null", payload: json.RawMessage("null"), want: `"payload":null`},
+		{name: "absent", payload: nil, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			jr, _ := testJobRunner(t)
+			ctx := context.Background()
+			journaled := v1.Envelope{
+				Version:  v1.ProtocolVersion,
+				Type:     v1.TypeEvent,
+				ID:       "replay-payload-" + tc.name,
+				SentAt:   time.Date(2026, 11, 25, 10, 11, 12, 123456789, time.UTC),
+				RunnerID: "runner-1",
+				Payload:  tc.payload,
+			}
+			journaledWire, err := json.Marshal(journaled)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want != "" && !strings.Contains(string(journaledWire), tc.want) {
+				t.Fatalf("journaled envelope %s lacks %s", journaledWire, tc.want)
+			}
+			if tc.want == "" && strings.Contains(string(journaledWire), `"payload"`) {
+				t.Fatalf("journaled envelope %s carries a payload", journaledWire)
+			}
+			if err := jr.d.journal.Append(ctx, journal.Record{
+				ID: journaled.ID, Kind: journal.KindEvent, Payload: journaledWire, CreatedAt: time.Now(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var replayed []v1.Envelope
+			if err := jr.d.replayUnacked(ctx, func(envelope v1.Envelope) error {
+				replayed = append(replayed, envelope)
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if len(replayed) != 1 {
+				t.Fatalf("replayed %d envelopes", len(replayed))
+			}
+			replayWire, err := json.Marshal(replayed[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(replayWire) != string(journaledWire) {
+				t.Fatalf("replayed envelope bytes differ:\n got %s\nwant %s", replayWire, journaledWire)
+			}
+		})
 	}
 }
 

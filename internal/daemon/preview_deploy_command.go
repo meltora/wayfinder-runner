@@ -99,7 +99,7 @@ func (d *Daemon) executePreviewDeploy(
 		return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 	}
 	if !trusted {
-		event := previewDeployResultEvent(operation, commandMessageID, previewDeployObservedAt(operation),
+		event := previewDeployResultEvent(operation, commandMessageID, d.previewDeployObservedAt(operation),
 			v1.PreviewDeployOutcome{Kind: v1.PreviewDeployFailed, Phase: v1.PreviewDeployPhaseCommitSet})
 		raw, err := validatedPreviewDeployResult(event)
 		if err != nil {
@@ -166,7 +166,7 @@ func (d *Daemon) reportUncertainPreviewDeploy(
 	proven bool,
 	claimed bool,
 ) error {
-	event := previewDeployResultEvent(operation, commandMessageID, previewDeployObservedAt(operation),
+	event := previewDeployResultEvent(operation, commandMessageID, d.previewDeployObservedAt(operation),
 		v1.PreviewDeployOutcome{Kind: v1.PreviewDeployUncertain})
 	raw, err := validatedPreviewDeployResult(event)
 	d.previewHostMu.Lock()
@@ -242,8 +242,8 @@ func previewHostInsertRejection(err error) error {
 	return rejectCommand(v1.CommandAckReasonInternalRejection, err)
 }
 
-func previewDeployObservedAt(operation v1.PreviewDeployOperation) time.Time {
-	observedAt := time.Now().UTC().Truncate(time.Millisecond)
+func (d *Daemon) previewDeployObservedAt(operation v1.PreviewDeployOperation) time.Time {
+	observedAt := d.previewLeaseClock().UTC().Truncate(time.Millisecond)
 	if observedAt.After(operation.LeaseExpiresAt) {
 		return operation.LeaseExpiresAt
 	}

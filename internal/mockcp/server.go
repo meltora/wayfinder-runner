@@ -29,6 +29,7 @@ type Server struct {
 
 	mu           sync.Mutex
 	events       []v1.Envelope
+	received     []ReceivedEvent
 	commandAcks  []v1.Envelope
 	heartbeats   int
 	helloCount   int
@@ -55,6 +56,13 @@ type Server struct {
 	streamLog        []string
 	connSeq          int
 	streamGate       chan struct{}
+}
+
+type ReceivedEvent struct {
+	ID              string
+	Raw             []byte
+	PeerFingerprint string
+	Stream          int
 }
 
 type RotateFailure struct {
@@ -578,7 +586,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	peerFingerprint := ""
 	if r.TLS != nil && len(r.TLS.PeerCertificates) > 0 {
+		peerFingerprint = certificateFingerprint(r.TLS.PeerCertificates[0])
 		s.mu.Lock()
 		status := s.authorizeStreamLocked(r.TLS.PeerCertificates[0])
 		if status != 0 {
@@ -638,13 +648,20 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}()
 	for {
 		var env v1.Envelope
-		if err := read(conn, ctx, &env); err != nil {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			return
+		}
+		if err := json.Unmarshal(data, &env); err != nil {
 			return
 		}
 		s.mu.Lock()
 		switch env.Type {
 		case v1.TypeEvent:
 			s.events = append(s.events, env)
+			s.received = append(s.received, ReceivedEvent{
+				ID: env.ID, Raw: append([]byte(nil), data...), PeerFingerprint: peerFingerprint, Stream: seq,
+			})
 			_ = write(conn, ctx, v1.Envelope{
 				Version: v1.ProtocolVersion, Type: v1.TypeEventAck, ID: "ack-" + env.ID,
 				SentAt: time.Now(), InReplyTo: env.ID,
@@ -754,6 +771,17 @@ func (s *Server) Events() []v1.Envelope {
 	defer s.mu.Unlock()
 	out := make([]v1.Envelope, len(s.events))
 	copy(out, s.events)
+	return out
+}
+
+func (s *Server) ReceivedEvents() []ReceivedEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ReceivedEvent, len(s.received))
+	for index, event := range s.received {
+		event.Raw = append([]byte(nil), event.Raw...)
+		out[index] = event
+	}
 	return out
 }
 

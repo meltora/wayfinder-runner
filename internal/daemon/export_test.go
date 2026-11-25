@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +31,17 @@ func (d *Daemon) SetRotationFault(fault func(point string) error) { d.rotationFa
 func (d *Daemon) StartRequestedRotation(ctx context.Context) { d.startRequestedRotation(ctx) }
 
 func (d *Daemon) WaitRequestedRotations() { d.rotationCommands.Wait() }
+
+func (d *Daemon) JournalEventForTest(ctx context.Context, eventID string, payload any) ([]byte, error) {
+	if _, err := d.sendEventWithStableID(ctx, eventID, payload); err != nil {
+		return nil, err
+	}
+	record, found, err := d.journal.LoadRecord(ctx, eventID)
+	if err != nil || !found {
+		return nil, fmt.Errorf("journaled event %s found=%v: %w", eventID, found, err)
+	}
+	return record.Payload, nil
+}
 
 func (d *Daemon) LockCommandsForTest() func() {
 	d.commandMu.Lock()

@@ -433,6 +433,42 @@ func TestPreviewDeployRefusesUntrustedCommitSet(t *testing.T) {
 	}
 }
 
+func TestPreviewDeployUntrustedCommitSetObservedAtUsesLeaseClock(t *testing.T) {
+	jr, _ := testJobRunner(t)
+	command := validPreviewDeployCommand()
+	command.PreviewDeploy.LeaseExpiresAt = time.Now().UTC().Truncate(time.Millisecond).Add(time.Hour)
+	sealTestPreviewDeploy(command.PreviewDeploy)
+	admitted := time.Now()
+	pastLease := command.PreviewDeploy.LeaseExpiresAt.Add(time.Hour)
+	var clockMu sync.Mutex
+	calls := 0
+	jr.d.previewLeaseNow = func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		calls++
+		if calls == 1 {
+			return admitted
+		}
+		return pastLease
+	}
+	controller := &fakePreviewHostController{deployOutcome: deployedPreviewOutcome()}
+	jr.d.previewHostController = controller
+	events := capturePreviewDeployEvents(t, jr.d)
+	if err := jr.d.executeCommand(context.Background(), v1.Envelope{ID: previewDeployCommandID("1")}, command); err != nil {
+		t.Fatal(err)
+	}
+	if deploys, _, _ := controller.counts(); deploys != 0 {
+		t.Fatal("untrusted deploy reached controller")
+	}
+	if len(*events) != 1 || (*events)[0].Outcome.Kind != v1.PreviewDeployFailed ||
+		(*events)[0].Outcome.Phase != v1.PreviewDeployPhaseCommitSet {
+		t.Fatalf("events=%+v", *events)
+	}
+	if !(*events)[0].ObservedAt.Equal(command.PreviewDeploy.LeaseExpiresAt) {
+		t.Fatalf("observed_at=%s, want lease %s", (*events)[0].ObservedAt, command.PreviewDeploy.LeaseExpiresAt)
+	}
+}
+
 func TestPreviewDeployRejectsPausedRunnerAndExpiredLease(t *testing.T) {
 	jr, _ := testJobRunner(t)
 	command := validPreviewDeployCommand()
@@ -482,8 +518,13 @@ func TestPreviewDeployResultAfterLeaseBecomesUncertain(t *testing.T) {
 			}
 			jr.d.previewHostController = controller
 			events := capturePreviewDeployEvents(t, jr.d)
+			testCtx := t.Context()
 			go func() {
-				<-controller.started
+				select {
+				case <-controller.started:
+				case <-testCtx.Done():
+					return
+				}
 				clockMu.Lock()
 				clock = clock.Add(2 * time.Minute)
 				clockMu.Unlock()
