@@ -83,7 +83,7 @@ The event is manifest-bound like the other job events. It carries the standard j
 - The internal URL is `http://our-preview:8080/`. It reaches the preview's gateway ingress, the same ingress that the tunnel serves.
 - To provide it, the runner attaches the job container and the preview gateway to a per-job Docker network with `internal: true`.
   - The gateway answers on that network under the alias `our-preview`, on port 8080 only.
-  - The gateway's egress proxy accepts connections only from the preview's own network, never from the job network.
+  - The gateway's egress proxy accepts connections only from the preview's own network, never from the job network. It listens only on the gateway's address in the preview network, so the kernel refuses a connection to port 3128 on the job network before the proxy sees it, and a job cannot fill the proxy's accept queue. The source filter stays behind it.
   - The job container gains no other route.
 - When the job ends, or a newer job preview replaces the old one, the runner removes the job network.
 - The network, its name and the alias are not on the wire. The one wire-visible effect is `run_network_policy.agent_sandbox_network`. A Claude job under Docker with reach open reports `preview_only`, and never `deny_all`, because its inner sandbox allows exactly `our-preview`.

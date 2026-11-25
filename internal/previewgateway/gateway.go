@@ -3,6 +3,7 @@ package previewgateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -28,6 +29,9 @@ const (
 	maxLoggedHostLength  = 255
 
 	maxResponseHeaderBytes = 1 << 20
+
+	egressAddressPoll = 50 * time.Millisecond
+	egressAddressWait = 2 * time.Minute
 )
 
 type Resolver interface {
@@ -65,18 +69,80 @@ func Run(ctx context.Context, cfg Config, resolver Resolver, dialer Dialer, logg
 	if err != nil {
 		return err
 	}
-	ingress, err := net.Listen("tcp", cfg.IngressListen)
-	if err != nil {
-		return err
-	}
 	var egress net.Listener
 	if cfg.EgressListen != "" {
-		if egress, err = net.Listen("tcp", cfg.EgressListen); err != nil {
-			_ = ingress.Close()
+		if egress, err = listenEgress(ctx, cfg.EgressListen, cfg.EgressSources, net.InterfaceAddrs); err != nil {
 			return err
 		}
 	}
+	ingress, err := net.Listen("tcp", cfg.IngressListen)
+	if err != nil {
+		if egress != nil {
+			_ = egress.Close()
+		}
+		return err
+	}
 	return g.serve(ctx, ingress, egress)
+}
+
+func listenEgress(ctx context.Context, address string, sources []netip.Prefix, local func() ([]net.Addr, error)) (net.Listener, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	if ip, err := netip.ParseAddr(host); host != "" && (err != nil || !ip.IsUnspecified()) {
+		return net.Listen("tcp", address)
+	}
+	ctx, cancel := context.WithTimeout(ctx, egressAddressWait)
+	defer cancel()
+	for {
+		ip, err := sourceAddress(sources, local)
+		if err != nil {
+			return nil, fmt.Errorf("list preview gateway addresses: %w", err)
+		}
+		if ip.IsValid() {
+			return net.Listen("tcp", net.JoinHostPort(ip.String(), port))
+		}
+		timer := time.NewTimer(egressAddressPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, errors.New("preview gateway has no local address inside the egress sources")
+		case <-timer.C:
+		}
+	}
+}
+
+func sourceAddress(sources []netip.Prefix, local func() ([]net.Addr, error)) (netip.Addr, error) {
+	addresses, err := local()
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	var found []netip.Addr
+	for _, address := range addresses {
+		ip, ok := interfaceIP(address)
+		if ok && slices.ContainsFunc(sources, func(source netip.Prefix) bool { return source.Contains(ip) }) {
+			found = append(found, ip)
+		}
+	}
+	if len(found) == 0 {
+		return netip.Addr{}, nil
+	}
+	return slices.MinFunc(found, netip.Addr.Compare), nil
+}
+
+func interfaceIP(address net.Addr) (netip.Addr, bool) {
+	var ip net.IP
+	switch typed := address.(type) {
+	case *net.IPNet:
+		ip = typed.IP
+	case *net.IPAddr:
+		ip = typed.IP
+	default:
+		return netip.Addr{}, false
+	}
+	parsed, ok := netip.AddrFromSlice(ip)
+	return parsed.Unmap(), ok
 }
 
 func newGateway(cfg Config, resolver Resolver, dialer Dialer, logger *slog.Logger) (*gateway, error) {
