@@ -510,6 +510,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	spoolCtx, stopSpool := context.WithCancel(ctx)
 	defer stopSpool()
+	d.sweepJobPreviewNetworksAtStartup(spoolCtx)
 	go d.drainHookSpool(spoolCtx)
 	go d.drainArtifactUploads(spoolCtx)
 	go d.journalMaintenance(spoolCtx)

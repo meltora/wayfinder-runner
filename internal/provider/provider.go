@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ type StartParams struct {
 	DockerIsolation bool
 	Environment     []string
 	Elevated        elevatedcapability.Grants
+	PreviewReach    bool
 }
 
 // PromptOnlyParams is intentionally disjoint from StartParams: consultation
@@ -230,6 +232,15 @@ func (c *Claude) Available() bool {
 	return err == nil
 }
 
+func claudeSandboxAllowedDomains(grants elevatedcapability.Grants, previewReach bool) []string {
+	domains := claudeAllowedDomains(grants)
+	if previewReach && !slices.Contains(domains, v1.PreviewJobDeployInternalHost) {
+		domains = append(domains, v1.PreviewJobDeployInternalHost)
+		slices.Sort(domains)
+	}
+	return domains
+}
+
 func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	bin := p.BinaryPath
 	if bin == "" {
@@ -277,7 +288,7 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		"credentials": map[string]any{
 			"files": deniedCredentialFiles,
 		},
-		"network": map[string]any{"strictAllowlist": true, "allowedDomains": claudeAllowedDomains(elevated)},
+		"network": map[string]any{"strictAllowlist": true, "allowedDomains": claudeSandboxAllowedDomains(elevated, p.PreviewReach)},
 	}
 	if p.DockerIsolation {
 		sandbox["enableWeakerNestedSandbox"] = true

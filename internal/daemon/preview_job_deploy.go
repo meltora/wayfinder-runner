@@ -23,6 +23,7 @@ var errPreviewJobDeployInFlight = errors.New("preview job deploy request is alre
 type previewJobDeployOutcome struct {
 	Status          string
 	Code            string
+	PreviewID       string
 	EdgeHost        string
 	ExpiresAt       time.Time
 	CommitSet       map[string]string
@@ -191,6 +192,7 @@ func (d *Daemon) previewJobDeployResultSent(event v1.PreviewDeployResultEvent) {
 	switch event.Outcome.Kind {
 	case v1.PreviewDeployDeployed:
 		outcome := w.outcome(v1.PreviewJobDeployStatusDeployed, "")
+		outcome.PreviewID = event.PreviewID
 		outcome.EdgeHost = event.EdgeHost
 		outcome.ExpiresAt = event.ExpiresAt
 		w.resolve(outcome)

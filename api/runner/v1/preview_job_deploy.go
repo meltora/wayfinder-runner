@@ -14,7 +14,8 @@ const (
 	PreviewDeployRequestedSchemaVersion = 1
 	PreviewJobDeployMaxRequests         = 6
 	PreviewJobDeployCommandTimeout      = 2 * time.Minute
-	PreviewJobDeployInternalURL         = "http://our-preview:8080/"
+	PreviewJobDeployInternalHost        = "our-preview"
+	PreviewJobDeployInternalURL         = "http://" + PreviewJobDeployInternalHost + ":8080/"
 	PreviewJobDeployTool                = "platform_deploy_preview"
 	PreviewJobDeployMaxCommits          = 16
 	PreviewJobDeployTimeLayout          = "2006-01-02T15:04:05.000Z07:00"

@@ -125,6 +125,10 @@ func TestRunNetworkPolicyEvent(t *testing.T) {
 		validRunNetworkPolicy(v1.RunIsolationDocker, v1.RunJobNetworkRestricted, &policyID),
 		validRunNetworkPolicy(v1.RunIsolationDirect, v1.RunJobNetworkHost, nil),
 	}
+	previewOnly := validRunNetworkPolicy(v1.RunIsolationDocker, v1.RunJobNetworkRestricted, &policyID)
+	previewOnly.AgentSandboxNetwork = v1.AgentSandboxNetworkPreviewOnly
+	previewOnly.ContentDigestSHA256 = v1.RunNetworkPolicyContentDigest(previewOnly)
+	valid = append(valid, previewOnly)
 	for _, value := range valid {
 		if err := RunNetworkPolicyEvent(value); err != nil {
 			t.Fatalf("valid policy rejected: %v", err)
@@ -147,6 +151,14 @@ func TestRunNetworkPolicyEvent(t *testing.T) {
 	directDenyAll.AgentSandboxNetwork = v1.AgentSandboxNetworkDenyAll
 	directDenyAll.ContentDigestSHA256 = v1.RunNetworkPolicyContentDigest(directDenyAll)
 	invalid["direct deny all"] = directDenyAll
+	directPreviewOnly := validRunNetworkPolicy(v1.RunIsolationDirect, v1.RunJobNetworkHost, nil)
+	directPreviewOnly.AgentSandboxNetwork = v1.AgentSandboxNetworkPreviewOnly
+	directPreviewOnly.ContentDigestSHA256 = v1.RunNetworkPolicyContentDigest(directPreviewOnly)
+	invalid["direct preview only"] = directPreviewOnly
+	nonePreviewOnly := validRunNetworkPolicy(v1.RunIsolationDocker, v1.RunJobNetworkNone, nil)
+	nonePreviewOnly.AgentSandboxNetwork = v1.AgentSandboxNetworkPreviewOnly
+	nonePreviewOnly.ContentDigestSHA256 = v1.RunNetworkPolicyContentDigest(nonePreviewOnly)
+	invalid["none preview only"] = nonePreviewOnly
 	tampered := validRunNetworkPolicy(v1.RunIsolationDocker, v1.RunJobNetworkNone, nil)
 	tampered.AgentSandboxNetwork = v1.AgentSandboxNetworkNotRecorded
 	invalid["digest"] = tampered

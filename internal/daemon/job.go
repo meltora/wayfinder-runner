@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	v1 "github.com/example/app-runner/api/runner/v1"
@@ -94,6 +95,9 @@ type jobRunner struct {
 	configuration            *hotConfiguration
 	agentPromptLimit         int
 	previewDeploys           previewJobDeployState
+	previewReachOpen         atomic.Bool
+	previewNetworkMu         sync.Mutex
+	previewNetworkClosed     bool
 }
 
 type checkedOutRepository struct {
@@ -387,6 +391,7 @@ func (jr *jobRunner) run() {
 	finish := func(outcome jobOutcome, capacityEvent *v1.ProviderCapacityExhaustedEvent) {
 		stopLeaseMonitor()
 		d.previewJobDeploys.releaseAttempt(job.AttemptID)
+		jr.detachPreviewJobNetwork()
 		if err := ownership.Release(); err != nil {
 			jr.logger.Error("re-own job output", "err", err)
 			outcome, capacityEvent = jobOutputReclaimFailure(), nil
@@ -438,6 +443,7 @@ func (jr *jobRunner) run() {
 	}
 
 	isDocker := d.cfg.Isolation == "docker"
+	jr.previewReachOpen.Store(jr.previewReachAllowed())
 	socketsRoot := filepath.Join(d.cfg.StateDir, "sockets")
 	if !isDocker && len(filepath.Join(socketsRoot, "job-1234567890", "mcp.sock")) > 100 {
 		socketsRoot = os.TempDir()
@@ -596,6 +602,7 @@ func (jr *jobRunner) run() {
 			HardenedRuntime: true,
 			DockerIsolation: true,
 			Elevated:        elevated,
+			PreviewReach:    jr.previewReachOpen.Load(),
 		})
 		if err != nil {
 			finish(

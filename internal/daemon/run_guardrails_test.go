@@ -198,6 +198,38 @@ func TestRunNetworkPolicyReflectsRunnerConfiguration(t *testing.T) {
 	}
 }
 
+func TestRunNetworkPolicyReportsPreviewOnlyWhileReachIsOpen(t *testing.T) {
+	for name, tc := range map[string]struct {
+		reach bool
+		want  v1.AgentSandboxNetwork
+	}{
+		"reach open":   {true, v1.AgentSandboxNetworkPreviewOnly},
+		"reach closed": {false, v1.AgentSandboxNetworkDenyAll},
+	} {
+		t.Run(name, func(t *testing.T) {
+			jr, events := guardrailsJobRunner(t, &v1.RunGuardrailsPolicy{SchemaVersion: 1, MaxRefusedRequests: 10})
+			jr.d.cfg.Isolation, jr.d.cfg.JobNetwork, jr.d.cfg.EgressPolicyID, jr.d.cfg.Provider = "docker", "restricted", "egress-dev", "claude"
+			jr.previewReachOpen.Store(tc.reach)
+			jr.publishRunNetworkPolicy(context.Background())
+			published := events.byKind(v1.EventKindRunNetworkPolicy)
+			if len(published) != 1 {
+				t.Fatalf("published=%v", published)
+			}
+			raw, _ := json.Marshal(published[0])
+			var event v1.RunNetworkPolicyEvent
+			if err := json.Unmarshal(raw, &event); err != nil {
+				t.Fatal(err)
+			}
+			if event.AgentSandboxNetwork != tc.want {
+				t.Fatalf("agent_sandbox_network=%s want %s", event.AgentSandboxNetwork, tc.want)
+			}
+			if err := validation.RunNetworkPolicyEvent(event); err != nil {
+				t.Fatalf("published invalid event: %v", err)
+			}
+		})
+	}
+}
+
 func TestRunNetworkPolicyRequiresGuardrailsAndAuthority(t *testing.T) {
 	jr, events := guardrailsJobRunner(t, nil)
 	jr.publishRunNetworkPolicy(context.Background())

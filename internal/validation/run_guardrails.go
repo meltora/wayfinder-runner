@@ -88,6 +88,10 @@ func RunNetworkPolicyEvent(value v1.RunNetworkPolicyEvent) error {
 func runNetworkPolicyShape(value v1.RunNetworkPolicyEvent) error {
 	switch value.AgentSandboxNetwork {
 	case v1.AgentSandboxNetworkDenyAll, v1.AgentSandboxNetworkNotRecorded:
+	case v1.AgentSandboxNetworkPreviewOnly:
+		if value.Isolation != v1.RunIsolationDocker || value.JobNetwork != v1.RunJobNetworkRestricted {
+			return fmt.Errorf("preview_only agent sandbox network requires docker isolation and the restricted job network")
+		}
 	default:
 		return fmt.Errorf("run network policy agent_sandbox_network is invalid")
 	}

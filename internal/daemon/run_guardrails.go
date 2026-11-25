@@ -117,6 +117,9 @@ func (jr *jobRunner) runNetworkPolicyEvent(observedAt time.Time) v1.RunNetworkPo
 	}
 	if event.Isolation == v1.RunIsolationDocker && jr.d.cfg.Provider == "claude" {
 		event.AgentSandboxNetwork = v1.AgentSandboxNetworkDenyAll
+		if jr.previewReachOpen.Load() {
+			event.AgentSandboxNetwork = v1.AgentSandboxNetworkPreviewOnly
+		}
 	}
 	event.ContentDigestSHA256 = v1.RunNetworkPolicyContentDigest(event)
 	return event

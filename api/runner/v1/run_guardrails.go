@@ -50,6 +50,7 @@ type AgentSandboxNetwork string
 const (
 	AgentSandboxNetworkDenyAll     AgentSandboxNetwork = "deny_all"
 	AgentSandboxNetworkNotRecorded AgentSandboxNetwork = "not_recorded"
+	AgentSandboxNetworkPreviewOnly AgentSandboxNetwork = "preview_only"
 )
 
 type RunGuardrailsPolicy struct {

@@ -31,6 +31,7 @@ func deployPreviewFixture(t *testing.T) (*jobRunner, *capturedEvents, map[string
 	jr.d.cfg.JobNetworkName = "job-network"
 	jr.d.previewHostController = &fakePreviewHostController{}
 	jr.d.previewTunnelAdvertised.Store(true)
+	jr.previewReachOpen.Store(true)
 	manager := jr.d.previewHostRepositoryManager()
 	for index := range jr.repositories {
 		repository := &jr.repositories[index]
@@ -67,6 +68,7 @@ func deployPreviewResult(jr *jobRunner, event map[string]any, expiresAt time.Tim
 	digest, _ := event["commit_set_digest"].(string)
 	result := v1.PreviewDeployResultEvent{Outcome: deployedPreviewOutcome()}
 	result.IdempotencyKey = v1.PreviewJobDeployIdempotencyKey(previewDeployRequestedID(event))
+	result.PreviewID = previewDeployToolPreviewID
 	result.ExecutionManifestID = jr.job.ManifestID
 	result.CommitSetDigest = digest
 	result.EdgeHost = previewDeployToolEdgeHost

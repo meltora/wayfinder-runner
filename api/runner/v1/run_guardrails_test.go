@@ -37,11 +37,19 @@ func TestRunNetworkPolicyContentDigestMatchesCanonicalVectors(t *testing.T) {
 	if got := RunNetworkPolicyContentDigest(direct); got != runNetworkPolicyDirectVector {
 		t.Fatalf("direct digest=%s", got)
 	}
+	previewOnly := RunNetworkPolicyEvent{
+		Isolation: RunIsolationDocker, JobNetwork: RunJobNetworkRestricted, EgressPolicyID: &policyID,
+		AgentSandboxNetwork: AgentSandboxNetworkPreviewOnly,
+	}
+	if got := RunNetworkPolicyContentDigest(previewOnly); got != runNetworkPolicyPreviewOnlyVector {
+		t.Fatalf("preview_only digest=%s", got)
+	}
 }
 
 const (
-	runNetworkPolicyRestrictedVector = "31311165b68cbeea638984d1b0d6f50b0788a164ea505397ef27556ccdab4c90"
-	runNetworkPolicyDirectVector     = "1665652301e5ad3336d0d21997e28f8c3a97ec6868db9c78984f168cccfdd47a"
+	runNetworkPolicyRestrictedVector  = "31311165b68cbeea638984d1b0d6f50b0788a164ea505397ef27556ccdab4c90"
+	runNetworkPolicyDirectVector      = "1665652301e5ad3336d0d21997e28f8c3a97ec6868db9c78984f168cccfdd47a"
+	runNetworkPolicyPreviewOnlyVector = "d86b639694cf42f4d300aaed8dfda0791ec0c7c486b219d854ae1db74a5a26a7"
 )
 
 func TestRunGuardrailEventWireFieldOrder(t *testing.T) {
