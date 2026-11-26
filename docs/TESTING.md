@@ -187,7 +187,11 @@ never prints them. With `PreviewReach`:
 
 - `http://our-preview:8080/index.html` returns `200 preview ok` on a private address;
 - `http://example.com/` returns `403`;
-- a direct TCP connect to the preview address fails.
+- a direct TCP connect to the preview address fails;
+- a plain node `fetch` of `http://our-preview:8080/index.html`, with no proxy
+  code, returns `200 preview ok` because the runner sets
+  `NODE_USE_ENV_PROXY=1` for hardened Claude jobs, and a plain `fetch` of
+  `http://example.com/` is refused by the sandbox proxy.
 
 Without `PreviewReach`, `our-preview` also returns `403`. The test fails rather
 than skips when the daemon is not rootless, because bubblewrap cannot start

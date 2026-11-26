@@ -229,7 +229,7 @@ func (d Docker) Wrap(command string, args []string, p Policy) (string, []string,
 
 var forwardedSecretName = regexp.MustCompile(`^(ANTHROPIC_API_KEY|CODEX_API_KEY)$`)
 
-var containerEnvironmentKey = regexp.MustCompile(`^(CLAUDE_CODE_SUBPROCESS_ENV_SCRUB|OPENCODE_(CONFIG_CONTENT|CONFIG_DIR|DISABLE_[A-Z0-9_]+))$`)
+var containerEnvironmentKey = regexp.MustCompile(`^(CLAUDE_CODE_SUBPROCESS_ENV_SCRUB|NODE_USE_ENV_PROXY|OPENCODE_(CONFIG_CONTENT|CONFIG_DIR|DISABLE_[A-Z0-9_]+))$`)
 
 func validateNPMCacheDir(dir string) error {
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == string(filepath.Separator) ||

@@ -113,6 +113,38 @@ func TestPreviewDeployResultAuthorityEchoesIdentityWithoutContent(t *testing.T) 
 	}
 }
 
+func TestPreviewDeployResultEchoesCommandTimesWithFixedMilliseconds(t *testing.T) {
+	var operation PreviewDeployOperation
+	if err := json.Unmarshal([]byte(`{"lease_expires_at":"2026-11-26T10:08:00.440Z","expires_at":"2026-11-26T10:22:40.000Z"}`), &operation); err != nil {
+		t.Fatal(err)
+	}
+	event := PreviewDeployResultEvent{
+		Kind:                         EventPreviewDeployResult,
+		PreviewDeployResultAuthority: PreviewDeployResultAuthorityFromOperation(operation),
+		ObservedAt:                   time.Date(2026, 11, 26, 9, 23, 3, 10_000_000, time.UTC),
+	}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`"lease_expires_at":"2026-11-26T10:08:00.440Z"`,
+		`"expires_at":"2026-11-26T10:22:40.000Z"`,
+		`"observed_at":"2026-11-26T09:23:03.010Z"`,
+	} {
+		if !strings.Contains(string(raw), expected) {
+			t.Fatalf("result missing %s: %s", expected, raw)
+		}
+	}
+	var decoded PreviewDeployResultEvent
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.LeaseExpiresAt.Equal(operation.LeaseExpiresAt) || !decoded.ExpiresAt.Equal(operation.ExpiresAt) || !decoded.ObservedAt.Equal(event.ObservedAt) {
+		t.Fatalf("decoded times changed: %+v", decoded)
+	}
+}
+
 func TestPreviewDeployCommandUsesDedicatedPayload(t *testing.T) {
 	operation := goldenPreviewDeployOperation()
 	raw, err := json.Marshal(CommandPayload{Command: CmdPreviewDeploy, PreviewDeploy: &operation})

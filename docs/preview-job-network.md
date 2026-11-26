@@ -14,7 +14,7 @@ The decision does not change during the job. If the tunnel comes up after the jo
 
 ## Per agent CLI
 
-- **Claude Code.** The inner sandbox keeps `strictAllowlist: true`. Exactly `our-preview` is added to `allowedDomains`, next to any applied `network_access` grants. No wildcard is added.
+- **Claude Code.** The inner sandbox keeps `strictAllowlist: true`. Exactly `our-preview` is added to `allowedDomains`, next to any applied `network_access` grants. No wildcard is added. Sandboxed commands reach the network only through the sandbox proxy in `HTTP_PROXY`. The runner sets `NODE_USE_ENV_PROXY=1` for every hardened Claude job, so a plain node `fetch` uses that proxy instead of failing name resolution with `EAI_AGAIN`. A host off the allowlist is refused by the proxy: a client that sends a plain proxy request gets `403`, and `fetch`, which tunnels with `CONNECT`, fails with an error.
 - **Codex.** Reach never opens. The permission profile keeps `[permissions.runner-job.network] enabled = false`, and the tool answers `job_network_unsupported`. See the finding below.
 - **opencode.** It has no nested sandbox, so the per-job internal network is the only boundary. Nothing in its configuration changes.
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,26 @@ func TestClaudeHardenedParamsWithoutDockerIsolationSetTheSubprocessEnvironmentSc
 		}
 		if got := hasEnvironmentKey(spec.Env, claudeSubprocessEnvironmentScrub); got != hardened {
 			t.Fatalf("hardened=%v scrub present=%v env=%q", hardened, got, spec.Env)
+		}
+	}
+}
+
+func TestClaudeHardenedSandboxRoutesNodeFetchThroughTheSandboxProxy(t *testing.T) {
+	for _, docker := range []bool{true, false} {
+		for _, hardened := range []bool{true, false} {
+			p := testParams(t)
+			p.HardenedRuntime = hardened
+			p.DockerIsolation = docker
+			spec, err := NewClaude().BuildSpec(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := slices.Contains(spec.Env, "NODE_USE_ENV_PROXY=1"); got != hardened {
+				t.Fatalf("docker=%v hardened=%v env=%q", docker, hardened, spec.Env)
+			}
+			if got := slices.Contains(ContainerEnvironment(spec.Env), "NODE_USE_ENV_PROXY=1"); got != hardened {
+				t.Fatalf("docker=%v hardened=%v container env=%q", docker, hardened, ContainerEnvironment(spec.Env))
+			}
 		}
 	}
 }

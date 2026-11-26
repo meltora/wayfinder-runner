@@ -23,7 +23,8 @@
   ],
   "dir": "$WORK",
   "env_extra": [
-    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"
+    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1",
+    "NODE_USE_ENV_PROXY=1"
   ],
   "stdin": "do the ticket",
   "provider_environment": [

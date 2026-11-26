@@ -49,10 +49,20 @@ function direct(label, host, port) {
     socket.on('error', (error) => { console.log(label + '=error ' + error.code); resolve(); });
   });
 }
+async function plainFetch(label, target) {
+  try {
+    const res = await fetch(target, { signal: AbortSignal.timeout(10000) });
+    console.log(label + '=' + res.status + ' ' + JSON.stringify((await res.text()).slice(0, 80)));
+  } catch (error) {
+    console.log(label + '=error ' + ((error.cause && error.cause.code) || error.name));
+  }
+}
 (async () => {
   console.log('proxy=' + (proxy ? 'set' : 'none'));
   await viaProxy('preview', 'http://our-preview:8080/index.html');
   await viaProxy('other', 'http://example.com/');
+  await plainFetch('fetch-preview', 'http://our-preview:8080/index.html');
+  await plainFetch('fetch-other', 'http://example.com/');
   await direct('direct', process.argv[2], 8080);
 })();
 `
@@ -128,6 +138,12 @@ func TestRealDockerClaudeSandboxReachesPreviewIngress(t *testing.T) {
 		if got := run.probe("other"); !strings.HasPrefix(got, "403 ") {
 			t.Fatalf("sandboxed request to a host off the allowlist = %q:\n%s", got, run.output)
 		}
+		if got := run.probe("fetch-preview"); got != `200 "preview ok\n"` {
+			t.Fatalf("sandboxed node fetch of our-preview = %q:\n%s", got, run.output)
+		}
+		if got := run.probe("fetch-other"); !strings.HasPrefix(got, "403 ") && !strings.HasPrefix(got, "error ") {
+			t.Fatalf("sandboxed node fetch of a host off the allowlist = %q:\n%s", got, run.output)
+		}
 		if got := run.probe("direct"); !strings.HasPrefix(got, "error ") && got != "timeout" {
 			t.Fatalf("sandboxed direct connection to the preview address = %q:\n%s", got, run.output)
 		}
@@ -140,6 +156,9 @@ func TestRealDockerClaudeSandboxReachesPreviewIngress(t *testing.T) {
 		})
 		if got := run.probe("preview"); !strings.HasPrefix(got, "403 ") {
 			t.Fatalf("sandboxed request to our-preview without preview reach = %q:\n%s", got, run.output)
+		}
+		if got := run.probe("fetch-preview"); !strings.HasPrefix(got, "403 ") && !strings.HasPrefix(got, "error ") {
+			t.Fatalf("sandboxed node fetch of our-preview without preview reach = %q:\n%s", got, run.output)
 		}
 		if got := run.probe("direct"); !strings.HasPrefix(got, "error ") && got != "timeout" {
 			t.Fatalf("sandboxed direct connection to the preview address = %q:\n%s", got, run.output)

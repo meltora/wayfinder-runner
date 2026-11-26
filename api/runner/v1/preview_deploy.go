@@ -244,6 +244,21 @@ type PreviewDeployResultEvent struct {
 	Outcome          PreviewDeployOutcome `json:"outcome"`
 }
 
+func (event PreviewDeployResultEvent) MarshalJSON() ([]byte, error) {
+	type alias PreviewDeployResultEvent
+	return json.Marshal(struct {
+		alias
+		LeaseExpiresAt string `json:"lease_expires_at"`
+		ExpiresAt      string `json:"expires_at"`
+		ObservedAt     string `json:"observed_at"`
+	}{
+		alias:          alias(event),
+		LeaseExpiresAt: previewLifecycleCanonicalTime(event.LeaseExpiresAt),
+		ExpiresAt:      previewLifecycleCanonicalTime(event.ExpiresAt),
+		ObservedAt:     previewLifecycleCanonicalTime(event.ObservedAt),
+	})
+}
+
 func PreviewDeployResultEventID(idempotencyKey string) string {
 	digest := sha256.Sum256([]byte(idempotencyKey))
 	return "preview-deploy-result-" + hex.EncodeToString(digest[:])

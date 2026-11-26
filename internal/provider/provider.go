@@ -362,6 +362,9 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if p.HardenedRuntime && !p.DockerIsolation {
 		env = append(env, "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1")
 	}
+	if p.HardenedRuntime {
+		env = append(env, "NODE_USE_ENV_PROXY=1")
+	}
 	return supervisor.Spec{
 		Name:                "claude-" + p.Job.AttemptID,
 		Command:             bin,
@@ -424,6 +427,7 @@ func allowedEnvironment() []string {
 func ContainerEnvironment(env []string) []string {
 	allowed := map[string]bool{
 		"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": true,
+		"NODE_USE_ENV_PROXY":               true,
 		"OPENCODE_CONFIG_CONTENT":          true,
 		"OPENCODE_CONFIG_DIR":              true,
 		"OPENCODE_DISABLE_AUTOUPDATE":      true,

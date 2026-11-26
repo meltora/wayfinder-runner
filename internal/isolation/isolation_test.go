@@ -177,6 +177,17 @@ func TestDockerWrapRejectsUnapprovedContainerEnvironment(t *testing.T) {
 	}
 }
 
+func TestDockerWrapForwardsTheNodeEnvironmentProxySwitch(t *testing.T) {
+	p := Policy{NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser, Environment: []string{"NODE_USE_ENV_PROXY=1"}}
+	_, args, err := Docker{}.Wrap("claude", nil, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(args, " "), "-e NODE_USE_ENV_PROXY=1 ") {
+		t.Fatalf("docker args = %q", args)
+	}
+}
+
 func TestDockerWrapForwardsProviderAPIKeysByNameOnly(t *testing.T) {
 	d := Docker{}
 	p := Policy{NetworkNone: true, RunnerID: "runner-1", AttemptID: "attempt-1", User: testJobUser, ForwardedSecretNames: []string{"ANTHROPIC_API_KEY"}}
