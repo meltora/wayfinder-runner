@@ -13,7 +13,7 @@ func TestPrepareHomeClaude(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(hostHome, ".claude"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(hostHome, ".claude", ".credentials.json"), []byte(`{"token":"x"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(hostHome, ".claude", ".credentials.json"), []byte(hostClaudeCredentials), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(hostHome, ".claude.json"), []byte(`{"user":"u"}`), 0o600); err != nil {
@@ -29,7 +29,7 @@ func TestPrepareHomeClaude(t *testing.T) {
 		t.Fatalf("job home %q is not under state dir %q", home, stateDir)
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".claude", ".credentials.json"))
-	if err != nil || string(data) != `{"token":"x"}` {
+	if err != nil || string(data) != hostClaudeCredentials {
 		t.Fatalf("credentials copy: %q %v", data, err)
 	}
 	info, _ := os.Stat(filepath.Join(home, ".claude", ".credentials.json"))

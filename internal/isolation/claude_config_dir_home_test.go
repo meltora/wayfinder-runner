@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	hostClaudeCredentials       = `{"account":"host-default"}`
-	configuredClaudeCredentials = `{"account":"configured"}`
+	hostClaudeCredentials       = `{"claudeAiOauth":{"accessToken":"host-default","expiresAt":1}}`
+	configuredClaudeCredentials = `{"claudeAiOauth":{"accessToken":"configured","expiresAt":1}}`
+	keychainClaudeLogin         = `{"claudeAiOauth":{"accessToken":"keychain","expiresAt":1}}`
 	configuredClaudeState       = `{"user":"configured"}`
 )
 
@@ -292,7 +293,7 @@ func TestPrepareHomeClaudeCopiesOnlyCredentialsWhenTheConfiguredStateFileIsAbsen
 
 func TestPrepareHomeClaudeWithoutConfigDirKeepsTheDefaultSourcesAndKeychainFallback(t *testing.T) {
 	installHostClaudeLogin(t)
-	keychainCalls := stubKeychain(t, "darwin", `{"account":"keychain"}`)
+	keychainCalls := stubKeychain(t, "darwin", keychainClaudeLogin)
 	home, err := PrepareHome(t.TempDir(), "j1", "a1", "claude", []string{"ANTHROPIC_LOG=debug"})
 	if err != nil {
 		t.Fatal(err)
@@ -319,7 +320,7 @@ func TestPrepareHomeClaudeWithoutConfigDirKeepsTheDefaultSourcesAndKeychainFallb
 	if *keychainCalls != 1 {
 		t.Fatalf("keychain calls = %d, want the macOS fallback once", *keychainCalls)
 	}
-	if got := readJobHomeFile(t, home, ".claude/.credentials.json"); got != `{"account":"keychain"}` {
+	if got := readJobHomeFile(t, home, ".claude/.credentials.json"); got != keychainClaudeLogin {
 		t.Fatalf("keychain credentials = %q", got)
 	}
 }

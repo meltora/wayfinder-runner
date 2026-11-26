@@ -877,6 +877,10 @@ is missing, not a private regular file, or a symlink, the job fails before the
 agent starts with an error naming the directory; the runner never falls back to
 `~/.claude` or the macOS Keychain. Without `CLAUDE_CONFIG_DIR`, Claude jobs copy
 `~/.claude/.credentials.json` and `~/.claude.json` (Keychain fallback on macOS).
+From every source, the job's `.credentials.json` holds only the
+`claudeAiOauth` login. Other tokens in the host file, such as the `mcpOAuth`
+logins of MCP servers and plugins, are never copied into a job. A
+`.credentials.json` without `claudeAiOauth` counts as missing.
 Codex and OpenCode always copy their default `auth.json`; `CODEX_HOME` and other
 variables are not applied under Docker, and `our-runner doctor --config` warns
 with their names. The tmux supervisor passes them on its command line and the herdr

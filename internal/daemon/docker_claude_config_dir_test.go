@@ -13,7 +13,7 @@ import (
 	"github.com/example/app-runner/internal/isolation"
 )
 
-const configuredDockerClaudeLogin = `{"account":"configured"}`
+const configuredDockerClaudeLogin = `{"claudeAiOauth":{"accessToken":"configured","expiresAt":1}}`
 
 func installConfiguredDockerClaudeLogin(t *testing.T) string {
 	t.Helper()
@@ -57,7 +57,7 @@ func TestDockerProviderJobWithoutClaudeConfigDirCopiesTheDefaultLogin(t *testing
 	copied := ""
 	run.ownership.onHandOff = func(request isolation.OwnershipRequest) { copied = jobHomeCredentials(t, request) }
 	run.execute(t)
-	if copied != `{"token":"test"}` {
+	if copied != `{"claudeAiOauth":{"accessToken":"test","expiresAt":1}}` {
 		t.Fatalf("job home credentials = %q, want the default host login", copied)
 	}
 }

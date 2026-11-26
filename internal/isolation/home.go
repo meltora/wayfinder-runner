@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/example/app-runner/internal/claudelogin"
 	"github.com/example/app-runner/internal/safeio"
 )
 
@@ -72,6 +73,12 @@ func PrepareHome(stateDir, jobID, attemptID, provider string, environment []stri
 		if err != nil {
 			continue
 		}
+		if provider == "claude" && filepath.Base(c.dst) == ".credentials.json" {
+			data, err = claudelogin.JobCredentials(data)
+			if err != nil {
+				continue
+			}
+		}
 		if err := writeJobHomeFile(c.dst, data); err != nil {
 			return "", err
 		}
@@ -84,10 +91,12 @@ func PrepareHome(stateDir, jobID, attemptID, provider string, environment []stri
 	if !credCopied && provider == "claude" && hostGOOS == "darwin" {
 		data, err := readKeychainClaudeCredentials()
 		if err == nil && len(data) > 0 {
-			if err := writeJobHomeFile(filepath.Join(home, ".claude", ".credentials.json"), data); err != nil {
-				return "", err
+			if narrowed, err := claudelogin.JobCredentials(data); err == nil {
+				if err := writeJobHomeFile(filepath.Join(home, ".claude", ".credentials.json"), narrowed); err != nil {
+					return "", err
+				}
+				copied++
 			}
-			copied++
 		}
 	}
 	if copied == 0 {
@@ -127,6 +136,10 @@ func claudeConfigDir(environment []string, hostHome string) (string, error) {
 
 func copyConfiguredClaudeLogin(configDir, home string) error {
 	credentials, err := readPrivateCredential(filepath.Join(configDir, ".credentials.json"))
+	if err != nil {
+		return fmt.Errorf("CLAUDE_CONFIG_DIR %s has no usable Claude login in .credentials.json: %w", configDir, err)
+	}
+	credentials, err = claudelogin.JobCredentials(credentials)
 	if err != nil {
 		return fmt.Errorf("CLAUDE_CONFIG_DIR %s has no usable Claude login in .credentials.json: %w", configDir, err)
 	}
