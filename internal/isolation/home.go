@@ -19,35 +19,48 @@ var (
 	readKeychainClaudeCredentials = keychainClaudeCredentials
 )
 
+type JobHome struct {
+	Path            string
+	ClaudeConfigDir string
+	Baseline        [32]byte
+	SyncsLogin      bool
+}
+
 func PrepareHome(stateDir, jobID, attemptID, provider string, environment []string) (string, error) {
+	jobHome, err := PrepareHomeWithLogin(stateDir, jobID, attemptID, provider, environment)
+	return jobHome.Path, err
+}
+
+func PrepareHomeWithLogin(stateDir, jobID, attemptID, provider string, environment []string) (JobHome, error) {
 	homesRoot := filepath.Join(stateDir, "job-homes")
 	if err := os.MkdirAll(homesRoot, 0o700); err != nil {
-		return "", err
+		return JobHome{}, err
 	}
 	home, err := os.MkdirTemp(homesRoot, "home-*")
 	if err != nil {
-		return "", err
+		return JobHome{}, err
 	}
 	// #nosec G302 -- provider home is a private directory; owner traversal requires 0700.
 	if err := os.Chmod(home, 0o700); err != nil {
-		return "", err
+		return JobHome{}, err
 	}
 	hostHome, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return JobHome{}, err
 	}
 	if provider == "claude" {
 		configDir, err := claudeConfigDir(environment, hostHome)
 		if err != nil {
 			_ = os.RemoveAll(home)
-			return "", err
+			return JobHome{}, err
 		}
 		if configDir != "" {
-			if err := copyConfiguredClaudeLogin(configDir, home); err != nil {
+			credentials, err := copyConfiguredClaudeLogin(configDir, home)
+			if err != nil {
 				_ = os.RemoveAll(home)
-				return "", err
+				return JobHome{}, err
 			}
-			return home, nil
+			return claudeJobHome(home, configDir, credentials), nil
 		}
 	}
 	var copies []struct{ src, dst string }
@@ -68,6 +81,7 @@ func PrepareHome(stateDir, jobID, attemptID, provider string, environment []stri
 	}
 	copied := 0
 	credCopied := false
+	var claudeCredentials []byte
 	for _, c := range copies {
 		data, err := readPrivateCredential(c.src)
 		if err != nil {
@@ -78,9 +92,10 @@ func PrepareHome(stateDir, jobID, attemptID, provider string, environment []stri
 			if err != nil {
 				continue
 			}
+			claudeCredentials = data
 		}
 		if err := writeJobHomeFile(c.dst, data); err != nil {
-			return "", err
+			return JobHome{}, err
 		}
 		copied++
 		base := filepath.Base(c.dst)
@@ -93,7 +108,7 @@ func PrepareHome(stateDir, jobID, attemptID, provider string, environment []stri
 		if err == nil && len(data) > 0 {
 			if narrowed, err := claudelogin.JobCredentials(data); err == nil {
 				if err := writeJobHomeFile(filepath.Join(home, ".claude", ".credentials.json"), narrowed); err != nil {
-					return "", err
+					return JobHome{}, err
 				}
 				copied++
 			}
@@ -101,15 +116,26 @@ func PrepareHome(stateDir, jobID, attemptID, provider string, environment []stri
 	}
 	if copied == 0 {
 		_ = os.RemoveAll(home)
-		return "", fmt.Errorf("no %s credentials found under %s to copy", provider, hostHome)
+		return JobHome{}, fmt.Errorf("no %s credentials found under %s to copy", provider, hostHome)
 	}
 	if provider == "codex" {
 		if err := writeCodexProfiles(home); err != nil {
 			_ = os.RemoveAll(home)
-			return "", err
+			return JobHome{}, err
 		}
 	}
-	return home, nil
+	if claudeCredentials != nil {
+		return claudeJobHome(home, filepath.Join(hostHome, ".claude"), claudeCredentials), nil
+	}
+	return JobHome{Path: home}, nil
+}
+
+func claudeJobHome(home, configDir string, credentials []byte) JobHome {
+	login, err := claudelogin.ParseCredentials(credentials)
+	if err != nil || !login.HasRefresh {
+		return JobHome{Path: home}
+	}
+	return JobHome{Path: home, ClaudeConfigDir: configDir, Baseline: login.RefreshHash, SyncsLogin: true}
 }
 
 func claudeConfigDir(environment []string, hostHome string) (string, error) {
@@ -134,26 +160,28 @@ func claudeConfigDir(environment []string, hostHome string) (string, error) {
 	return resolved, nil
 }
 
-func copyConfiguredClaudeLogin(configDir, home string) error {
+func copyConfiguredClaudeLogin(configDir, home string) ([]byte, error) {
 	credentials, err := readPrivateCredential(filepath.Join(configDir, ".credentials.json"))
 	if err != nil {
-		return fmt.Errorf("CLAUDE_CONFIG_DIR %s has no usable Claude login in .credentials.json: %w", configDir, err)
+		return nil, fmt.Errorf("CLAUDE_CONFIG_DIR %s has no usable Claude login in .credentials.json: %w", configDir, err)
 	}
 	credentials, err = claudelogin.JobCredentials(credentials)
 	if err != nil {
-		return fmt.Errorf("CLAUDE_CONFIG_DIR %s has no usable Claude login in .credentials.json: %w", configDir, err)
+		return nil, fmt.Errorf("CLAUDE_CONFIG_DIR %s has no usable Claude login in .credentials.json: %w", configDir, err)
 	}
 	state, err := readPrivateCredential(filepath.Join(configDir, ".claude.json"))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("CLAUDE_CONFIG_DIR %s has an unusable .claude.json: %w", configDir, err)
+		return nil, fmt.Errorf("CLAUDE_CONFIG_DIR %s has an unusable .claude.json: %w", configDir, err)
 	}
 	if err := writeJobHomeFile(filepath.Join(home, ".claude", ".credentials.json"), credentials); err != nil {
-		return err
+		return nil, err
 	}
-	if state == nil {
-		return nil
+	if state != nil {
+		if err := writeJobHomeFile(filepath.Join(home, ".claude.json"), state); err != nil {
+			return nil, err
+		}
 	}
-	return writeJobHomeFile(filepath.Join(home, ".claude.json"), state)
+	return credentials, nil
 }
 
 func writeJobHomeFile(path string, data []byte) error {
