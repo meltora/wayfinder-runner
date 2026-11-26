@@ -306,3 +306,7 @@ Files: modify `internal/doctor/doctor.go` and its test, `README.md` (subscriptio
 - Timing: the refresh starts within 10 s of entering the 15-minute window and took 13 s, with a 2-minute retry. That leaves about 4 retries before Claude Code's 5-minute margin.
 - Open: the token endpoint in this Claude Code is `platform.claude.com`. The restricted job network must allow it. Jobs on that network already refreshed in the 3c runs, so it is reachable there (inferred, not checked). The 3c run with `max_concurrent: 3` is still to do.
 - Found: a refresh whose result is refused (`older`, `implausible_expiry`, `account_mismatch`) has already rotated the lineage, so the host login then needs a new sign-in. Refusing is still the safe choice, and the failure is logged.
+
+## Follow-up
+
+- The live 3c run with `max_concurrent: 3` is not done. On 2026-11-26 the isolated 3c stack had already been torn down: its PKI, Agent Pack signing key, pack and test repository were deleted. Rebuilding them would have meant changing that stack's e2e database. 0.4.3 shipped on the unit tests and the live refresh above. Run it the next time 3c is brought up for other work: three overlapping jobs while the host access token passes its expiry, then the checks listed under "3c for this slice".
