@@ -50,6 +50,7 @@ type providerWorkIntakeProposalGenerator struct {
 	removeContainer        func(context.Context, string, string) error
 	userMapping            isolation.UserMapping
 	ownership              isolation.Ownership
+	claudeLogins           *claudeLoginSync
 }
 
 func newProviderWorkIntakeProposalGenerator(
@@ -157,6 +158,9 @@ func (generator *providerWorkIntakeProposalGenerator) Generate(
 	executionConfigDigest, err := generator.modelExecutionConfigDigestForSpec(ctx, root, spec)
 	if err != nil || executionConfigDigest != operation.ModelExecutionConfigDigest {
 		return workIntakeProposalPreStartFailure()
+	}
+	if operation.Adapter == "claude" {
+		generator.claudeLogins.beforeStart(ctx, generator.cfg.AgentEnvironment(operation.Adapter))
 	}
 	jobHome, err := isolation.PrepareHome(
 		generator.cfg.StateDir,

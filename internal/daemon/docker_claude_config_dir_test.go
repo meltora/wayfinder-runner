@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,23 @@ func TestWorkIntakeProposalCopiesTheConfiguredClaudeConfigDirectoryLogin(t *test
 	if copied != configuredDockerClaudeLogin {
 		t.Fatalf("proposal job home credentials = %q, want the CLAUDE_CONFIG_DIR login", copied)
 	}
+}
+
+func TestWorkIntakeProposalRefreshesAnExpiringClaudeLoginBeforeCopyingIt(t *testing.T) {
+	f, refresher := newRefreshFixture(t, -time.Hour)
+	h := newClaudeWorkIntakeOwnershipHarness(t, f.hostDir)
+	h.generator.claudeLogins = f.sync
+	copied := ""
+	h.ownership.onHandOff = func(request isolation.OwnershipRequest) { copied = jobHomeCredentials(t, request) }
+	h.generator.Generate(context.Background(), h.operation)
+	if refresher.calls != 1 {
+		t.Fatalf("refreshes = %d before the consultation, want 1", refresher.calls)
+	}
+	f.assertHost("r1")
+	if !strings.Contains(copied, `"refreshToken":"fake-r1"`) {
+		t.Fatal("the consultation job home did not get the refreshed login")
+	}
+	f.assertNoTokenLogged()
 }
 
 func TestNewWorkIntakeProposalGeneratorFailsClosedWithoutAnEgressPolicyVerifier(t *testing.T) {

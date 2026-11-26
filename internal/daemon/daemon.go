@@ -425,6 +425,9 @@ func NewWithExternalOperationDependencies(
 	d.updateExpiredAtStartup = expired
 	d.previewHostWake = make(chan struct{}, 1)
 	d.claudeLogins = newClaudeLoginSync(d.claudeLoginExchanger(), d.claudeLoginRefresher(), logger)
+	if generator, ok := d.workIntakeProposalGenerator.(*providerWorkIntakeProposalGenerator); ok {
+		generator.claudeLogins = d.claudeLogins
+	}
 	if cfg.PreviewHosting.Enabled {
 		controller, err := d.newPreviewHostController()
 		if err != nil {
