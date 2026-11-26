@@ -6,7 +6,7 @@
 |---|---|
 | ID | `runner-oauth-writeback` |
 | Kind | slice |
-| Status | design approved (approach A, master, 2026-11-26); spikes done; plan written; Tasks 1 and 3 done; Task 2 in progress |
+| Status | design approved (approach A, master, 2026-11-26); spikes done; plan written; Tasks 1, 2 and 3 done; Task 4 in progress |
 | Target | 0.4.3. Task 1 (`47bf54a`) and Task 3 (`a7a34ba`, job copy narrowed to `claudeAiOauth`) shipped early in v0.4.2. |
 | Risk | high. The runner writes the owner's Claude login on the host. A defect could lose the login, write a stale one over a fresh one, swap in another account's login, or leak it. |
 | Baseline | app-runner `main` at `105182f` (v0.4.1) |
@@ -195,7 +195,7 @@ Files: create `internal/claudelogin/lock.go` and `lock_test.go`.
 Files: modify `internal/isolation/home.go` (`copyConfiguredClaudeLogin`, and the `.credentials.json` copy in `PrepareHome`), and `home_test.go` and `claude_config_dir_home_test.go`.
 
 - The copy writes `claudelogin.JobCredentials(host)`. `.claude.json` is still copied whole; Claude Code needs `oauthAccount` and onboarding state from it.
-- `PrepareHome` returns the baseline as well. The signature becomes `PrepareHome(...) (JobHome, error)`, with `type JobHome struct { Path string; ClaudeConfigDir string; Baseline [32]byte; SyncsLogin bool }`. `SyncsLogin` is true only for a file login with a refresh token. The three call sites switch to `.Path`.
+- `PrepareHomeWithLogin(...) (JobHome, error)` returns the baseline as well, with `type JobHome struct { Path string; ClaudeConfigDir string; Baseline [32]byte; SyncsLogin bool }`. `SyncsLogin` is true only for a file login with a refresh token. `PrepareHome` stays as a wrapper that returns `.Path`, so call sites that do not sync keep their signature.
 - Tests:
   - the job copy has no `mcpOAuth`;
   - a keychain login has `SyncsLogin` false;
@@ -238,7 +238,7 @@ Files: create `internal/daemon/claude_login_sync.go` and its test; modify `inter
   - it re-reads the host;
   - it runs `Decide`;
   - on `ok`, it writes `MergeCredentials(host, candidate)` with uid -1;
-  - it sets every other job's baseline to the new hash, so their next exchange hands it on;
+  - it sets the writing job's baseline to the new hash and leaves every other job's baseline alone: a job whose copy is still on its baseline gets the newer host login at its next exchange, and only then does its baseline become the handed-on hash;
   - it logs `claude login write-back` with the reason only.
 - The loop exchanges with each job every 2 minutes. It checks the host mtime every 10 s, and a change triggers an exchange with all jobs. Exchanges with different jobs run one after another; the daemon waits for no exchange while holding the host lock.
 - Tests, each against a fake exchange and a temp host dir:
