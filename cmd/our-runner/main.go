@@ -67,6 +67,8 @@ func runCLI(args []string) int {
 		err = cmdHookEvent(args[1:])
 	case "plan-command-guard":
 		return cmdPlanCommandGuard(args[1:])
+	case "claude-login-exchange":
+		return cmdClaudeLoginExchange(args[1:])
 	case "support-bundle":
 		err = cmdSupportBundle(args[1:])
 	case "version":

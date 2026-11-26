@@ -50,6 +50,8 @@ type DockerOwnership struct {
 	StateDir     string
 	EffectiveUID func() int
 	Run          func(ctx context.Context, name string, args []string) error
+	RunIO        func(ctx context.Context, name string, args []string, stdin []byte) ([]byte, error)
+	Executable   func() (string, error)
 }
 
 func (o DockerOwnership) HandOff(ctx context.Context, request OwnershipRequest) error {
@@ -97,6 +99,27 @@ func (r OwnershipRequest) roots() []string {
 }
 
 func (o DockerOwnership) helperArgs(request OwnershipRequest, reclaim bool) (string, []string, error) {
+	name, roots, err := o.validateHelper(request)
+	if err != nil {
+		return "", nil, err
+	}
+	args := []string{"run", "--rm", "--user", "0:0", "--cap-drop", "ALL", "--cap-add", "CHOWN"}
+	if reclaim {
+		args = append(args, "--cap-add", "DAC_READ_SEARCH")
+	}
+	args = append(args,
+		"--security-opt", "no-new-privileges", "--network", "none", "--read-only", "--log-driver", "none",
+		"--pids-limit", "64", "--memory", "128m", "--name", name,
+		"--label", "com.ourplatform.runner-id="+request.RunnerID,
+		"--label", "com.ourplatform.attempt-id="+request.AttemptID,
+	)
+	for _, root := range roots {
+		args = append(args, "-v", root+":"+root+":rw")
+	}
+	return name, append(args, o.Image), nil
+}
+
+func (o DockerOwnership) validateHelper(request OwnershipRequest) (string, []string, error) {
 	if err := o.Mapping.Validate(); err != nil || !o.Mapping.RequiresOwnershipHandOff() {
 		return "", nil, fmt.Errorf("the ownership helper requires the rootless Docker mapping")
 	}
@@ -129,21 +152,7 @@ func (o DockerOwnership) helperArgs(request OwnershipRequest, reclaim bool) (str
 			return "", nil, err
 		}
 	}
-	name := ContainerName(request.RunnerID, request.AttemptID+"-own-"+request.Purpose)
-	args := []string{"run", "--rm", "--user", "0:0", "--cap-drop", "ALL", "--cap-add", "CHOWN"}
-	if reclaim {
-		args = append(args, "--cap-add", "DAC_READ_SEARCH")
-	}
-	args = append(args,
-		"--security-opt", "no-new-privileges", "--network", "none", "--read-only", "--log-driver", "none",
-		"--pids-limit", "64", "--memory", "128m", "--name", name,
-		"--label", "com.ourplatform.runner-id="+request.RunnerID,
-		"--label", "com.ourplatform.attempt-id="+request.AttemptID,
-	)
-	for _, root := range roots {
-		args = append(args, "-v", root+":"+root+":rw")
-	}
-	return name, append(args, o.Image), nil
+	return ContainerName(request.RunnerID, request.AttemptID+"-own-"+request.Purpose), roots, nil
 }
 
 func validateOwnershipRoot(stateDir, root string) error {

@@ -91,9 +91,9 @@ The runner keeps one login lineage on the host, and it is the only process that 
 
 ### Sync
 
-- **Exchange.** A running job's copy is reached through an exchange: a short helper container started by the runner, from the pinned job image, as container root (the runner's own uid on the host). It runs with `--network none`, and only the job home (read-write) and the runner's statically linked binary (read-only) are mounted. It runs `our-runner claude-login-exchange`.
+- **Exchange.** A running job's copy is reached through an exchange: a short helper container started by the runner, from the pinned job image, as the job user (uid 10001, the same subordinate uid that owns the home), with every capability dropped. It runs with `--network none`, and only the job home (read-write) and the runner's statically linked binary (read-only) are mounted. It runs `our-runner claude-login-exchange`.
   - The runner sends the host `claudeAiOauth`, the host account ids and the job's baseline hash on stdin, never in arguments or the environment.
-  - Under the job copy's locks, the helper reads the copy and prints the copy's `claudeAiOauth` and account ids on stdout. If the copy is still on the baseline and the host login is newer and of the same account, it first replaces the copy's `claudeAiOauth` with the host's. It then restores uid 10001 and mode 0600.
+  - Under the job copy's locks, the helper reads the copy and prints the copy's `claudeAiOauth` and account ids on stdout. If the copy is still on the baseline and the host login is newer and of the same account, it first replaces the copy's `claudeAiOauth` with the host's. The new file is the job user's own, with mode 0600, so no ownership change is needed.
   - The anti-swap decision is the same Go code (`claudelogin.Decide`) on both sides.
 - **When it runs.** Every 2 minutes for each running Claude job; right after a scheduled refresh, for every running job; and on demand when the host file's mtime changes (an interactive sign-in or refresh), checked every 10 s.
 - **Write-back.** When the copy an exchange returns passes the anti-swap check, the runner writes it to the host. The next exchange with every other running job then hands it on. Claude Code in those jobs adopts it on its next check (Q3).
@@ -213,19 +213,20 @@ Files:
 What each one holds:
 
 - `type ExchangeRequest struct { Host json.RawMessage; HostAccount Account; Baseline [32]byte }` and `type ExchangeResult struct { Job json.RawMessage; JobAccount Account; Replaced bool; Reason Reason }`, as JSON on stdin and stdout.
-- `func Exchange(home string, request ExchangeRequest) (ExchangeResult, error)` works under `LockConfigDir(home/.claude)`.
-  - It reads `.claude/.credentials.json` and `.claude.json` from the home.
-  - When `Decide(host, job, baseline, ...)` is `ok`, it writes the merged file with uid 10001.
-  - It returns the job login as it was before any write.
-- The `cmd` side reads at most 1 MiB from stdin, runs `Exchange("/home/runner", ...)`, and writes the result to stdout. The process exits non-zero with a reason-only message.
-- `func (o DockerOwnership) ExchangeLogin(ctx context.Context, request OwnershipRequest, home string, in claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error)` reuses `helperArgs`.
-  - Purpose `login-exchange`.
-  - Mounts: the home rw at `/home/runner`; `os.Executable()` read-only at `/opt/our-runner-helper/our-runner`.
-  - It runs with `--network none` and a 30 s timeout. Stdin and stdout are pipes.
+- `func Exchange(ctx context.Context, home string, request ExchangeRequest, options LockOptions) (ExchangeResult, error)` works under `LockConfigDir(home/.claude)`.
+  - It reads `.claude/.credentials.json` and `.claude.json` from the home through `os.OpenRoot`, so a symlink cannot lead out of the home. A missing or unparsable job copy or state is reason `unparsable`, with no write.
+  - When `Decide(host, job, baseline, ...)` is `ok`, it writes the merged file with `WriteFileAtomic` (uid -1: the helper already runs as the job user).
+  - It returns the job login as it was before any write. When the job has refreshed, the reason is `host_changed` or `older` and the daemon takes `Job` as the write-back candidate.
+- The `cmd` side reads at most 1 MiB from stdin, rejects unknown fields and trailing data, runs `Exchange("/home/runner", ...)` within 25 s, and writes the result to stdout. The process exits non-zero with a fixed reason-only message.
+- `func (o DockerOwnership) ExchangeLogin(ctx context.Context, runnerID, attemptID, home string, in claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error)` shares the helper validation with `helperArgs` and only accepts a home under `job-homes/`.
+  - Purpose `login-exchange`; `--user 10001:10001`, `--cap-drop ALL`, `--read-only`, `--network none`, `--entrypoint` set to the mounted runner.
+  - Mounts: the home rw at `/home/runner`; `os.Executable()` (symlinks resolved) read-only at `/opt/our-runner-helper/our-runner`.
+  - It runs with a 30 s timeout. Stdin carries the request; stdout is capped at 1 MiB and never appears in an error.
 - Tests:
-  - `Exchange` on a temp home covers each reason, and the write happens only on `ok`;
-  - the helper argument test checks the mounts, `--network none`, no `-e` carrying a login, and that the request goes to stdin only;
-  - the `cmd` test rejects oversize input.
+  - `Exchange` on a temp home covers each reason, the lock, a symlink out of the home, and the write happens only on `ok`;
+  - the helper argument test checks the exact argv, no `-e` carrying a login, and that the request goes to stdin only;
+  - the `cmd` test rejects oversize input and unknown fields without echoing them;
+  - a gated rootless Docker test hands a home off, exchanges, checks from inside a container that the new copy is a 0600 file of the job user, and reclaims.
 
 ### Task 5: Daemon sync (registry, exchanges, write-back, final sync)
 
