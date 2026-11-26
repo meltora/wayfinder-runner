@@ -1,4 +1,4 @@
-# Subscription login survives token refresh (RUNNER-OAUTH-WRITEBACK, 0.4.2)
+# Subscription login survives token refresh (RUNNER-OAUTH-WRITEBACK, 0.4.3)
 
 ## Control
 
@@ -6,8 +6,8 @@
 |---|---|
 | ID | `runner-oauth-writeback` |
 | Kind | slice |
-| Status | design approved (approach A, master, 2026-11-26); spikes done; plan written; Task 1 next |
-| Target | 0.4.2 |
+| Status | design approved (approach A, master, 2026-11-26); spikes done; plan written; Tasks 1 and 3 done; Task 2 in progress |
+| Target | 0.4.3. Task 1 (`47bf54a`) and Task 3 (`a7a34ba`, job copy narrowed to `claudeAiOauth`) shipped early in v0.4.2. |
 | Risk | high. The runner writes the owner's Claude login on the host. A defect could lose the login, write a stale one over a fresh one, swap in another account's login, or leak it. |
 | Baseline | app-runner `main` at `105182f` (v0.4.1) |
 | Updated | 2026-11-26 |
@@ -270,7 +270,7 @@ Files: create `internal/daemon/claude_login_refresh.go` and its test; modify `in
 
 ### Task 7: Doctor, docs and live check
 
-Files: modify `internal/doctor/doctor.go` and its test, `README.md` (subscription login section) and the known issue in `docs/development/release-0.4.1.md`; add a 0.4.2 release note.
+Files: modify `internal/doctor/doctor.go` and its test, `README.md` (subscription login section) and the known issue in `docs/development/release-0.4.1.md`; add a 0.4.3 release note.
 
 - The doctor line `claude login sync` reports the source (`file`, `keychain`, `api key`), whether sync applies, whether the account check is available, and the time to expiry rounded to minutes.
 - Live check, which needs the master's approval because it refreshes the real login:
