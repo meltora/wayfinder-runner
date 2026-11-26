@@ -119,7 +119,7 @@ func acquire(ctx context.Context, path string, deadline time.Time, options LockO
 			return heldLock{}, fmt.Errorf("take claude login lock: %w", err)
 		}
 		if info, statErr := os.Lstat(path); statErr == nil && info.IsDir() && options.Now().Sub(info.ModTime()) > options.Stale {
-			if removeErr := os.Remove(path); removeErr == nil || errors.Is(removeErr, os.ErrNotExist) {
+			if takeOverStale(path, info) {
 				continue
 			}
 		}
@@ -134,6 +134,32 @@ func acquire(ctx context.Context, path string, deadline time.Time, options LockO
 		case <-timer.C:
 		}
 	}
+}
+
+var beforeStaleRename = func(string) {}
+
+func takeOverStale(path string, stale os.FileInfo) bool {
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return false
+	}
+	aside := path + ".stale-" + hex.EncodeToString(suffix)
+	beforeStaleRename(path)
+	if err := os.Rename(path, aside); err != nil {
+		return errors.Is(err, os.ErrNotExist)
+	}
+	moved, err := os.Lstat(aside)
+	if err == nil && os.SameFile(moved, stale) && moved.ModTime().Equal(stale.ModTime()) {
+		_ = os.Remove(aside)
+		return true
+	}
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		if os.Rename(aside, path) == nil {
+			return false
+		}
+	}
+	_ = os.Remove(aside)
+	return false
 }
 
 func owned(lock heldLock) bool {

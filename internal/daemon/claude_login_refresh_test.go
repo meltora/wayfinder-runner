@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/example/app-runner/internal/claudelogin"
 	"github.com/example/app-runner/internal/config"
 	"github.com/example/app-runner/internal/isolation"
 )
@@ -139,23 +140,68 @@ func TestClaudeLoginRefreshRefusesAnUnusableResult(t *testing.T) {
 	}{
 		"older":            {out: func(f *loginSyncFixture) string { return fakeCredentials(fakeOAuth("r1", 100, "")) }, reason: "older"},
 		"no refresh token": {out: func(*loginSyncFixture) string { return `{"claudeAiOauth":{"accessToken":"fake-a","expiresAt":9e15}}` }, reason: "unparsable"},
-		"far expiry": {out: func(f *loginSyncFixture) string {
-			return fakeCredentials(fakeOAuth("r1", f.now.Add(30*24*time.Hour).UnixMilli(), ""))
-		}, reason: "implausible_expiry"},
-		"not json": {out: func(*loginSyncFixture) string { return "fake-r1" }, reason: "unparsable"},
+		"not json":         {out: func(*loginSyncFixture) string { return "fake-r1" }, reason: "unparsable"},
+		"another account": {out: func(f *loginSyncFixture) string {
+			return fakeCredentials(fakeOAuth("r1", f.now.Add(8*time.Hour).UnixMilli(), "acct-other"))
+		}, reason: "account_mismatch"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, refresher := newRefreshFixture(t, 10*time.Minute)
+			f.setHost(fakeOAuth("r0", f.now.Add(10*time.Minute).UnixMilli(), "acct-owner"))
 			refresher.out = func() ([]byte, error) { return []byte(test.out(f)), nil }
 			f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
 			f.sync.tick(context.Background())
 			f.assertHost("r0")
-			if !strings.Contains(f.logs.String(), "reason="+test.reason) {
-				t.Fatalf("refusal not logged with %s: %s", test.reason, f.logs.String())
+			logs := f.logs.String()
+			if !strings.Contains(logs, "reason="+test.reason) || !strings.Contains(logs, "host Claude login needs a new sign-in") ||
+				!strings.Contains(logs, "event=host_login_needs_sign_in") {
+				t.Fatalf("refusal not logged with %s and the sign-in notice: %s", test.reason, logs)
+			}
+			f.now = f.now.Add(claudeLoginRefreshRetry)
+			f.sync.tick(context.Background())
+			if refresher.calls != 1 {
+				t.Fatalf("refreshes = %d, want no retry with a consumed grant", refresher.calls)
 			}
 			f.assertNoTokenLogged()
 		})
 	}
+}
+
+func TestClaudeLoginRefreshWritesAFarExpiryFromTheTrustedHelper(t *testing.T) {
+	f, refresher := newRefreshFixture(t, 10*time.Minute)
+	refresher.out = func() ([]byte, error) {
+		return []byte(fakeCredentials(fakeOAuth("r1", f.now.Add(30*24*time.Hour).UnixMilli(), ""))), nil
+	}
+	f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
+	f.sync.tick(context.Background())
+	f.assertHost("r1")
+	if !strings.Contains(f.logs.String(), "reason=implausible_expiry") {
+		t.Fatalf("far expiry not warned: %s", f.logs.String())
+	}
+	f.assertNoTokenLogged()
+}
+
+func TestClaudeLoginRefreshDoesNotHoldTheHostLockAndKeepsAConcurrentHostRefresh(t *testing.T) {
+	f, refresher := newRefreshFixture(t, 10*time.Minute)
+	refresher.out = func() ([]byte, error) {
+		unlock, err := claudelogin.LockConfigDir(context.Background(), f.hostDir, claudelogin.LockOptions{Retry: time.Millisecond, Timeout: 50 * time.Millisecond})
+		if err != nil {
+			t.Errorf("the host lock was held during the refresh: %v", err)
+			return nil, err
+		}
+		f.setHost(fakeOAuth("r5", f.now.Add(7*time.Hour).UnixMilli(), ""))
+		if err := unlock(); err != nil {
+			t.Error(err)
+		}
+		return []byte(fakeCredentials(fakeOAuth("r1", f.now.Add(8*time.Hour).UnixMilli(), ""))), nil
+	}
+	f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
+	f.sync.tick(context.Background())
+	f.assertHost("r5")
+	if !strings.Contains(f.logs.String(), "reason=host_changed") {
+		t.Fatalf("dropped result not logged: %s", f.logs.String())
+	}
+	f.assertNoTokenLogged()
 }
 
 type fakeRefreshHelper struct {

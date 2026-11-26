@@ -73,6 +73,18 @@ func (s *claudeLoginSync) beforeStart(ctx context.Context, environment []string)
 	s.refreshHost(ctx, dir)
 }
 
+func (s *claudeLoginSync) withHostLock(ctx context.Context, dir string, fn func() error) error {
+	unlock, err := claudelogin.LockConfigDir(ctx, dir, s.lock)
+	if err != nil {
+		return err
+	}
+	err = fn()
+	if unlockErr := unlock(); unlockErr != nil {
+		s.logger.Warn("claude login host lock release failed", "err", unlockErr)
+	}
+	return err
+}
+
 func (s *claudeLoginSync) refreshHost(ctx context.Context, dir string) bool {
 	if s.refresh == nil {
 		return false
@@ -83,24 +95,30 @@ func (s *claudeLoginSync) refreshHost(ctx context.Context, dir string) bool {
 	if _, host, err := claudelogin.ReadLogin(dir); err != nil || !s.refreshDue(state, host) {
 		return false
 	}
-	unlock, err := claudelogin.LockConfigDir(ctx, dir, s.lock)
+	var baseline claudelogin.Login
+	var token string
+	var scopes []string
+	due := false
+	err := s.withHostLock(ctx, dir, func() error {
+		_, host, err := claudelogin.ReadLogin(dir)
+		if err != nil || !s.refreshDue(state, host) {
+			return nil
+		}
+		baseline = host
+		token, scopes, err = claudelogin.RefreshGrant(host.OAuth)
+		if err != nil {
+			state.refreshed = host.RefreshHash
+			s.logger.Warn("claude login refresh skipped", "reason", "no_refresh_grant")
+			return nil
+		}
+		due = true
+		return nil
+	})
 	if err != nil {
 		s.logger.Warn("claude login refresh skipped", "reason", "locked")
 		return false
 	}
-	defer func() {
-		if err := unlock(); err != nil {
-			s.logger.Warn("claude login host lock release failed", "err", err)
-		}
-	}()
-	data, host, err := claudelogin.ReadLogin(dir)
-	if err != nil || !s.refreshDue(state, host) {
-		return false
-	}
-	token, scopes, err := claudelogin.RefreshGrant(host.OAuth)
-	if err != nil {
-		state.refreshed = host.RefreshHash
-		s.logger.Warn("claude login refresh skipped", "reason", "no_refresh_grant")
+	if !due {
 		return false
 	}
 	out, err := s.refresh(ctx, token, scopes)
@@ -122,29 +140,57 @@ func (s *claudeLoginSync) refreshHost(ctx context.Context, dir string) bool {
 	switch {
 	case err != nil || !fresh.HasRefresh:
 		reason = string(claudelogin.ReasonUnparsable)
-	case fresh.ExpiresAt <= host.ExpiresAt:
+	case fresh.ExpiresAt <= baseline.ExpiresAt:
 		reason = string(claudelogin.ReasonOlder)
-	case time.UnixMilli(fresh.ExpiresAt).After(s.now().Add(claudeLoginMaxLifetime)):
-		reason = "implausible_expiry"
-	case fresh.Account.Known() && host.Account.Known() && fresh.Account != host.Account:
+	case fresh.Account.Known() && baseline.Account.Known() && fresh.Account != baseline.Account:
 		reason = string(claudelogin.ReasonAccountMismatch)
 	}
 	if reason != "" {
-		state.failedAt = s.now()
-		s.logger.Warn("claude login refresh failed", "reason", reason)
+		s.rejectRefresh(state, baseline, reason, nil)
 		return false
 	}
-	merged, err := claudelogin.MergeCredentials(data, fresh.OAuth)
-	if err == nil {
-		err = claudelogin.WriteFileAtomic(dir, ".credentials.json", merged, -1)
+	if time.UnixMilli(fresh.ExpiresAt).After(s.now().Add(claudeLoginMaxLifetime)) {
+		s.logger.Warn("claude login refresh returned an expiry more than 24 hours ahead; writing it anyway", "reason", "implausible_expiry")
 	}
+	written := false
+	err = s.withHostLock(ctx, dir, func() error {
+		data, current, err := claudelogin.ReadLogin(dir)
+		if err != nil {
+			return err
+		}
+		if current.RefreshHash != baseline.RefreshHash || current.ExpiresAt != baseline.ExpiresAt {
+			return nil
+		}
+		merged, err := claudelogin.MergeCredentials(data, fresh.OAuth)
+		if err != nil {
+			return err
+		}
+		if err := claudelogin.WriteFileAtomic(dir, ".credentials.json", merged, -1); err != nil {
+			return err
+		}
+		written = true
+		return nil
+	})
 	if err != nil {
-		state.failedAt = s.now()
-		s.logger.Warn("claude login refresh failed", "err", err)
+		s.rejectRefresh(state, baseline, "write_failed", err)
 		return false
 	}
-	state.refreshed = host.RefreshHash
+	state.refreshed = baseline.RefreshHash
 	state.failedAt = time.Time{}
+	if !written {
+		s.logger.Warn("claude login refresh dropped because the host login changed meanwhile", "reason", string(claudelogin.ReasonHostChanged))
+		return false
+	}
 	s.logger.Info("claude login refreshed", "expires_in_minutes", int(time.UnixMilli(fresh.ExpiresAt).Sub(s.now()).Minutes()))
 	return true
+}
+
+func (s *claudeLoginSync) rejectRefresh(state *claudeLoginRefreshState, baseline claudelogin.Login, reason string, err error) {
+	state.refreshed = baseline.RefreshHash
+	state.failedAt = time.Time{}
+	attrs := []any{"reason", reason, "event", "host_login_needs_sign_in"}
+	if err != nil {
+		attrs = append(attrs, "err", err)
+	}
+	s.logger.Warn("claude login refresh rejected; host Claude login needs a new sign-in", attrs...)
 }

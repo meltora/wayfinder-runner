@@ -120,6 +120,44 @@ func TestLockConfigDirTakesOverAStaleLock(t *testing.T) {
 	}
 }
 
+func TestLockConfigDirLeavesAStaleLockThatAnotherProcessJustTookOver(t *testing.T) {
+	dir := configDirForLock(t)
+	primary, _ := lockPaths(dir)
+	if err := os.Mkdir(primary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	age(t, primary, 61*time.Second)
+	var fresh os.FileInfo
+	beforeStaleRename = func(path string) {
+		if path != primary || fresh != nil {
+			return
+		}
+		if err := os.Remove(primary); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(primary, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Lstat(primary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fresh = info
+	}
+	t.Cleanup(func() { beforeStaleRename = func(string) {} })
+	if _, err := LockConfigDir(context.Background(), dir, fastLock()); !errors.Is(err, ErrLocked) {
+		t.Fatalf("err = %v, want ErrLocked while the other process holds the lock", err)
+	}
+	current, err := os.Lstat(primary)
+	if err != nil || !os.SameFile(current, fresh) {
+		t.Fatalf("the other process's fresh lock was removed or replaced: %v", err)
+	}
+	matches, _ := filepath.Glob(primary + ".stale-*")
+	if len(matches) != 0 {
+		t.Fatalf("left behind %v", matches)
+	}
+}
+
 func TestLockConfigDirKeepsALockYoungerThanSixtySeconds(t *testing.T) {
 	dir := configDirForLock(t)
 	primary, _ := lockPaths(dir)

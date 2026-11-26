@@ -14,8 +14,8 @@ Draft release notes for the patch release after v0.4.2. Design and decisions: [r
 
 - Fixes the 0.4.1 known issue "Subscription login works for one job, then OAuth session expired" for runners with Docker isolation, the restricted job network and a Claude file login (`CLAUDE_CONFIG_DIR` or `~/.claude`).
 - When a Claude job is running, or a subscription job or a Claude work-intake proposal consultation is about to start, and the host access token expires within 15 minutes, the runner refreshes the host login once, before Claude Code's own refresh 5 minutes before expiry. The refresh runs `claude auth login` with the refresh grant in a short container from the pinned job image, as the job user, with every capability dropped and a read-only root. The refresh token reaches it only through a private 0600 `--env-file`, never an argument.
-- The result is accepted only with a refresh token, a later expiry no more than 24 hours ahead, and the host's account when both carry one. It is written under Claude Code's own lock, atomically with mode 0600, and keeps every other key in the host file, such as `mcpOAuth`.
-- A failed refresh is logged as `claude login refresh failed` with the exit status or reason only, and retried after 2 minutes.
+- The result is accepted only with a refresh token, a later expiry, and the host's account when both carry one; an expiry more than 24 hours ahead is logged as a warning and still written. It is written under Claude Code's own lock, atomically with mode 0600, and keeps every other key in the host file, such as `mcpOAuth`. The lock is not held while the container runs; if Claude Code refreshed the host login meanwhile, the runner keeps the host's login.
+- A failed refresh is logged as `claude login refresh failed` with the exit status or reason only, and retried after 2 minutes. A result that is refused or cannot be written is logged as `claude login refresh rejected; host Claude login needs a new sign-in` with `event=host_login_needs_sign_in`, because the old refresh token is already revoked.
 
 ### Running jobs get the fresh login
 

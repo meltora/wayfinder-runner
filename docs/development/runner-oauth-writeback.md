@@ -115,9 +115,11 @@ The runner keeps one login lineage on the host, and it is the only process that 
 
 ### Scheduled refresh
 
-- So that jobs do not race at Claude Code's 5-minute mark, the runner refreshes first. When a Claude job is running, or one is about to start, and the host access token expires within 15 minutes, the runner refreshes once under the host lock.
+- So that jobs do not race at Claude Code's 5-minute mark, the runner refreshes first. When a Claude job is running, or one is about to start, and the host access token expires within 15 minutes, the runner refreshes once. It reads the host login under the host lock and releases the lock before the container starts, so Claude Code on the host is never blocked by the network round trip. It takes the lock again to write; if the host login changed in the meantime (Claude Code refreshed it itself), the runner drops its result with `reason=host_changed` and keeps the host's.
 - The refresh runs `claude auth login` in a short container from the pinned job image, with `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` and `CLAUDE_CODE_OAUTH_SCOPES` in that container's environment and a fresh empty config directory. No agent and no workspace run in that container, so the environment rule for job containers does not apply to it. The network is limited to Claude's sign-in hosts. The refresh token reaches the container through an `--env-file` in a private temporary directory, never through an argument.
-- The result must have a refresh token, an `expiresAt` later than the host's and at most 24 hours ahead, and the host's account when both carry one. It is merged into the host file under the host lock and handed on to the running jobs.
+- The result must have a refresh token, an `expiresAt` later than the host's, and the host's account when both carry one. An `expiresAt` more than 24 hours ahead is only warned about (`reason=implausible_expiry`) and still written, because the result comes from the pinned image and not from a job, and the server has already rotated the old refresh token. It is merged into the host file under the host lock and handed on to the running jobs.
+- Once the server has answered, the old refresh token is revoked. So when a result is refused (`unparsable`, `older`, `account_mismatch`) or cannot be written (`write_failed`), the runner logs `claude login refresh rejected; host Claude login needs a new sign-in` with `event=host_login_needs_sign_in`, and does not retry that lineage.
+- Known limits: the refresh token sits in the helper container's environment, which `docker inspect` shows to anyone with Docker access on the host (already root-equivalent). `WriteFileAtomic` replaces a symlinked host `.credentials.json` with a regular file in the config directory. The sync tick handles jobs one after another.
 - If the refresh fails, the runner logs `claude login refresh failed` with the exit status or the reason only, and tries again after 2 minutes. Jobs then fall back to Claude Code's own refresh, with the residual risk from Decisions.
 - The refresh needs Docker isolation with the restricted job network. Without it the runner logs `claude login refresh unavailable` once.
 - A job that cannot start because the login is unusable keeps today's failure code in this slice. A dedicated code (`provider_login_refresh_failed`) changes the wire contract and needs the control plane's agreement first.
@@ -188,7 +190,7 @@ Files: create `internal/claudelogin/lock.go` and `lock_test.go`.
 
 - `func LockConfigDir(ctx context.Context, configDir string, options LockOptions) (unlock func() error, err error)`. `LockOptions{Stale, Update, Retry, Timeout, Now}` defaults to 60 s, 5 s, 200 ms, 10 s and `time.Now`. Ownership on release is checked by the same inode and the exact mtime the runner last set, because a recreated lock directory can reuse the inode.
   - It takes `<configDir>/.oauth_refresh.lock`, then `<EvalSymlinks(configDir)>.lock`, by `os.Mkdir`, retrying every 200 ms for at most 10 s.
-  - It takes over a lock whose mtime is older than 60 s (`os.Remove`, then mkdir).
+  - It takes over a lock whose mtime is older than 60 s: it renames the lock to a unique name, removes it only when the renamed directory is still the stale one (same inode and mtime), puts it back otherwise, then mkdirs.
   - It updates both locks' mtime every 5 s until unlocked.
   - It removes only directories it created, and releases in reverse order.
   - On failure to take the second lock, it releases the first.

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -183,6 +184,26 @@ func TestExchangeDoesNotFollowACredentialsSymlinkOutOfTheHome(t *testing.T) {
 	data, err := os.ReadFile(outside)
 	if err != nil || string(data) != exchangeJobLogin {
 		t.Fatal("a file outside the home changed")
+	}
+}
+
+func TestReadJobLoginFailsOnAFIFOInsteadOfBlocking(t *testing.T) {
+	home := exchangeHome(t, "")
+	if err := syscall.Mkfifo(filepath.Join(home, ".claude", ".credentials.json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := ReadJobLogin(home)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a FIFO was read as a login")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading a FIFO login blocked")
 	}
 }
 

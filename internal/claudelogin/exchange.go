@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 const (
@@ -171,7 +172,7 @@ func readHomeFile(dir, name string, limit int64) ([]byte, error) {
 }
 
 func readRootFile(root *os.Root, name string, limit int64) ([]byte, error) {
-	file, err := root.Open(name)
+	file, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
 	}
