@@ -542,6 +542,51 @@ func TestClientUpdateTLSConfigRedials(t *testing.T) {
 	}
 }
 
+func TestClientUpdateTLSConfigWhileDialingClosesCleanly(t *testing.T) {
+	type session struct {
+		commonName string
+		closed     chan websocket.CloseError
+	}
+	sessions := make(chan session, 4)
+	dialing := make(chan struct{}, 4)
+	rotated := make(chan struct{})
+	var once sync.Once
+	ts := newTunnelServer(t, func(w http.ResponseWriter, r *http.Request) {
+		commonName := r.TLS.PeerCertificates[0].Subject.CommonName
+		if commonName == "runner-a" {
+			once.Do(func() {
+				dialing <- struct{}{}
+				<-rotated
+			})
+		}
+		conn := accept(t, w, r)
+		if conn == nil {
+			return
+		}
+		s := session{commonName: commonName, closed: make(chan websocket.CloseError, 1)}
+		sessions <- s
+		var closeErr websocket.CloseError
+		_ = errors.As(drain(conn), &closeErr)
+		s.closed <- closeErr
+	})
+	client, _ := startClient(t, ts, nil, nil)
+	receive(t, "the first dial", dialing)
+	client.UpdateTLSConfig(ts.clientTLS("runner-b"))
+	close(rotated)
+	first := receive(t, "the first tunnel", sessions)
+	if first.commonName != "runner-a" {
+		t.Fatalf("first tunnel certificate = %q, want runner-a", first.commonName)
+	}
+	closed := receive(t, "the stale tunnel to close", first.closed)
+	if closed.Code != websocket.StatusNormalClosure || closed.Reason != rotatedReason {
+		t.Fatalf("stale tunnel closed with %d %q", closed.Code, closed.Reason)
+	}
+	second := receive(t, "the redialed tunnel", sessions)
+	if second.commonName != "runner-b" {
+		t.Fatalf("redialed tunnel certificate = %q, want runner-b", second.commonName)
+	}
+}
+
 type lockedBuffer struct {
 	mu     sync.Mutex
 	buffer bytes.Buffer

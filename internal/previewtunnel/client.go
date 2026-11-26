@@ -164,7 +164,8 @@ func (c *Client) connectOnce(ctx context.Context) (time.Time, error) {
 	c.mu.Lock()
 	if c.tlsCfg != tlsCfg {
 		c.mu.Unlock()
-		_ = conn.CloseNow()
+		_ = ws.Close(CloseNormal, rotatedReason)
+		ws.wait()
 		return connectedAt, errors.New("tls config changed while dialing")
 	}
 	c.conn = ws
