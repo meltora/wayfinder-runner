@@ -302,6 +302,26 @@ type PreviewHostedDestroyedEvent struct {
 	Outcome        PreviewHostedDestroyOutcome `json:"outcome"`
 }
 
+func (event PreviewHostedDestroyedEvent) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind           string                      `json:"kind"`
+		SchemaVersion  int                         `json:"schema_version"`
+		PreviewID      string                      `json:"preview_id"`
+		OrganizationID string                      `json:"organization_id"`
+		ProjectID      string                      `json:"project_id"`
+		PreviewKey     string                      `json:"preview_key"`
+		IdempotencyKey string                      `json:"idempotency_key"`
+		DestroyedAt    string                      `json:"destroyed_at"`
+		Reason         PreviewHostedDestroyReason  `json:"reason"`
+		Outcome        PreviewHostedDestroyOutcome `json:"outcome"`
+	}{
+		Kind: event.Kind, SchemaVersion: event.SchemaVersion, PreviewID: event.PreviewID,
+		OrganizationID: event.OrganizationID, ProjectID: event.ProjectID, PreviewKey: event.PreviewKey,
+		IdempotencyKey: event.IdempotencyKey, DestroyedAt: previewLifecycleCanonicalTime(event.DestroyedAt),
+		Reason: event.Reason, Outcome: event.Outcome,
+	})
+}
+
 func NewPreviewHostedDestroyedEvent(
 	subject PreviewHostedDestroyedSubject,
 	destroyedAt time.Time,

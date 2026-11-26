@@ -224,6 +224,39 @@ func TestPreviewHostedDestroyedEventBuilder(t *testing.T) {
 	}
 }
 
+func TestPreviewHostedDestroyedEventWritesDestroyedAtWithThreeDigitMilliseconds(t *testing.T) {
+	subject := PreviewHostedDestroyedSubject{
+		PreviewID: "preview-1", OrganizationID: "organization-1", ProjectID: "project-1",
+		PreviewKey: "abcdefghijklmnopqrstuvwxyz", IdempotencyKey: "preview-deploy-" + strings.Repeat("d", 64),
+	}
+	cases := map[string]time.Time{
+		"2026-11-26T10:06:43.430Z": time.Date(2026, 11, 26, 10, 6, 43, 430999999, time.UTC),
+		"2026-11-26T10:06:43.400Z": time.Date(2026, 11, 26, 10, 6, 43, 400000000, time.UTC),
+		"2026-11-26T10:06:43.000Z": time.Date(2026, 11, 26, 11, 6, 43, 0, time.FixedZone("x", 3600)),
+	}
+	for want, destroyedAt := range cases {
+		event := NewPreviewHostedDestroyedEvent(subject, destroyedAt, PreviewHostedDestroyExpired, PreviewHostedDestroyOutcomeDestroyed)
+		raw, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded["destroyed_at"] != want {
+			t.Fatalf("destroyed_at=%v want %s", decoded["destroyed_at"], want)
+		}
+		var roundTrip PreviewHostedDestroyedEvent
+		if err := json.Unmarshal(raw, &roundTrip); err != nil {
+			t.Fatal(err)
+		}
+		if !roundTrip.DestroyedAt.Equal(event.DestroyedAt) {
+			t.Fatalf("round trip destroyed_at=%s want %s", roundTrip.DestroyedAt, event.DestroyedAt)
+		}
+	}
+}
+
 func TestPreviewHostedDestroyedEventIDCoversPreviewKeyAndOutcome(t *testing.T) {
 	key := "preview-deploy-" + strings.Repeat("d", 64)
 	vectors := map[PreviewHostedDestroyOutcome]string{
