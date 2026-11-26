@@ -175,7 +175,7 @@ Files: create `internal/claudelogin/login.go` and `login_test.go`.
 
 Files: create `internal/claudelogin/lock.go` and `lock_test.go`.
 
-- `func LockConfigDir(ctx context.Context, configDir string, now func() time.Time) (unlock func() error, err error)`.
+- `func LockConfigDir(ctx context.Context, configDir string, options LockOptions) (unlock func() error, err error)`. `LockOptions{Stale, Update, Retry, Timeout, Now}` defaults to 60 s, 5 s, 200 ms, 10 s and `time.Now`. Ownership on release is checked by the same inode and the exact mtime the runner last set, because a recreated lock directory can reuse the inode.
   - It takes `<configDir>/.oauth_refresh.lock`, then `<EvalSymlinks(configDir)>.lock`, by `os.Mkdir`, retrying every 200 ms for at most 10 s.
   - It takes over a lock whose mtime is older than 60 s (`os.Remove`, then mkdir).
   - It updates both locks' mtime every 5 s until unlocked.
