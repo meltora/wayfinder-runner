@@ -10,7 +10,7 @@ import (
 )
 
 var wantClaudeRequiredCLIOptions = []string{
-	"--add-dir", "--allowedTools", "--bare", "--disallowedTools", "--input-format", "--json-schema",
+	"--allowedTools", "--bare", "--disallowedTools", "--input-format", "--json-schema",
 	"--mcp-config", "--model", "--no-session-persistence", "--output-format", "--permission-mode",
 	"--permission-prompts", "--plugin-dir", "--print", "--restricted", "--resume", "--setting-sources",
 	"--settings", "--strict-mcp-config", "--tools", "--verbose",
@@ -94,7 +94,7 @@ func TestRequiredCLIOptionsAreSortedUniqueAndACopy(t *testing.T) {
 		}
 	}
 	first[0] = "--mutated"
-	if second := contract.RequiredCLIOptions(); second[0] != "--add-dir" {
+	if second := contract.RequiredCLIOptions(); second[0] != "--allowedTools" {
 		t.Fatalf("contract shares its backing array: %q", second)
 	}
 }

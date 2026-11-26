@@ -293,11 +293,15 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 	if p.DockerIsolation {
 		sandbox["enableWeakerNestedSandbox"] = true
 	}
+	permissions := map[string]any{
+		"deny": deniedPermissions,
+	}
+	if p.PackDir != "" {
+		permissions["allow"] = []string{"Read(/" + filepath.Clean(p.PackDir) + "/**)"}
+	}
 	settings := map[string]any{
-		"permissions": map[string]any{
-			"deny": deniedPermissions,
-		},
-		"sandbox": sandbox,
+		"permissions": permissions,
+		"sandbox":     sandbox,
 	}
 	hooks, err := claudeManagedHooks(p)
 	if err != nil {
@@ -338,7 +342,6 @@ func (c *Claude) BuildSpec(p StartParams) (supervisor.Spec, error) {
 		args = append(args, claudeElevatedAllowedTools(elevated)...)
 	}
 	if p.PackDir != "" {
-		args = append(args, "--add-dir", p.PackDir)
 		view, err := writeClaudePluginView(p.PackDir, p.ConfigDir)
 		if err != nil {
 			return supervisor.Spec{}, err

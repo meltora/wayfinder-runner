@@ -11,7 +11,7 @@ type CLIOptionContract interface {
 }
 
 var claudeRequiredCLIOptions = []string{
-	"--add-dir", "--allowedTools", "--bare", "--disallowedTools", "--input-format", "--json-schema",
+	"--allowedTools", "--bare", "--disallowedTools", "--input-format", "--json-schema",
 	"--mcp-config", "--model", "--no-session-persistence", "--output-format", "--permission-mode",
 	"--permission-prompts", "--plugin-dir", "--print", "--restricted", "--resume", "--setting-sources",
 	"--settings", "--strict-mcp-config", "--tools", "--verbose",

@@ -33,6 +33,18 @@ Draft release notes and tag checklist for the patch release after v0.4.0.
 - `our-runner start` now refuses such a configuration before it connects: `state_dir is too long for docker isolation: the job MCP socket path can reach N bytes, over the 103-byte unix socket limit; use a state_dir of at most M bytes`. The 103-byte limit fits both platforms, and the longest temporary directory name is counted, so any `state_dir` of up to 71 bytes works.
 - `our-runner doctor` reports the same as a failing `job-socket-path` check, and `OK` with the longest socket path otherwise. Direct isolation is unchanged: it already places long socket paths in the temporary directory.
 
+### Shell commands work in Docker jobs
+
+- On 0.4.0 and every earlier release, every Bash command of a `claude` job under Docker isolation failed before it ran, with `bwrap: Can't mkdir <job>/pack/.claude: Read-only file system`. A build agent could edit files but could not run tests, commit, start a server or deploy a preview, so 0.4.1 is the first release where Docker builds can actually work.
+- **Cause:** the runner passed the Agent Pack directory to Claude Code as `--add-dir`, which makes it a sandbox write root. Claude Code protects `.claude` paths inside every write root by mounting placeholders over them. The pack is mounted read-only and its directories are mode 0555, so Claude Code took the missing `pack/.claude` for a path it had to cover, and bwrap could not create the mount point.
+- The pack is now readable through a `Read(//<pack>/**)` permission rule in the job settings and is no longer a write root. Nothing about the pack's own protection changes: it stays a read-only mount.
+- Claude Code also covers missing dotfiles in the job's working directory (`.bashrc`, `.gitconfig`, `.mcp.json`, `.vscode`, `.claude/…` and others) with `/dev/null` placeholders while a command runs, and `git add -A` refused them (`can only add regular files, symbolic links or git-directories`). The agent's `~/.gitconfig` now sets `core.excludesFile` to a runner-written list of those root paths, so `git add -A` skips them. Files the repository already tracks are unaffected.
+
+### Claude Code 2.1.326 in the job image
+
+- The job image pins Claude Code 2.1.326, the npm `stable` release on 26 November 2026. On 2.1.299, accounts whose default model is `claude-fable-5-2` logged `unrecognized_model`.
+- Build and plan jobs do not pass `--model`, so they use the account's default model.
+
 ### Turning preview hosting on
 
 On a runner already enrolled and configured from the dashboard, with Docker isolation and git 2.29 or later:

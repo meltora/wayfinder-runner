@@ -194,9 +194,8 @@ func TestCompositionAttemptLeavesTheWorktreeUntouchedAndReportsBothPhases(t *tes
 		t.Fatalf("runner files under the checkout: %v", runnerFiles)
 	}
 	args := run.supervisor.spec.Args
-	packDir := filepath.Join(run.jr.workDir, "pack")
 	configDir := settingsDirectory(t, args)
-	if argumentFollowing(args, "--plugin-dir") != filepath.Join(configDir, "claude-plugin") || argumentFollowing(args, "--add-dir") != packDir {
+	if argumentFollowing(args, "--plugin-dir") != filepath.Join(configDir, "claude-plugin") || argumentFollowing(args, "--add-dir") != "" {
 		t.Fatalf("pack args = %v", args)
 	}
 	if strings.HasPrefix(configDir, run.jr.workDir) {

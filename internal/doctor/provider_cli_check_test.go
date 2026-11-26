@@ -93,7 +93,7 @@ func TestProviderCLICheckStatuses(t *testing.T) {
 		},
 		"all present": {
 			opts: dockerClaudeOptions(), status: OK, probes: 1, probe: compatible,
-			detail: "2.1.299 (Claude Code) in the job image accepts all 21 runner options",
+			detail: "2.1.299 (Claude Code) in the job image accepts all 20 runner options",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

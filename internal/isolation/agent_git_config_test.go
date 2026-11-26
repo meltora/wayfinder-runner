@@ -31,6 +31,40 @@ func TestWriteAgentGitConfigSetsIdentityAndDisablesUpstreamSetup(t *testing.T) {
 	}
 }
 
+func TestWriteAgentGitConfigIgnoresClaudeSandboxPlaceholders(t *testing.T) {
+	home := t.TempDir()
+	if err := WriteAgentGitConfig(home); err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".gitconfig"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "[core]\n\texcludesFile = "+ContainerHome+"/"+agentGitExcludesName+"\n") {
+		t.Fatalf("agent Git config does not point at the runner excludes file:\n%s", config)
+	}
+	path := filepath.Join(home, agentGitExcludesName)
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("excludes mode = %v", info.Mode())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	want := []string{
+		"/.bash_profile", "/.bashrc", "/.claude/", "/.gitconfig", "/.gitmodules", "/.idea", "/.mcp.json",
+		"/.profile", "/.ripgreprc", "/.vscode", "/.zprofile", "/.zshrc",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("excludes = %q, want %q", got, want)
+	}
+}
+
 func TestWriteAgentGitConfigReplacesAPlantedSymlink(t *testing.T) {
 	home := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside")

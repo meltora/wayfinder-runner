@@ -101,8 +101,8 @@ func TestClaudePluginViewWithholdsPackHooksMCPAndExecutableComponents(t *testing
 	if got := argumentAfter(spec.Args, "--plugin-dir"); got != view {
 		t.Fatalf("--plugin-dir = %q, want runner-owned view %q", got, view)
 	}
-	if got := argumentAfter(spec.Args, "--add-dir"); got != p.PackDir {
-		t.Fatalf("--add-dir = %q, want %q", got, p.PackDir)
+	if got := argumentAfter(spec.Args, "--add-dir"); got != "" {
+		t.Fatalf("--add-dir = %q, want the pack to stay out of the sandbox write roots", got)
 	}
 	want := []string{
 		".claude-plugin/plugin.json",
