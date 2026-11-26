@@ -70,6 +70,7 @@ type Daemon struct {
 	userMapping          isolation.UserMapping
 	ownership            isolation.Ownership
 	removeJobContainer   containerRemover
+	claudeLogins         *claudeLoginSync
 	verifiedProviderCLIs map[providerCLIKey]string
 
 	jobNetworkAttestation isolation.DockerNetworkAttestation
@@ -423,6 +424,7 @@ func NewWithExternalOperationDependencies(
 	d.updateRestored = pending != nil
 	d.updateExpiredAtStartup = expired
 	d.previewHostWake = make(chan struct{}, 1)
+	d.claudeLogins = newClaudeLoginSync(d.claudeLoginExchanger(), logger)
 	if cfg.PreviewHosting.Enabled {
 		controller, err := d.newPreviewHostController()
 		if err != nil {
@@ -524,6 +526,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.updateLoop(spoolCtx)
 	go d.capabilityRefreshLoop(spoolCtx, capabilityRefreshInterval)
 	go d.previewHostExpiryLoop(spoolCtx)
+	go d.claudeLogins.loop(spoolCtx)
 	if d.configurationReloader != nil {
 		go d.configurationReloadLoop(spoolCtx)
 	}

@@ -22,6 +22,7 @@ var (
 type JobHome struct {
 	Path            string
 	ClaudeConfigDir string
+	ClaudeStateFile string
 	Baseline        [32]byte
 	SyncsLogin      bool
 }
@@ -60,7 +61,7 @@ func PrepareHomeWithLogin(stateDir, jobID, attemptID, provider string, environme
 				_ = os.RemoveAll(home)
 				return JobHome{}, err
 			}
-			return claudeJobHome(home, configDir, credentials), nil
+			return claudeJobHome(home, configDir, filepath.Join(configDir, ".claude.json"), credentials), nil
 		}
 	}
 	var copies []struct{ src, dst string }
@@ -125,17 +126,17 @@ func PrepareHomeWithLogin(stateDir, jobID, attemptID, provider string, environme
 		}
 	}
 	if claudeCredentials != nil {
-		return claudeJobHome(home, filepath.Join(hostHome, ".claude"), claudeCredentials), nil
+		return claudeJobHome(home, filepath.Join(hostHome, ".claude"), filepath.Join(hostHome, ".claude.json"), claudeCredentials), nil
 	}
 	return JobHome{Path: home}, nil
 }
 
-func claudeJobHome(home, configDir string, credentials []byte) JobHome {
+func claudeJobHome(home, configDir, stateFile string, credentials []byte) JobHome {
 	login, err := claudelogin.ParseCredentials(credentials)
 	if err != nil || !login.HasRefresh {
 		return JobHome{Path: home}
 	}
-	return JobHome{Path: home, ClaudeConfigDir: configDir, Baseline: login.RefreshHash, SyncsLogin: true}
+	return JobHome{Path: home, ClaudeConfigDir: configDir, ClaudeStateFile: stateFile, Baseline: login.RefreshHash, SyncsLogin: true}
 }
 
 func claudeConfigDir(environment []string, hostHome string) (string, error) {

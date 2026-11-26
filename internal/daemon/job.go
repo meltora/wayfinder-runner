@@ -580,6 +580,8 @@ func (jr *jobRunner) run() {
 		NestedSandbox:   isDocker && adapterName != "opencode",
 	}
 	var jobHome string
+	var jobLogin isolation.JobHome
+	var loginSync *claudeLoginJob
 	if iso.Name() == "docker" {
 		if !d.providerCLIVerified(adapter) {
 			jr.logger.Error("job image provider CLI compatibility is unverified", "provider", adapterName)
@@ -625,7 +627,8 @@ func (jr *jobRunner) run() {
 		isoPolicy.Environment = provider.ContainerEnvironment(spec.Env)
 		isoPolicy.ForwardedSecretNames = apiKey.names()
 		isoPolicy.ManagedConfigMounts = append([]supervisor.ManagedConfigMount(nil), spec.ManagedConfigMounts...)
-		jobHome, err = isolation.PrepareHome(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName, d.agentEnvironment(adapterName))
+		jobLogin, err = isolation.PrepareHomeWithLogin(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName, d.agentEnvironment(adapterName))
+		jobHome = jobLogin.Path
 		if err != nil {
 			finish(
 				jr.startupFailureOutcome(
@@ -637,6 +640,7 @@ func (jr *jobRunner) run() {
 			return
 		}
 		defer func() {
+			loginSync.final()
 			if err := isolation.CleanupHome(jobHome); err != nil {
 				jr.logger.Warn("job home cleanup", "err", err)
 			}
@@ -711,6 +715,10 @@ func (jr *jobRunner) run() {
 			finish(jr.startupFailureOutcome(v1.JobFailureWorkspacePreparation, planCheckoutHandOffFailure), nil)
 			return
 		}
+	}
+	if iso.Name() == "docker" {
+		loginSync = d.claudeLogins.register(job.AttemptID, jobLogin)
+		ownership.beforeRelease(loginSync.stop)
 	}
 
 	promptFile, err := jr.attachAgentPromptFile(&spec)

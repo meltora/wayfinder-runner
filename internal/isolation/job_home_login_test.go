@@ -17,7 +17,7 @@ func TestPrepareHomeWithLoginRecordsTheConfiguredSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = CleanupHome(jobHome.Path) }()
-	if !jobHome.SyncsLogin || jobHome.ClaudeConfigDir != configDir {
+	if !jobHome.SyncsLogin || jobHome.ClaudeConfigDir != configDir || jobHome.ClaudeStateFile != filepath.Join(configDir, ".claude.json") {
 		t.Fatalf("job home = %+v", jobHome)
 	}
 	if jobHome.Baseline != sha256.Sum256([]byte("fake-refresh")) {
@@ -34,7 +34,7 @@ func TestPrepareHomeWithLoginRecordsTheDefaultSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = CleanupHome(jobHome.Path) }()
-	if !jobHome.SyncsLogin || jobHome.ClaudeConfigDir != filepath.Join(hostHome, ".claude") {
+	if !jobHome.SyncsLogin || jobHome.ClaudeConfigDir != filepath.Join(hostHome, ".claude") || jobHome.ClaudeStateFile != filepath.Join(hostHome, ".claude.json") {
 		t.Fatalf("job home = %+v", jobHome)
 	}
 }

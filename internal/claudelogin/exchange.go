@@ -65,10 +65,7 @@ func decodeExchangeMessage(data []byte, target any) error {
 }
 
 func Exchange(ctx context.Context, home string, request ExchangeRequest, options LockOptions) (result ExchangeResult, err error) {
-	if checkObject(request.Host) != nil {
-		return ExchangeResult{}, fmt.Errorf("the host login in the exchange request is unusable: %w", ErrUnparsable)
-	}
-	host, err := ParseCredentials(append(append([]byte(`{"`+oauthKey+`":`), request.Host...), '}'))
+	host, err := ParseOAuth(request.Host)
 	if err != nil {
 		return ExchangeResult{}, fmt.Errorf("the host login in the exchange request is unusable: %w", err)
 	}
@@ -82,26 +79,14 @@ func Exchange(ctx context.Context, home string, request ExchangeRequest, options
 			err = unlockErr
 		}
 	}()
-	data, err := readHomeFile(configDir, credentialsFile, MaxExchangeBytes)
-	if err != nil {
-		return ExchangeResult{Reason: ReasonUnparsable}, nil
-	}
-	job, err := ParseCredentials(data)
+	data, job, err := ReadLogin(configDir)
 	if err != nil {
 		return ExchangeResult{Reason: ReasonUnparsable}, nil
 	}
 	result = ExchangeResult{Job: job.OAuth}
-	state, err := readHomeFile(home, ".claude.json", maxClaudeJSONBytes)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-	case err != nil:
+	if result.JobAccount, err = ReadAccount(filepath.Join(home, ".claude.json")); err != nil {
 		result.Reason = ReasonUnparsable
 		return result, nil
-	default:
-		if result.JobAccount, err = ParseAccount(state); err != nil {
-			result.Reason = ReasonUnparsable
-			return result, nil
-		}
 	}
 	result.Reason = Decide(host, job, request.Baseline, request.HostAccount, result.JobAccount)
 	if result.Reason != ReasonOK {
@@ -116,6 +101,36 @@ func Exchange(ctx context.Context, home string, request ExchangeRequest, options
 	}
 	result.Replaced = true
 	return result, nil
+}
+
+func ParseOAuth(oauth json.RawMessage) (Login, error) {
+	if checkObject(oauth) != nil {
+		return Login{}, ErrUnparsable
+	}
+	return ParseCredentials(append(append([]byte(`{"`+oauthKey+`":`), oauth...), '}'))
+}
+
+func ReadLogin(configDir string) ([]byte, Login, error) {
+	data, err := readHomeFile(configDir, credentialsFile, MaxExchangeBytes)
+	if err != nil {
+		return nil, Login{}, err
+	}
+	login, err := ParseCredentials(data)
+	if err != nil {
+		return nil, Login{}, err
+	}
+	return data, login, nil
+}
+
+func ReadAccount(stateFile string) (Account, error) {
+	data, err := readHomeFile(filepath.Dir(stateFile), filepath.Base(stateFile), maxClaudeJSONBytes)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Account{}, nil
+	}
+	if err != nil {
+		return Account{}, err
+	}
+	return ParseAccount(data)
 }
 
 func readHomeFile(dir, name string, limit int64) ([]byte, error) {

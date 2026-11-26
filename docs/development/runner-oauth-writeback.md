@@ -6,7 +6,7 @@
 |---|---|
 | ID | `runner-oauth-writeback` |
 | Kind | slice |
-| Status | design approved (approach A, master, 2026-11-26); spikes done; plan written; Tasks 1, 2 and 3 done; Task 4 in progress |
+| Status | design approved (approach A, master, 2026-11-26); spikes done; plan written; Tasks 1 to 5 done; Task 6 in progress |
 | Target | 0.4.3. Task 1 (`47bf54a`) and Task 3 (`a7a34ba`, job copy narrowed to `claudeAiOauth`) shipped early in v0.4.2. |
 | Risk | high. The runner writes the owner's Claude login on the host. A defect could lose the login, write a stale one over a fresh one, swap in another account's login, or leak it. |
 | Baseline | app-runner `main` at `105182f` (v0.4.1) |
@@ -238,25 +238,29 @@ What each one holds:
 
 ### Task 5: Daemon sync (registry, exchanges, write-back, final sync)
 
-Files: create `internal/daemon/claude_login_sync.go` and its test; modify `internal/daemon/job.go` (register after hand-off, final sync in the home cleanup defer) and `daemon.go` (start and stop).
+Files: create `internal/daemon/claude_login_sync.go` and its tests (`claude_login_sync_test.go`, `job_claude_login_sync_test.go`); modify `internal/daemon/job.go` (register after hand-off, stop before reclaim, final sync in the home cleanup defer), `job_ownership.go` (`beforeRelease` hooks) and `daemon.go` (create the sync and run its loop on the spool context).
 
-- `type claudeLoginSync struct` holds the host config dir, a registry of running jobs (`home`, `baseline`, an exchange mutex) and the dependencies `exchange`, `now` and `logger`.
-- `register(jobID string, home isolation.JobHome) (unregister func(final bool))`. `unregister(true)` runs the final sync under the job's mutex: it reads the reclaimed copy directly, then `writeBack`.
-- `writeBack(candidate Login, account Account, baseline [32]byte) Reason`:
+- `type claudeLoginSync struct` holds a registry of running jobs keyed by attempt id and the last seen mtime of each host config dir, plus the dependencies `exchange`, `now`, `lock` and `logger`. Each `claudeLoginJob` carries its `isolation.JobHome` (with `ClaudeConfigDir` and `ClaudeStateFile`), its baseline and an exchange mutex.
+- `register(attemptID string, home isolation.JobHome) *claudeLoginJob` returns nil for a home that does not sync a file login; every method is nil-safe. The exchanger is the docker helper when the ownership supports `ExchangeLogin`, otherwise `claudelogin.Exchange` in process.
+- `stop()` takes the job's mutex, so it waits for a running exchange and blocks later ones. `job.go` registers it with `ownership.beforeRelease`, so no exchange runs once the home is being reclaimed.
+- `final()` removes the job from the registry, stops it, and once only reads the reclaimed copy directly and runs `writeBack` with a 30 s timeout. It runs first in the home cleanup defer, on every exit path.
+- `writeBack(ctx, candidate Login, account Account)`:
   - it takes the host `LockConfigDir`;
   - it re-reads the host;
   - it runs `Decide`;
   - on `ok`, it writes `MergeCredentials(host, candidate)` with uid -1;
   - it sets the writing job's baseline to the new hash and leaves every other job's baseline alone: a job whose copy is still on its baseline gets the newer host login at its next exchange, and only then does its baseline become the handed-on hash;
   - it logs `claude login write-back` with the reason only.
-- The loop exchanges with each job every 2 minutes. It checks the host mtime every 10 s, and a change triggers an exchange with all jobs. Exchanges with different jobs run one after another; the daemon waits for no exchange while holding the host lock.
-- Tests, each against a fake exchange and a temp host dir:
+- The loop exchanges with each job every 2 minutes. It checks the host mtime every 10 s, and a change triggers an exchange with all jobs of that host dir; there is no separate wake channel. Exchanges with different jobs run one after another in attempt id order; the daemon waits for no exchange while holding the host lock.
+- Tests, against a fake or in-process exchange and a temp host dir:
   - a refresh in job 1 is written back and then handed to jobs 2 and 3;
-  - job 3 already newer: not overwritten;
+  - job 3 already newer: not overwritten, `host_changed` logged;
   - a host change by another account: no hand-on;
-  - final sync on success, failure and cancel (three `job.go` paths through the existing job test harness);
-  - unregister during an exchange waits for it;
-  - a log capture contains no fake token.
+  - final sync of the reclaimed copy, idempotent, and no exchange after stop;
+  - final sync through the job harness on a clean exit, a provider failure and a cancel;
+  - exchanges are stopped before the home is reclaimed;
+  - stop during an exchange waits for it;
+  - a failed exchange is logged without values, and no log capture contains a fake token.
 
 ### Task 6: Scheduled refresh
 

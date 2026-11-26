@@ -17,14 +17,26 @@ type containerRemover func(ctx context.Context, runnerID, attemptID string) erro
 type ownershipScope struct {
 	once    sync.Once
 	err     error
+	before  []func()
 	release func() error
+}
+
+func (scope *ownershipScope) beforeRelease(fn func()) {
+	if scope != nil {
+		scope.before = append(scope.before, fn)
+	}
 }
 
 func (scope *ownershipScope) Release() error {
 	if scope == nil {
 		return nil
 	}
-	scope.once.Do(func() { scope.err = scope.release() })
+	scope.once.Do(func() {
+		for _, fn := range scope.before {
+			fn()
+		}
+		scope.err = scope.release()
+	})
 	return scope.err
 }
 
