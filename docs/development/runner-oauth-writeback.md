@@ -69,6 +69,14 @@ These come from a static reading of the compiled binary, plus `claude --help` in
 - **B. Long-lived `setup-token` login, opt-in (later).** Q1 confirms it is possible without an environment variable: the runner writes `{accessToken, expiresAt, scopes}` with no refresh token into the job copy. This is a separate slice after A, opt-in for owners who prefer a fixed token.
 - **C. Write-back at job end only.** Rejected: with `max_concurrent` above 1 the jobs still race, as described under Problem.
 
+## Decisions
+
+- **Approach A with the anti-swap check** (master, 2026-11-26).
+- **Tasks 1 and 3 ship early in v0.4.2; the write-back is 0.4.3** (master).
+- **The exchange helper runs as the job user, not as container root** (master's decision, 2026-11-26, not the user's). The planned helper ran as container root. Without `DAC_OVERRIDE` that root cannot enter the job user's 0700 home, and with it the helper would need more privilege than the job. Running as uid 10001 with every capability dropped is least privilege, and the new file is the job user's own without a `chown`.
+- **A write-back does not move other jobs' baselines.** A job's baseline changes only after a write-back from that job or a hand-on to it, so that a job still on its old baseline is recognised and gets the newer host login.
+- **`provider_login_refresh_failed` is out of scope** (master): it changes the wire contract.
+
 ## Design (A)
 
 The runner keeps one login lineage on the host, and it is the only process that moves a login between the host and job copies.
