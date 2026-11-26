@@ -7,6 +7,7 @@ Draft release notes for the patch release after v0.4.2. Design and decisions: [r
 - **Control plane:** no app change and no wire change. A job whose login is unusable keeps today's failure code.
 - **Configuration:** no new key. The scheduled refresh needs `isolation: docker` with `job_network: restricted`; without it the runner logs `claude login refresh unavailable` once and keeps the 0.4.2 behaviour.
 - **No state migration.**
+- **Egress allowlist:** a restricted job network that enforces an allowlist must allow `platform.claude.com:443`, the token endpoint of Claude Code 2.1.326. Without it every scheduled refresh fails and is logged as `claude login refresh failed`.
 
 ## Release notes
 
