@@ -129,6 +129,7 @@ func TestMissingCLIOptionsAgainstRealHelpTexts(t *testing.T) {
 	for name, want := range map[string][]string{
 		"claude-help-2.1.221.txt": {"--permission-prompts", "--restricted"},
 		"claude-help-2.1.299.txt": nil,
+		"claude-help-2.1.326.txt": nil,
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := MissingCLIOptions(readHelpFixture(t, name), required)

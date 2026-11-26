@@ -1534,11 +1534,14 @@ sandbox can use the workspace but cannot read that credential. CI also builds
 the image from the committed lockfile and rejects fixed HIGH or CRITICAL image
 vulnerabilities.
 
-The job image pins Claude Code `2.1.299`, the first release checked to declare
-every option the runner passes, including `--permission-prompts` and
-`--restricted` (the earlier `2.1.221` pin rejected both, so every Claude job
-exited at startup). The build fails if `claude --version` does not report that
-release. The image also ships `ripgrep`, a dependency of the nested sandbox runtime
+The job image pins Claude Code `2.1.326`, the npm `stable` release on
+26 November 2026. It declares every option the runner passes, and it knows the
+current account default model (`2.1.299` logged `unrecognized_model` for
+`claude-fable-5-2`). `2.1.299` was the first release with `--permission-prompts`
+and `--restricted`; the earlier `2.1.221` pin rejected both, so every Claude job
+exited at startup. The build fails if `claude --version` does not report the
+pinned release. Build and plan jobs do not pass `--model`, so Claude uses the
+default model of the signed-in account. The image also ships `ripgrep`, a dependency of the nested sandbox runtime
 (`srt` refuses to start without `rg`), which Docker jobs require Claude to use.
 
 The image carries two identical bubblewrap binaries. `/usr/bin/bwrap` stays

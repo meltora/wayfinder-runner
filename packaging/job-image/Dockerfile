@@ -44,7 +44,7 @@ RUN npm ci --omit=dev --prefix /opt/agent-tools \
     && test "$(node -p "require('/opt/agent-tools/node_modules/npm/node_modules/tar/package.json').version")" = "7.5.22" \
     && test "$(node -p "require('/opt/agent-tools/node_modules/npm/node_modules/undici/package.json').version")" = "6.28.0" \
     && claude --version \
-    && claude --version | grep -Eq '^2\.1\.299 ' \
+    && claude --version | grep -Eq '^2\.1\.326 ' \
     && codex --version \
 	&& opencode --version \
     && srt --version \
