@@ -133,12 +133,44 @@ func ReadAccount(stateFile string) (Account, error) {
 	return ParseAccount(data)
 }
 
+func ReadJobLogin(home string) (Login, Account, error) {
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return Login{}, Account{}, err
+	}
+	defer func() { _ = root.Close() }()
+	data, err := readRootFile(root, filepath.Join(".claude", credentialsFile), MaxExchangeBytes)
+	if err != nil {
+		return Login{}, Account{}, err
+	}
+	login, err := ParseCredentials(data)
+	if err != nil {
+		return Login{}, Account{}, err
+	}
+	state, err := readRootFile(root, ".claude.json", maxClaudeJSONBytes)
+	if errors.Is(err, fs.ErrNotExist) {
+		return login, Account{}, nil
+	}
+	if err != nil {
+		return Login{}, Account{}, err
+	}
+	account, err := ParseAccount(state)
+	if err != nil {
+		return Login{}, Account{}, err
+	}
+	return login, account, nil
+}
+
 func readHomeFile(dir, name string, limit int64) ([]byte, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = root.Close() }()
+	return readRootFile(root, name, limit)
+}
+
+func readRootFile(root *os.Root, name string, limit int64) ([]byte, error) {
 	file, err := root.Open(name)
 	if err != nil {
 		return nil, err

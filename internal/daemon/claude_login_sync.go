@@ -17,6 +17,7 @@ const (
 	claudeLoginExchangeInterval  = 2 * time.Minute
 	claudeLoginHostCheckInterval = 10 * time.Second
 	claudeLoginFinalSyncTimeout  = 30 * time.Second
+	claudeLoginMaxLifetime       = 24 * time.Hour
 )
 
 type claudeLoginExchanger func(ctx context.Context, attemptID, home string, request claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error)
@@ -49,13 +50,12 @@ type claudeLoginHelper interface {
 }
 
 func (d *Daemon) claudeLoginExchanger() claudeLoginExchanger {
-	if helper, ok := d.ownership.(claudeLoginHelper); ok {
-		return func(ctx context.Context, attemptID, home string, request claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error) {
-			return helper.ExchangeLogin(ctx, d.runnerID, attemptID, home, request)
-		}
+	helper, ok := d.ownership.(claudeLoginHelper)
+	if !ok {
+		return nil
 	}
-	return func(ctx context.Context, _ string, home string, request claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error) {
-		return claudelogin.Exchange(ctx, home, request, claudelogin.LockOptions{})
+	return func(ctx context.Context, attemptID, home string, request claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error) {
+		return helper.ExchangeLogin(ctx, d.runnerID, attemptID, home, request)
 	}
 }
 
@@ -137,7 +137,7 @@ func (j *claudeLoginJob) exchange(ctx context.Context, hostChanged bool) {
 	s := j.sync
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	if j.stopped || (!hostChanged && s.now().Sub(j.lastExchange) < claudeLoginExchangeInterval) {
+	if s.exchange == nil || j.stopped || (!hostChanged && s.now().Sub(j.lastExchange) < claudeLoginExchangeInterval) {
 		return
 	}
 	j.lastExchange = s.now()
@@ -177,6 +177,10 @@ func (j *claudeLoginJob) writeBack(ctx context.Context, candidate claudelogin.Lo
 		return
 	}
 	s := j.sync
+	if time.UnixMilli(candidate.ExpiresAt).After(s.now().Add(claudeLoginMaxLifetime)) {
+		s.logger.Warn("claude login write-back skipped", "attempt_id", j.attemptID, "reason", "implausible_expiry")
+		return
+	}
 	hostDir := j.home.ClaudeConfigDir
 	unlock, err := claudelogin.LockConfigDir(ctx, hostDir, s.lock)
 	if err != nil {
@@ -234,12 +238,7 @@ func (j *claudeLoginJob) final() {
 		return
 	}
 	j.finished = true
-	_, candidate, err := claudelogin.ReadLogin(filepath.Join(j.home.Path, ".claude"))
-	if err != nil {
-		s.logger.Warn("claude login final sync skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
-		return
-	}
-	account, err := claudelogin.ReadAccount(filepath.Join(j.home.Path, ".claude.json"))
+	candidate, account, err := claudelogin.ReadJobLogin(j.home.Path)
 	if err != nil {
 		s.logger.Warn("claude login final sync skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
 		return

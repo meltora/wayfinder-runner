@@ -250,6 +250,48 @@ func TestClaudeLoginSyncLogsAFailedExchangeWithoutValues(t *testing.T) {
 	f.assertNoTokenLogged()
 }
 
+func TestClaudeLoginSyncRefusesAnImplausibleExpiry(t *testing.T) {
+	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
+	job := f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
+	f.setJob("a1", fakeOAuth("r1", f.now.Add(30*24*time.Hour).UnixMilli(), ""))
+	job.final()
+	f.assertHost("r0")
+	if !strings.Contains(f.logs.String(), "reason=implausible_expiry") {
+		t.Fatalf("the refusal was not logged: %s", f.logs.String())
+	}
+}
+
+func TestClaudeLoginSyncFinalSyncStaysInsideTheJobHome(t *testing.T) {
+	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
+	job := f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
+	outside := filepath.Join(t.TempDir(), "outside")
+	writeTestFile(t, filepath.Join(outside, ".credentials.json"), fakeCredentials(fakeOAuth("r1", 200, "")))
+	jobConfig := filepath.Join(f.homes["a1"], ".claude")
+	if err := os.RemoveAll(jobConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, jobConfig); err != nil {
+		t.Fatal(err)
+	}
+	job.final()
+	f.assertHost("r0")
+	if !strings.Contains(f.logs.String(), "claude login final sync skipped") {
+		t.Fatalf("the escaping link was not refused: %s", f.logs.String())
+	}
+}
+
+func TestClaudeLoginSyncWithoutAHelperOnlyRunsTheFinalSync(t *testing.T) {
+	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
+	f.sync.exchange = (&Daemon{}).claudeLoginExchanger()
+	job := f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
+	f.setJob("a1", fakeOAuth("r1", 200, ""))
+	f.now = f.now.Add(claudeLoginExchangeInterval)
+	f.sync.tick(context.Background())
+	f.assertHost("r0")
+	job.final()
+	f.assertHost("r1")
+}
+
 func TestClaudeLoginSyncIgnoresHomesThatDoNotSync(t *testing.T) {
 	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
 	job := f.sync.register("a1", isolation.JobHome{Path: t.TempDir()})
