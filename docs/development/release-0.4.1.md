@@ -45,6 +45,21 @@ Draft release notes and tag checklist for the patch release after v0.4.0.
 - The job image pins Claude Code 2.1.326, the npm `stable` release on 26 November 2026. On 2.1.299, accounts whose default model is `claude-fable-5-2` logged `unrecognized_model`.
 - Build and plan jobs do not pass `--model`, so they use the account's default model.
 
+### Job-requested preview deploys are accepted by the app
+
+- On 0.4.0, the app discarded every `preview_deploy_result` as `authority_mismatch`, so a job preview deploy never completed even when the preview was up and healthy. The app compares the result's `lease_expires_at` and `expires_at` with the command it sent, digit for digit, and it sends them with exactly three fractional digits. The runner encoded them with Go's default format, which drops trailing zeros, so a lease ending at `.440Z` came back as `.44Z`.
+- The result now echoes all three times (`lease_expires_at`, `expires_at`, `observed_at`) with exactly three fractional digits, the same form the runner already uses for the digests it computes over these fields.
+
+### Expired previews no longer disconnect the runner
+
+- On 0.4.0, the `preview_hosted_destroyed` event wrote `destroyed_at` with Go's default format, which drops trailing zeros (`10:06:43.43Z`). The app compares the stored event with a canonical form that always has three fractional digits (`10:06:43.430Z`), so whenever a preview's destroy time ended in zero the check failed, the app closed the runner's stream, and the runner was disconnected again each time it resent the event.
+- The event now writes `destroyed_at` with exactly three fractional digits. An event already in a runner's journal is resent as it was stored, so it is accepted only once the app also normalizes the field.
+
+### The agent can fetch its own preview from Claude's sandbox
+
+- Claude Code's sandbox gives commands network access only through the proxy named in `HTTP_PROXY`. Node 22's `fetch` ignores that variable unless `NODE_USE_ENV_PROXY=1` is set, so on 0.4.0 an agent that checked `http://our-preview:8080/` with `fetch` failed with `EAI_AGAIN`, even though the preview was reachable.
+- Hardened Claude jobs now set `NODE_USE_ENV_PROXY=1`, and Docker isolation forwards it into the job container. A host off the allowlist is still refused by the sandbox proxy: `fetch` fails with an error, and a plain proxy request gets `403`. See [preview-job-network.md](../preview-job-network.md).
+
 ### Turning preview hosting on
 
 On a runner already enrolled and configured from the dashboard, with Docker isolation and git 2.29 or later:
@@ -127,6 +142,65 @@ Other app-side requirements from 0.3.1 to 0.4.x:
 - The active platform Agent Pack's `minimumRunnerVersion` (currently `0.3.1`) is already met by 0.4.1. No pack change is required.
 - Runners already installed on 0.3.1 keep running. The dashboard shows them the upgrade notice once `RUNNER_RELEASE_VERSION` is v0.4.1. They get the new job image only after their configuration profile is saved with it (section 4).
 - Hosted previews stay off until an operator runs `configure --preview-hosting on`, and they are reachable through the edge only after 3b (preview domain, DNS, certificate and keys).
+
+## 3c record: the full P5f flow against a local app (2026-11-26)
+
+This is the 3c check from [release-0.4.0.md](release-0.4.0.md), run on the 0.4.1 code. It is not a tag gate, but it found the five runner bugs fixed in this release (Bash in Docker jobs, the dotfile placeholders, the deploy result times, node `fetch` in the sandbox and the destroy event time).
+
+### Setup
+
+- **App:** an isolated Meltora app on a disposable database, with the P5f app slice (J2 policy, J6 evidence, the tunnel condition in `isPreviewReachOffered`) and the app fixes listed under incidents below. Never the dev database.
+- **Runner:** `start --config FILE` (legacy mode), so preview hosting came from the file's `preview_hosting` block. Remote-config delivery of preview_hosting and Merge is covered by the runner unit tests and not by 3c.
+  - Docker isolation on rootless Docker 29.6.1 (API 1.55), `restricted` job network, `claude` provider signed in with a Claude subscription.
+  - `preview_hosting.enabled: true`, `max_concurrent: 3`.
+  - Required check `test`: `node --check server.js`.
+- **Host binary (run6):** `our-runner` built from `6dee9af` with `CGO_ENABLED=0 go build -trimpath`, sha256 `68ecbc1b588529010ba9d9fa53c014972144882124af068328bee763b171ba9e`.
+- **Job image:** `local/our-runner-job@sha256:1e44a5b6b70161d3e0dc26be5a22ca0d19fc8d1176701659295cc63f2ee5d7dc`, built with `packaging/job-image/build.sh` from `cdc4b3c`. It holds Claude Code 2.1.326, and its `/usr/local/bin/our-runner` has sha256 `5f8d4a25be7265a5657373dcb2d9eec2ecfe8e21711d3290182fb95531bd2d3d`. `6dee9af` changes only host-side code, so the image did not need a rebuild. The release image is built from the tag by the release workflow (section 4).
+
+### Result (run6, `wfr_c3e417aef30f3eace8d29403eb324ff4`)
+
+- **Plan** `f924f3c9`: the plan was published.
+- **Build** `75c41098`:
+  - Bash worked. The agent changed `server.js`, `package.json` and `README.md`, added `test/server.test.js`, and committed.
+  - The required check `test` passed on the commit set `f9161ae6`. The agent's suite `server-smoke` (`npm test`) passed 5 of 5.
+  - `platform_deploy_preview` was in the tool list. The agent called it, the app sent `preview_deploy`, and the result was `deployed`, with the `http-health` and `http-root` checks passing.
+  - From inside its Bash sandbox, the agent fetched `http://our-preview:8080/` with node `fetch`: `/` served the change, `/health` returned `200` and `/nope` returned `404`. The job environment had `NODE_USE_ENV_PROXY=1`.
+  - In the same sandbox, a request to `registry.npmjs.org:443` was refused: "host is not on the allow list".
+  - At the end the runner sent the final `preview` evidence (`health: healthy`, the edge URL, the final commit set), then `review_ready` and `job_finished`. The app accepted all of them.
+- **Containers afterwards:** the preview's app and gateway containers were running until expiry. The job container and the per-job network were removed.
+
+### Runs
+
+| Run | Workflow run | Attempts | Outcome |
+|---|---|---|---|
+| 1 | `wfr_21e08e45b0a588b1a55b661bf2d28efd` | plan ok, build `6522da55` | The build failed on OAuth refresh (known issue below). |
+| 2 | `wfr_94ee303743d4754bfc0b475904bb8de0` | plan `1ecacff1`, build `166cbf33` | `required_checks_failed`: every Bash command failed with `bwrap: Can't mkdir <job>/pack/.claude: Read-only file system`. |
+| 3 | `wfr_1e22ca6c93a9f27ef093306fb1e75119` | plan `2113be42`, build `7cd74c47` | Bash, commit and check worked. `platform_deploy_preview` got `command_timeout`: the app's eligibility rule never sent the command. |
+| 4 | `wfr_d2bf575775cb10e7400eb469703395d2` | plan `57b6bc97`, build `b34c0ed0` | The command was held by the app's gateway claim filter and arrived after the tool's 2-minute timeout. The preview still deployed, but without reach for the job. The agent's next request got `capacity_exhausted`, because `max_concurrent` was 1. |
+| 5 | `wfr_6eb83a0b26878b101775f6a2b85cedd7` | plan `6e991d3b`, build `89eb0355` | Deployed and attached, and the runner's health checks passed. The agent's `fetch` failed with `EAI_AGAIN`, and the app discarded the result as `authority_mismatch`. |
+| 6 | `wfr_c3e417aef30f3eace8d29403eb324ff4` | plan `f924f3c9`, build `75c41098` | Passed (above). |
+
+### Incidents and fixes
+
+- **Job socket path:** the first state directory was too long for the job MCP socket, and every job failed with `workspace_preparation_failed`. Fixed in this release: `start` and `doctor` now refuse such a `state_dir`.
+- **OAuth refresh:** see the known issue below. 3c continued with a fresh host login.
+- **Model:** Claude Code 2.1.299 logged `unrecognized_model` for the account's default model. The job image now pins 2.1.326.
+- **Bash in Docker jobs** (run 2) and **dotfile placeholders in `git add -A`:** fixed in this release (Shell commands work in Docker jobs).
+- **App, not the runner:** a seeding helper made the app reject `job_started` (replaced by the real routes); the deploy eligibility rule required a manifest lifetime longer than the app issues (run 3); the gateway claim filter had the same comparison (run 4). All were fixed in the app.
+- **Capacity (run 4):** with `max_concurrent: 1`, a second deploy in the same job can never succeed, because the old preview is destroyed only after the new one is up. 3c used `max_concurrent: 3`, the product default.
+- **Deploy result times and node `fetch`** (run 5): fixed in this release, in `6dee9af`.
+- **Destroy event time** (after run 6): when the run 4 preview expired, its `preview_hosted_destroyed` event carried `destroyed_at` `10:06:43.43Z`. The app's deferred check failed at commit, the app closed the runner's stream with "processing failed", and every reconnect resent the event, so the runner could not stay connected. The runner fix is `d4ef65b`. The app now normalizes the field as well, which is what clears the event already in the journal.
+
+### Credentials
+
+Each job got a copy of the host login in its job home, with mode 0600. The runner deleted the job home when the job ended. Nothing was printed or logged. The host login's hashes were compared after every job. They changed once between run 5 and run 6, and the run 6 plan job's copy already matched the new host login, so an interactive session on the host had refreshed it, not a job.
+
+### Follow-ups
+
+- The Claude Code placeholder list for dotfiles depends on the Claude Code version, so the excludes list must be checked on every Claude Code bump.
+- In multi-repository jobs, secondary repositories are not sandbox write roots. This is not verified by 3c.
+- App: a lost or deferred `preview_deploy` dispatch should fail fast with a clear refusal reason. The in-flight state lasts about 15 minutes, against the tool's 2 minutes.
+- RUNNER-OAUTH-WRITEBACK (0.4.2), below.
 
 ## Known issues
 
