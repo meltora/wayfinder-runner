@@ -209,10 +209,10 @@ Each job got a copy of the host login in its job home, with mode 0600. The runne
 - **Affected:** a runner with Docker isolation and the `claude` provider signed in with a Claude subscription (OAuth in `.credentials.json`). The issue is older than 0.4.1 and 0.4.0. API key sign-in is not affected.
 - **Symptom:** once the access token in the host's `.credentials.json` has expired, one job still runs, and every later job fails within seconds with `agent_exit_failed` and `provider_error="Failed to authenticate: OAuth session expired and could not be refreshed"`.
 - **Cause:** each job gets a copy of the host login in its job home. The first job refreshes the expired access token in that copy, and the sign-in server rotates the refresh token, which invalidates the one on the host. The runner does not write the refreshed copy back and deletes the job home when the job ends. Every later job starts from the host's invalidated refresh token.
-- **Workaround:** sign in again on the host (`claude`, then `/login`, with the same `CLAUDE_CONFIG_DIR` the runner uses). No runner restart is needed, because every job copies the host login when it starts. Jobs keep working while the new access token is valid, which is a few hours, because they do not need to refresh it. The fix is tracked as RUNNER-OAUTH-WRITEBACK for 0.4.2.
+- **Workaround:** sign in again on the host (`claude`, then `/login`, with the same `CLAUDE_CONFIG_DIR` the runner uses). No runner restart is needed, because every job copies the host login when it starts. Jobs keep working while the new access token is valid, which is a few hours, because they do not need to refresh it. Fixed in 0.4.3 for Docker isolation with the restricted job network and a file login: the runner refreshes the host login before it expires and hands it on to running jobs (see [release-0.4.3.md](release-0.4.3.md)).
 
 ## Known follow-ups (not blocking)
 
-- RUNNER-OAUTH-WRITEBACK (0.4.2): write the refreshed login back to the host atomically under a lock, or support a long-lived token, so subscription sign-in survives token refresh.
+- RUNNER-OAUTH-WRITEBACK: done in 0.4.3 as a host refresh with hand-on to running jobs; a job never writes to the host login.
 - The runner logs only "start MCP bridge" when the job MCP bridge fails to start. It should log the underlying error.
 - Fleet-level control of preview hosting from the dashboard would need a new remote key and an app slice. It is planned only if that control is ever needed.

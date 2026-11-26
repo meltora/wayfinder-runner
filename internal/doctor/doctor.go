@@ -73,6 +73,8 @@ type Options struct {
 	BuildChannel                string
 	PreviewHostingEnabled       bool
 	PreviewHostingMaxConcurrent int
+	ClaudeAPIKey                bool
+	ClaudeConfigDir             string
 }
 
 func runSystemChecks(ctx context.Context, opts Options) Report {

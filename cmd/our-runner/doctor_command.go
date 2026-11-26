@@ -61,6 +61,11 @@ func declaredCheckImages(checks map[string]config.CheckConfig) map[string]string
 	return images
 }
 
+func hasProviderAPIKey(cfg config.Config, provider string) bool {
+	_, ok := cfg.ProviderAPIKeySource(provider)
+	return ok
+}
+
 func loadedConfigurationDoctorOptions(cfg config.Config) doctor.Options {
 	return doctor.Options{
 		ConfigurationLoaded: true, Provider: cfg.Provider, ProviderBinary: cfg.ProviderBinaries[cfg.Provider],
@@ -71,6 +76,7 @@ func loadedConfigurationDoctorOptions(cfg config.Config) doctor.Options {
 		EgressPolicyID: cfg.EgressPolicyID, WorkIntakeProposalEnabled: cfg.WorkIntakeProposal.Enabled, EgressPolicyVerifierSocket: cfg.EgressPolicyVerifierSocket,
 		PreviewHostingEnabled: cfg.PreviewHosting.Enabled, PreviewHostingMaxConcurrent: cfg.PreviewHosting.MaxConcurrent,
 		WorkIntakeProposalAdapter: cfg.WorkIntakeProposal.Adapter, WorkIntakeProposalBinary: cfg.ProviderBinaries[cfg.WorkIntakeProposal.Adapter],
+		ClaudeAPIKey: hasProviderAPIKey(cfg, "claude"), ClaudeConfigDir: cfg.ProviderEnvironment["claude"]["CLAUDE_CONFIG_DIR"],
 		ProviderEnvironmentNames: map[string][]string{
 			"codex": cfg.ProviderEnvironmentNames("codex"), "claude": cfg.ProviderEnvironmentNames("claude"), "opencode": cfg.ProviderEnvironmentNames("opencode"),
 		},

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/example/app-runner/internal/agentpack/trustroot"
 	"github.com/example/app-runner/internal/isolation"
@@ -19,6 +20,8 @@ type Dependencies struct {
 	LookPath           func(string) (string, error)
 	Stat               func(string) (os.FileInfo, error)
 	PlatformTrustRoots func() (trustroot.Roots, error)
+	ClaudeLogin        func([]string) (isolation.ClaudeLoginStatus, error)
+	Now                func() time.Time
 }
 
 func Run(ctx context.Context, opts Options) Report {
@@ -26,6 +29,7 @@ func Run(ctx context.Context, opts Options) Report {
 		SystemChecks: func(ctx context.Context, opts Options) []Check { return runSystemChecks(ctx, opts).Checks },
 		LookPath:     exec.LookPath, Stat: os.Stat,
 		PlatformTrustRoots: defaultPlatformTrustRoots(opts, os.Getenv(trustroot.OverrideEnvironment)),
+		ClaudeLogin:        isolation.HostClaudeLogin, Now: time.Now,
 	})
 }
 
@@ -41,6 +45,9 @@ func RunWithDependencies(ctx context.Context, opts Options, deps Dependencies) R
 	}
 	checks = append(checks, checkConfiguredRuntime(opts, deps))
 	if check, ok := providerEnvironmentCheck(opts); ok {
+		checks = append(checks, check)
+	}
+	if check, ok := claudeLoginSyncCheck(opts, deps); ok {
 		checks = append(checks, check)
 	}
 	checks = append(checks,

@@ -881,6 +881,15 @@ From every source, the job's `.credentials.json` holds only the
 `claudeAiOauth` login. Other tokens in the host file, such as the `mcpOAuth`
 logins of MCP servers and plugins, are never copied into a job. A
 `.credentials.json` without `claudeAiOauth` counts as missing.
+Under Docker isolation with `job_network: restricted`, a Claude file login stays
+fresh across jobs: when a Claude job is running or about to start and the host
+access token expires within 15 minutes, the runner refreshes the host login once with
+`claude auth login` in a short container from the job image, writes it under
+Claude Code's own lock, and hands it on to running jobs within seconds. A job's
+own copy is never written back to the host. If Claude Code in a job refreshes
+first, the runner logs `event=job_login_rotated`, and the host may need a new
+sign-in. `our-runner doctor --config` reports this as the `claude-login-sync`
+check. The macOS Keychain login and direct isolation are not synced.
 Codex and OpenCode always copy their default `auth.json`; `CODEX_HOME` and other
 variables are not applied under Docker, and `our-runner doctor --config` warns
 with their names. The tmux supervisor passes them on its command line and the herdr
