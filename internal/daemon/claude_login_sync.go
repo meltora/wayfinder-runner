@@ -16,30 +16,33 @@ import (
 const (
 	claudeLoginExchangeInterval  = 2 * time.Minute
 	claudeLoginHostCheckInterval = 10 * time.Second
-	claudeLoginFinalSyncTimeout  = 30 * time.Second
-	claudeLoginMaxLifetime       = 24 * time.Hour
 )
 
 type claudeLoginExchanger func(ctx context.Context, attemptID, home string, request claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error)
 
 type claudeLoginSync struct {
 	exchange claudeLoginExchanger
+	refresh  claudeLoginRefresher
 	logger   *slog.Logger
 	now      func() time.Time
 	lock     claudelogin.LockOptions
 
-	mu       sync.Mutex
-	jobs     map[string]*claudeLoginJob
-	hostSeen map[string]time.Time
+	refreshMu sync.Mutex
+	mu        sync.Mutex
+	jobs      map[string]*claudeLoginJob
+	hostSeen  map[string]time.Time
+	refreshes map[string]*claudeLoginRefreshState
 }
 
 type claudeLoginJob struct {
 	sync      *claudeLoginSync
 	attemptID string
 	home      isolation.JobHome
+	logger    *slog.Logger
 
 	mu           sync.Mutex
 	baseline     [32]byte
+	rotated      [32]byte
 	lastExchange time.Time
 	stopped      bool
 	finished     bool
@@ -59,21 +62,24 @@ func (d *Daemon) claudeLoginExchanger() claudeLoginExchanger {
 	}
 }
 
-func newClaudeLoginSync(exchange claudeLoginExchanger, logger *slog.Logger) *claudeLoginSync {
+func newClaudeLoginSync(exchange claudeLoginExchanger, refresh claudeLoginRefresher, logger *slog.Logger) *claudeLoginSync {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &claudeLoginSync{
-		exchange: exchange, logger: logger, now: time.Now,
-		jobs: map[string]*claudeLoginJob{}, hostSeen: map[string]time.Time{},
+		exchange: exchange, refresh: refresh, logger: logger, now: time.Now,
+		jobs: map[string]*claudeLoginJob{}, hostSeen: map[string]time.Time{}, refreshes: map[string]*claudeLoginRefreshState{},
 	}
 }
 
-func (s *claudeLoginSync) register(attemptID string, home isolation.JobHome) *claudeLoginJob {
+func (s *claudeLoginSync) register(attemptID string, home isolation.JobHome, logger *slog.Logger) *claudeLoginJob {
 	if s == nil || !home.SyncsLogin || home.ClaudeConfigDir == "" {
 		return nil
 	}
-	job := &claudeLoginJob{sync: s, attemptID: attemptID, home: home, baseline: home.Baseline, lastExchange: s.now()}
+	if logger == nil {
+		logger = s.logger
+	}
+	job := &claudeLoginJob{sync: s, attemptID: attemptID, home: home, logger: logger, baseline: home.Baseline, lastExchange: s.now()}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.jobs[attemptID] = job
@@ -107,8 +113,21 @@ func (s *claudeLoginSync) tick(ctx context.Context) {
 		jobs = append(jobs, job)
 		hostDirs[job.home.ClaudeConfigDir] = true
 	}
-	changed := map[string]bool{}
+	s.mu.Unlock()
+	dirs := make([]string, 0, len(hostDirs))
 	for dir := range hostDirs {
+		dirs = append(dirs, dir)
+	}
+	sort.Strings(dirs)
+	for _, dir := range dirs {
+		if ctx.Err() != nil {
+			return
+		}
+		s.refreshHost(ctx, dir)
+	}
+	changed := map[string]bool{}
+	s.mu.Lock()
+	for _, dir := range dirs {
 		modTime := hostLoginModTime(dir)
 		if !modTime.Equal(s.hostSeen[dir]) {
 			changed[dir] = true
@@ -143,73 +162,42 @@ func (j *claudeLoginJob) exchange(ctx context.Context, hostChanged bool) {
 	j.lastExchange = s.now()
 	_, host, err := claudelogin.ReadLogin(j.home.ClaudeConfigDir)
 	if err != nil {
-		s.logger.Warn("claude login exchange skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
+		j.logger.Warn("claude login exchange skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
 		return
 	}
 	hostAccount, err := claudelogin.ReadAccount(j.home.ClaudeStateFile)
 	if err != nil {
-		s.logger.Warn("claude login exchange skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
+		j.logger.Warn("claude login exchange skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
 		return
 	}
 	result, err := s.exchange(ctx, j.attemptID, j.home.Path, claudelogin.ExchangeRequest{Host: host.OAuth, HostAccount: hostAccount, Baseline: j.baseline})
 	if err != nil {
-		s.logger.Warn("claude login exchange failed", "attempt_id", j.attemptID, "err", err)
+		j.logger.Warn("claude login exchange failed", "attempt_id", j.attemptID, "err", err)
 		return
 	}
 	if result.Replaced {
 		j.baseline = host.RefreshHash
-		s.logger.Info("claude login handed on", "attempt_id", j.attemptID)
+		j.logger.Info("claude login handed on", "attempt_id", j.attemptID)
 		return
 	}
 	if result.Job == nil {
 		return
 	}
-	candidate, err := claudelogin.ParseOAuth(result.Job)
+	copyLogin, err := claudelogin.ParseOAuth(result.Job)
 	if err != nil {
-		s.logger.Warn("claude login write-back skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
+		j.logger.Warn("claude login exchange skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
 		return
 	}
-	j.writeBack(ctx, candidate, result.JobAccount)
+	j.noteRotation(copyLogin)
 }
 
-func (j *claudeLoginJob) writeBack(ctx context.Context, candidate claudelogin.Login, account claudelogin.Account) {
-	if !candidate.HasRefresh || candidate.RefreshHash == j.baseline {
+func (j *claudeLoginJob) noteRotation(copyLogin claudelogin.Login) {
+	if !copyLogin.HasRefresh || copyLogin.RefreshHash == j.baseline || copyLogin.RefreshHash == j.rotated {
 		return
 	}
-	s := j.sync
-	if time.UnixMilli(candidate.ExpiresAt).After(s.now().Add(claudeLoginMaxLifetime)) {
-		s.logger.Warn("claude login write-back skipped", "attempt_id", j.attemptID, "reason", "implausible_expiry")
-		return
-	}
-	hostDir := j.home.ClaudeConfigDir
-	unlock, err := claudelogin.LockConfigDir(ctx, hostDir, s.lock)
-	if err != nil {
-		s.logger.Warn("claude login write-back skipped", "attempt_id", j.attemptID, "reason", "locked")
-		return
-	}
-	defer func() {
-		if err := unlock(); err != nil {
-			s.logger.Warn("claude login host lock release failed", "err", err)
-		}
-	}()
-	reason := claudelogin.ReasonUnparsable
-	data, host, readErr := claudelogin.ReadLogin(hostDir)
-	hostAccount, accountErr := claudelogin.ReadAccount(j.home.ClaudeStateFile)
-	if readErr == nil && accountErr == nil {
-		reason = claudelogin.Decide(candidate, host, j.baseline, account, hostAccount)
-	}
-	if reason == claudelogin.ReasonOK {
-		merged, err := claudelogin.MergeCredentials(data, candidate.OAuth)
-		if err == nil {
-			err = claudelogin.WriteFileAtomic(hostDir, ".credentials.json", merged, -1)
-		}
-		if err != nil {
-			s.logger.Warn("claude login write-back failed", "attempt_id", j.attemptID, "err", err)
-			return
-		}
-		j.baseline = candidate.RefreshHash
-	}
-	s.logger.Info("claude login write-back", "attempt_id", j.attemptID, "reason", string(reason))
+	j.rotated = copyLogin.RefreshHash
+	j.logger.Warn("claude login rotated inside the job and was not written back; the host login may need a new sign-in",
+		"attempt_id", j.attemptID, "event", "job_login_rotated")
 }
 
 func (j *claudeLoginJob) stop() {
@@ -238,12 +226,10 @@ func (j *claudeLoginJob) final() {
 		return
 	}
 	j.finished = true
-	candidate, account, err := claudelogin.ReadJobLogin(j.home.Path)
+	copyLogin, _, err := claudelogin.ReadJobLogin(j.home.Path)
 	if err != nil {
-		s.logger.Warn("claude login final sync skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
+		j.logger.Warn("claude login final check skipped", "attempt_id", j.attemptID, "reason", string(claudelogin.ReasonUnparsable))
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), claudeLoginFinalSyncTimeout)
-	defer cancel()
-	j.writeBack(ctx, candidate, account)
+	j.noteRotation(copyLogin)
 }

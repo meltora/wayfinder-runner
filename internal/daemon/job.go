@@ -627,6 +627,9 @@ func (jr *jobRunner) run() {
 		isoPolicy.Environment = provider.ContainerEnvironment(spec.Env)
 		isoPolicy.ForwardedSecretNames = apiKey.names()
 		isoPolicy.ManagedConfigMounts = append([]supervisor.ManagedConfigMount(nil), spec.ManagedConfigMounts...)
+		if adapterName == "claude" && apiKey == nil {
+			d.claudeLogins.beforeStart(ctx, d.agentEnvironment(adapterName))
+		}
 		jobLogin, err = isolation.PrepareHomeWithLogin(d.cfg.StateDir, job.JobID, job.AttemptID, adapterName, d.agentEnvironment(adapterName))
 		jobHome = jobLogin.Path
 		if err != nil {
@@ -717,7 +720,7 @@ func (jr *jobRunner) run() {
 		}
 	}
 	if iso.Name() == "docker" {
-		loginSync = d.claudeLogins.register(job.AttemptID, jobLogin)
+		loginSync = d.claudeLogins.register(job.AttemptID, jobLogin, jr.logger)
 		ownership.beforeRelease(loginSync.stop)
 	}
 

@@ -15,7 +15,7 @@ import (
 	"github.com/example/app-runner/internal/isolation"
 )
 
-func TestProviderJobWritesTheJobsRefreshedLoginBackOnEveryEnd(t *testing.T) {
+func TestProviderJobReportsAJobRotationWithoutWritingItBackOnEveryEnd(t *testing.T) {
 	for name, test := range map[string]struct {
 		configure   func(*ownershipRun)
 		state, code string
@@ -46,7 +46,8 @@ func TestProviderJobWritesTheJobsRefreshedLoginBackOnEveryEnd(t *testing.T) {
 			run.jr.d.claudeLogins = newClaudeLoginSync(func(context.Context, string, string, claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error) {
 				exchanges++
 				return claudelogin.ExchangeResult{}, nil
-			}, slog.New(slog.NewTextHandler(&logs, nil)))
+			}, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+			run.jr.logger = slog.New(slog.NewTextHandler(&logs, nil))
 			run.sup.duringRun = func() {
 				home := run.ownership.handOffs[0].Private[0]
 				writeTestFile(t, filepath.Join(home, ".claude", ".credentials.json"), fakeCredentials(fakeOAuth("r1", 200, "")))
@@ -54,8 +55,11 @@ func TestProviderJobWritesTheJobsRefreshedLoginBackOnEveryEnd(t *testing.T) {
 			test.configure(run)
 			run.execute(t)
 			run.expectFinished(t, test.state, test.code)
-			if got := refreshOf(t, hostDir); got != "r1" {
-				t.Fatalf("host login = %s after the job ended, want the job's r1", got)
+			if got := refreshOf(t, hostDir); got != "r0" {
+				t.Fatalf("host login = %s after the job ended, want r0 untouched", got)
+			}
+			if !strings.Contains(logs.String(), "event=job_login_rotated") {
+				t.Fatalf("the job rotation was not reported: %s", logs.String())
 			}
 			if len(run.jr.d.claudeLogins.jobs) != 0 {
 				t.Fatal("the finished job is still registered")
@@ -76,7 +80,7 @@ func TestProviderJobStopsLoginExchangesBeforeReclaim(t *testing.T) {
 	run.jr.d.claudeLogins = newClaudeLoginSync(func(context.Context, string, string, claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error) {
 		run.log.add("exchange")
 		return claudelogin.ExchangeResult{}, nil
-	}, nil)
+	}, nil, nil)
 	var registered *claudeLoginJob
 	run.sup.duringRun = func() {
 		registered = run.jr.d.claudeLogins.jobs["a1"]

@@ -6,7 +6,7 @@
 |---|---|
 | ID | `runner-oauth-writeback` |
 | Kind | slice |
-| Status | design approved (approach A, master, 2026-11-26); spikes done; plan written; Tasks 1 to 5 done; Task 6 in progress |
+| Status | design approved (approach A, master, 2026-11-26), then narrowed to hand-on only (no job write-back, master, 2026-11-26); spikes done; plan written; Tasks 1 to 6 done; Task 7 in progress |
 | Target | 0.4.3. Task 1 (`47bf54a`) and Task 3 (`a7a34ba`, job copy narrowed to `claudeAiOauth`) shipped early in v0.4.2. |
 | Risk | high. The runner writes the owner's Claude login on the host. A defect could lose the login, write a stale one over a fresh one, swap in another account's login, or leak it. |
 | Baseline | app-runner `main` at `105182f` (v0.4.1) |
@@ -60,37 +60,43 @@ These come from a static reading of the compiled binary, plus `claude --help` in
 - **Q4. Lifetimes and identity.** `expiresAt = now + expires_in`. A `refreshTokenExpiresAt` field exists, and the host login has one.
   - Claude Code writes `accountUuid` and `organizationUuid` into `claudeAiOauth` at sign-in, but the host login on the 3c machine does not have them, because it is an older login. The account is also in `.claude.json` under `oauthAccount` (`accountUuid`, `organizationUuid`).
   - Claude Code's own same-account test compares `accountUuid` and `organizationUuid`.
-- **Constraint found while planning: the runner cannot read a running job's home.** In Docker isolation the job home is handed to the container user, uid 10001, before the agent starts (`job.go`, `handOffOwnership`, `Private: jobHome`). On the host that is a subordinate uid, and the home is 0700. The run 7 credential watch lost sight of the job copy at hand-off. Reclaim at the job's end gives the home back to the runner before `CleanupHome`. So the final sync can read the copy directly, but every read or write while the job runs needs the Docker user namespace.
-- **Side finding: other OAuth tokens copied into jobs.** The host `.credentials.json` also holds `mcpOAuth`, the OAuth tokens of the owner's MCP servers and plugins. Today the runner copies the whole file into every job home, so these tokens reach the job without any need. This slice copies only `claudeAiOauth` into jobs, and every write-back keeps the host's other top-level keys untouched.
+- **Constraint found while planning: the runner cannot read a running job's home.** In Docker isolation the job home is handed to the container user, uid 10001, before the agent starts (`job.go`, `handOffOwnership`, `Private: jobHome`). On the host that is a subordinate uid, and the home is 0700. The run 7 credential watch lost sight of the job copy at hand-off. Reclaim at the job's end gives the home back to the runner before `CleanupHome`. So the final check can read the copy directly, but every read or write while the job runs needs the Docker user namespace.
+- **Side finding: other OAuth tokens copied into jobs.** The host `.credentials.json` also holds `mcpOAuth`, the OAuth tokens of the owner's MCP servers and plugins. Today the runner copies the whole file into every job home, so these tokens reach the job without any need. This slice copies only `claudeAiOauth` into jobs, and every runner write to the host (a scheduled refresh) keeps the host's other top-level keys untouched.
 
 ## Approaches
 
-- **A. Runner-owned sync and scheduled refresh (chosen).** The details follow below.
+- **A. Runner-owned sync and scheduled refresh (chosen, without the job write-back).** The details follow below. The first version of A also wrote a job's refreshed login back to the host; that part was removed, see Decisions.
 - **B. Long-lived `setup-token` login, opt-in (later).** Q1 confirms it is possible without an environment variable: the runner writes `{accessToken, expiresAt, scopes}` with no refresh token into the job copy. This is a separate slice after A, opt-in for owners who prefer a fixed token.
-- **C. Write-back at job end only.** Rejected: with `max_concurrent` above 1 the jobs still race, as described under Problem.
+- **C. Write-back at job end only.** Rejected: with `max_concurrent` above 1 the jobs still race, as described under Problem, and it has the same account problem as any job write-back.
 
 ## Decisions
 
 - **Approach A with the anti-swap check** (master, 2026-11-26).
-- **Tasks 1 and 3 ship early in v0.4.2; the write-back is 0.4.3** (master).
+- **Tasks 1 and 3 ship early in v0.4.2; the sync and the scheduled refresh are 0.4.3** (master).
+- **A job never writes to the host login** (master's decision, 2026-11-26, not the user's). It replaces the job write-back of the first version of A.
+  - Why: every account claim in a job copy (`accountUuid` and `organizationUuid` in `claudeAiOauth`, `oauthAccount` in `.claude.json`) is written by the job, and the agent controls the job home. A job could plant another account's valid login with matching claims. Written to the host, it would send the owner's later interactive Claude Code conversations on the host to someone else's account. That is a confidentiality problem, not only an integrity one. Checking more fields only narrows it, because the job can copy any field.
+  - What remains: the host refreshes itself (Task 6) before Claude Code's own 5-minute margin, and hands the fresh login on to running jobs. `Decide` runs only host → job, inside the exchange.
+  - A job rotation is reported, not written: when a job's copy has a refresh token other than its baseline, the runner logs `claude login rotated inside the job and was not written back; the host login may need a new sign-in` once per rotated hash, with `attempt_id` and `event=job_login_rotated`, and no value.
+  - Residual risk: if a job's Claude Code refreshes before the runner does (the host refresh failed or was unavailable, a `401`, or a refresh at startup), the rotation invalidates the host refresh token. The next host refresh fails, other jobs on the same lineage fail at their next refresh, and the owner signs in again on the host. The warning above explains that failure. Task 7's live check shows whether the host refresh comes reliably before the 5-minute margin.
 - **The exchange helper runs as the job user, not as container root** (master's decision, 2026-11-26, not the user's). The planned helper ran as container root. Without `DAC_OVERRIDE` that root cannot enter the job user's 0700 home, and with it the helper would need more privilege than the job. Running as uid 10001 with every capability dropped is least privilege, and the new file is the job user's own without a `chown`.
-- **A write-back does not move other jobs' baselines.** A job's baseline changes only after a write-back from that job or a hand-on to it, so that a job still on its old baseline is recognised and gets the newer host login.
+- **A job's baseline changes only after a hand-on to it**, so that a job still on its old baseline is recognised and gets the newer host login, and a job that rotated is reported.
 - **`provider_login_refresh_failed` is out of scope** (master): it changes the wire contract.
 
 ## Design (A)
 
-The runner keeps one login lineage on the host, and it is the only process that moves a login between the host and job copies.
+The runner keeps one login lineage on the host, and it is the only process that moves a login from the host into job copies. Nothing moves from a job copy to the host.
 
-### Lineage and the anti-swap check
+### Lineage and the hand-on check
 
 - A job copy is created from a host login whose refresh token is `R0`. The runner remembers `R0` for that job, as a hash in memory only.
-- A job copy may be written back only when all of these hold:
-  1. its `claudeAiOauth` parses;
-  2. its refresh token differs from `R0`, so the job refreshed;
-  3. its `expiresAt` is later than the host's;
-  4. the host's refresh token is still `R0` (compare-and-swap, the same rule Claude Code uses);
+- The host login replaces a job copy only when all of these hold (`claudelogin.Decide` with the host as the candidate):
+  1. both `claudeAiOauth` objects parse;
+  2. the host's refresh token differs from `R0`, so the host refreshed;
+  3. the host's `expiresAt` is later than the copy's;
+  4. the copy's refresh token is still `R0` (compare-and-swap, the same rule Claude Code uses);
   5. the account matches. When both sides carry `accountUuid` and `organizationUuid` in `claudeAiOauth`, they must be equal. Otherwise the job's `.claude.json` `oauthAccount` must equal the host's on both fields. When neither file has an account id, the lineage check (1–4) alone decides, and `doctor` reports that the account check is unavailable.
-- A failed check is never an error for the job. The copy is ignored, and the runner logs `claude login write-back skipped` with the reason (`older`, `host_changed`, `account_mismatch`, `unparsable`) and no values.
+- A failed check is never an error for the job. The copy is left as it is.
+- A copy whose refresh token is neither `R0` nor the handed-on one means the job rotated the lineage. The runner logs the rotation warning from Decisions once per hash and does not write the host.
 
 ### Locks and writes
 
@@ -102,17 +108,18 @@ The runner keeps one login lineage on the host, and it is the only process that 
 - **Exchange.** A running job's copy is reached through an exchange: a short helper container started by the runner, from the pinned job image, as the job user (uid 10001, the same subordinate uid that owns the home), with every capability dropped. It runs with `--network none`, and only the job home (read-write) and the runner's statically linked binary (read-only) are mounted. It runs `our-runner claude-login-exchange`.
   - The runner sends the host `claudeAiOauth`, the host account ids and the job's baseline hash on stdin, never in arguments or the environment.
   - Under the job copy's locks, the helper reads the copy and prints the copy's `claudeAiOauth` and account ids on stdout. If the copy is still on the baseline and the host login is newer and of the same account, it first replaces the copy's `claudeAiOauth` with the host's. The new file is the job user's own, with mode 0600, so no ownership change is needed.
-  - The anti-swap decision is the same Go code (`claudelogin.Decide`) on both sides.
-- **When it runs.** Every 2 minutes for each running Claude job; right after a scheduled refresh, for every running job; and on demand when the host file's mtime changes (an interactive sign-in or refresh), checked every 10 s.
-- **Write-back.** When the copy an exchange returns passes the anti-swap check, the runner writes it to the host. The next exchange with every other running job then hands it on. Claude Code in those jobs adopts it on its next check (Q3).
-- **Final sync.** It runs on every job end (success, failure, cancel), after reclaim and before `CleanupHome`. It reads the reclaimed copy directly, without a helper.
+  - The hand-on decision is `claudelogin.Decide`, run inside the helper with the host login as the candidate.
+- **When it runs.** Every 2 minutes for each running Claude job; in the same tick after a scheduled refresh, for every running job; and on demand when the host file's mtime changes (an interactive sign-in or refresh), checked every 10 s. Claude Code in the jobs adopts a handed-on login on its next check (Q3).
+- **No helper, no exchange.** Without the Docker helper the runner cannot reach a running job's home, so there is no exchange in process.
+- **Final check.** It runs on every job end (success, failure, cancel), after reclaim and before `CleanupHome`. It reads the reclaimed copy directly through `os.OpenRoot` (`claudelogin.ReadJobLogin`) and only reports a rotation. A read error is logged as `claude login final check skipped`.
 
 ### Scheduled refresh
 
 - So that jobs do not race at Claude Code's 5-minute mark, the runner refreshes first. When a Claude job is running, or one is about to start, and the host access token expires within 15 minutes, the runner refreshes once under the host lock.
 - The refresh runs `claude auth login` in a short container from the pinned job image, with `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` and `CLAUDE_CODE_OAUTH_SCOPES` in that container's environment and a fresh empty config directory. No agent and no workspace run in that container, so the environment rule for job containers does not apply to it. The network is limited to Claude's sign-in hosts. The refresh token reaches the container through an `--env-file` in a private temporary directory, never through an argument.
-- The result is checked like a job copy, written to the host, and fanned out to the running jobs.
-- If the refresh fails, the runner logs `claude login refresh failed` with the exit status only. Jobs then fall back to Claude Code's own refresh.
+- The result must have a refresh token, an `expiresAt` later than the host's and at most 24 hours ahead, and the host's account when both carry one. It is merged into the host file under the host lock and handed on to the running jobs.
+- If the refresh fails, the runner logs `claude login refresh failed` with the exit status or the reason only, and tries again after 2 minutes. Jobs then fall back to Claude Code's own refresh, with the residual risk from Decisions.
+- The refresh needs Docker isolation with the restricted job network. Without it the runner logs `claude login refresh unavailable` once.
 - A job that cannot start because the login is unusable keeps today's failure code in this slice. A dedicated code (`provider_login_refresh_failed`) changes the wire contract and needs the control plane's agreement first.
 
 ### Scope and reporting
@@ -123,23 +130,19 @@ The runner keeps one login lineage on the host, and it is the only process that 
 ### Tests (TDD, `internal/claudelogin` and the daemon)
 
 - The lock is compatible with proper-lockfile's layout. A held lock blocks, a stale lock (older than 60 s) is taken over, and a fresh foreign lock is never deleted.
-- The anti-swap rules:
-  - an older copy is skipped;
-  - a copy with an unchanged refresh token is skipped;
-  - a host already changed by someone else is skipped (`host_changed`);
-  - a different `accountUuid` or `organizationUuid` is skipped, in `claudeAiOauth` or in `.claude.json`;
-  - a truncated or unparsable copy is skipped.
+- The `Decide` rules, one row per reason: `older`, `unchanged`, `host_changed`, `account_mismatch` (in `claudeAiOauth` or in `.claude.json`) and `unparsable`.
+- A job rotation never changes the host, and is reported once.
 - Writes: only `claudeAiOauth` is replaced, `mcpOAuth` and unknown keys are kept, mode is 0600, and the write is a rename (no partial file is visible).
 - Job copy-in contains only `claudeAiOauth`, never `mcpOAuth`.
-- Fan-out: a refresh in job 1 reaches jobs 2 and 3. A job that already has a newer login is not overwritten.
-- A final sync runs on success, failure and cancel.
+- Fan-out: a host refresh reaches jobs 1, 2 and 3. A job that already has another login is not overwritten.
+- A final check runs on success, failure and cancel.
 - Scheduled refresh runs once for three jobs and never for an API key or keychain login, and its failure is logged without values.
 - No token value appears in any log, event or error (the redaction tests extended).
 
 ### 3c for this slice
 
 - A run with `max_concurrent: 3` and three overlapping jobs while the host access token passes its expiry. Every job succeeds.
-- The host login's hashes change once per refresh. Afterwards an interactive `claude` on the host still works, without signing in again.
+- The host login's hashes change once per refresh, and the refresh comes before Claude Code's 5-minute margin, so no `job_login_rotated` event appears. Afterwards an interactive `claude` on the host still works, without signing in again.
 - The live part needs a real refresh of the owner's login. If it goes wrong, the workaround in the known issue applies: sign in again on the host.
 
 ## Implementation plan
@@ -155,11 +158,11 @@ Execution: native TDD in this worktree, one commit per task, with one review of 
 
 ### Review focus
 
-1. Claude Code and the runner refresh at the same moment. Expected: one lineage wins, and the other side adopts it. No 401 loop. Test: Task 2's contention test and Task 5's fan-out test.
+1. Claude Code and the runner refresh at the same moment. Expected: one lineage wins. If the host wins, the jobs adopt it. If a job wins, the host is not written and the rotation is reported. No 401 loop. Test: Task 2's contention test, Task 5's rotation tests and Task 6's fan-out test.
 2. The owner signs in again on the host, possibly with another account, while jobs run. Expected: running jobs are left alone if the account differs. A same-account login is handed on. Test: Task 1's `account_mismatch` and `host_changed` rows, and Task 5.
 3. The runner crashes in the middle of a write. Expected: the old or the new file, never a partial one. A stale lock is taken over after 60 s. Test: Task 2.
 4. A host file with keys the runner does not know about (`mcpOAuth`, future fields). Expected: kept byte for byte. Test: Task 1's merge test.
-5. A job ends while an exchange with it is running. Expected: the final sync waits for the exchange, and there is no write into a removed home. Test: Task 5.
+5. A job ends while an exchange with it is running. Expected: the final check waits for the exchange, and there is no write into a removed home. Test: Task 5.
 
 ### Task 1: `internal/claudelogin`, login model and the anti-swap decision
 
@@ -172,7 +175,7 @@ Files: create `internal/claudelogin/login.go` and `login_test.go`.
 - `func MergeCredentials(target []byte, oauth json.RawMessage) ([]byte, error)` replaces `claudeAiOauth` and keeps every other top-level key, raw and in the same order.
 - `func JobCredentials(host []byte) ([]byte, error)` returns `{"claudeAiOauth": ...}` only.
 - `type Reason string`, with the values `ok`, `unchanged`, `older`, `host_changed`, `account_mismatch` and `unparsable`.
-- `func Decide(candidate, host Login, baseline [32]byte, candidateAccount, hostAccount Account) Reason` applies rules 1–5 of "Lineage and the anti-swap check".
+- `func Decide(candidate, host Login, baseline [32]byte, candidateAccount, hostAccount Account) Reason` applies rules 1–5 of "Lineage and the hand-on check".
 - Tests:
   - `TestDecide` has one row per reason. It also covers an account known on one side only (that row is `account_mismatch`), an account in `claudeAiOauth` taking precedence over `.claude.json`, and equal `expiresAt` (`older`).
   - `TestMergeCredentialsKeepsOtherKeys` covers `mcpOAuth`, an unknown key and key order.
@@ -224,7 +227,7 @@ What each one holds:
 - `func Exchange(ctx context.Context, home string, request ExchangeRequest, options LockOptions) (ExchangeResult, error)` works under `LockConfigDir(home/.claude)`.
   - It reads `.claude/.credentials.json` and `.claude.json` from the home through `os.OpenRoot`, so a symlink cannot lead out of the home. A missing or unparsable job copy or state is reason `unparsable`, with no write.
   - When `Decide(host, job, baseline, ...)` is `ok`, it writes the merged file with `WriteFileAtomic` (uid -1: the helper already runs as the job user).
-  - It returns the job login as it was before any write. When the job has refreshed, the reason is `host_changed` or `older` and the daemon takes `Job` as the write-back candidate.
+  - It returns the job login as it was before any write. The daemon uses `Job` only to detect a job rotation; it never writes it to the host.
 - The `cmd` side reads at most 1 MiB from stdin, rejects unknown fields and trailing data, runs `Exchange("/home/runner", ...)` within 25 s, and writes the result to stdout. The process exits non-zero with a fixed reason-only message.
 - `func (o DockerOwnership) ExchangeLogin(ctx context.Context, runnerID, attemptID, home string, in claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error)` shares the helper validation with `helperArgs` and only accepts a home under `job-homes/`.
   - Purpose `login-exchange`; `--user 10001:10001`, `--cap-drop ALL`, `--read-only`, `--network none`, `--entrypoint` set to the mounted runner.
@@ -236,43 +239,40 @@ What each one holds:
   - the `cmd` test rejects oversize input and unknown fields without echoing them;
   - a gated rootless Docker test hands a home off, exchanges, checks from inside a container that the new copy is a 0600 file of the job user, and reclaims.
 
-### Task 5: Daemon sync (registry, exchanges, write-back, final sync)
+### Task 5: Daemon sync (registry, exchanges, rotation report, final check)
 
-Files: create `internal/daemon/claude_login_sync.go` and its tests (`claude_login_sync_test.go`, `job_claude_login_sync_test.go`); modify `internal/daemon/job.go` (register after hand-off, stop before reclaim, final sync in the home cleanup defer), `job_ownership.go` (`beforeRelease` hooks) and `daemon.go` (create the sync and run its loop on the spool context).
+Files: create `internal/daemon/claude_login_sync.go` and its tests (`claude_login_sync_test.go`, `job_claude_login_sync_test.go`); modify `internal/daemon/job.go` (register after hand-off, stop before reclaim, final check in the home cleanup defer), `job_ownership.go` (`beforeRelease` hooks) and `daemon.go` (create the sync and run its loop on the spool context). Add `claudelogin.ReadJobLogin(home string) (Login, Account, error)`, which reads the reclaimed copy through `os.OpenRoot`.
 
-- `type claudeLoginSync struct` holds a registry of running jobs keyed by attempt id and the last seen mtime of each host config dir, plus the dependencies `exchange`, `now`, `lock` and `logger`. Each `claudeLoginJob` carries its `isolation.JobHome` (with `ClaudeConfigDir` and `ClaudeStateFile`), its baseline and an exchange mutex.
-- `register(attemptID string, home isolation.JobHome) *claudeLoginJob` returns nil for a home that does not sync a file login; every method is nil-safe. The exchanger is the docker helper when the ownership supports `ExchangeLogin`, otherwise `claudelogin.Exchange` in process.
+- `type claudeLoginSync struct` holds a registry of running jobs keyed by attempt id and the last seen mtime of each host config dir, plus the dependencies `exchange`, `refresh`, `now` and `logger`. Each `claudeLoginJob` carries its `isolation.JobHome`, its baseline, the last reported rotation hash, the job's logger and an exchange mutex.
+- `register(attemptID string, home isolation.JobHome, logger *slog.Logger) *claudeLoginJob` returns nil for a home that does not sync a file login; every method is nil-safe. The exchanger is the docker helper when the ownership supports `ExchangeLogin`; without it there is no exchange.
 - `stop()` takes the job's mutex, so it waits for a running exchange and blocks later ones. `job.go` registers it with `ownership.beforeRelease`, so no exchange runs once the home is being reclaimed.
-- `final()` removes the job from the registry, stops it, and once only reads the reclaimed copy directly and runs `writeBack` with a 30 s timeout. It runs first in the home cleanup defer, on every exit path.
-- `writeBack(ctx, candidate Login, account Account)`:
-  - it takes the host `LockConfigDir`;
-  - it re-reads the host;
-  - it runs `Decide`;
-  - on `ok`, it writes `MergeCredentials(host, candidate)` with uid -1;
-  - it sets the writing job's baseline to the new hash and leaves every other job's baseline alone: a job whose copy is still on its baseline gets the newer host login at its next exchange, and only then does its baseline become the handed-on hash;
-  - it logs `claude login write-back` with the reason only.
-- The loop exchanges with each job every 2 minutes. It checks the host mtime every 10 s, and a change triggers an exchange with all jobs of that host dir; there is no separate wake channel. Exchanges with different jobs run one after another in attempt id order; the daemon waits for no exchange while holding the host lock.
-- Tests, against a fake or in-process exchange and a temp host dir:
-  - a refresh in job 1 is written back and then handed to jobs 2 and 3;
-  - job 3 already newer: not overwritten, `host_changed` logged;
+- After an exchange: on `Replaced` the job's baseline becomes the host's hash and `claude login handed on` is logged; otherwise the returned copy goes to `noteRotation`.
+- `noteRotation` logs the rotation warning from Decisions once per rotated hash. It never writes the host.
+- `final()` removes the job from the registry, stops it, and once only reads the reclaimed copy with `ReadJobLogin` and runs `noteRotation`. It runs first in the home cleanup defer, on every exit path.
+- The loop exchanges with each job every 2 minutes. It checks the host mtime every 10 s, and a change triggers an exchange with all jobs of that host dir; there is no separate wake channel. Exchanges with different jobs run one after another in attempt id order.
+- Tests, against a fake exchange and a temp host dir:
+  - a host change is handed to jobs 1, 2 and 3;
+  - a job that rotated keeps its copy, the host is unchanged, and the rotation is logged once;
   - a host change by another account: no hand-on;
-  - final sync of the reclaimed copy, idempotent, and no exchange after stop;
-  - final sync through the job harness on a clean exit, a provider failure and a cancel;
+  - final check of the reclaimed copy, idempotent, and no exchange after stop;
+  - final check through the job harness on a clean exit, a provider failure and a cancel, with the host login untouched;
   - exchanges are stopped before the home is reclaimed;
   - stop during an exchange waits for it;
   - a failed exchange is logged without values, and no log capture contains a fake token.
 
 ### Task 6: Scheduled refresh
 
-Files: create `internal/daemon/claude_login_refresh.go` and its test; modify `internal/isolation/login_exchange.go` (`RefreshLogin`).
+Files: create `internal/claudelogin/refresh.go`, `cmd/our-runner/claude_login_refresh.go` (the `claude-login-refresh` case in `main.go`), `internal/isolation/login_refresh.go` and `internal/daemon/claude_login_refresh.go`, each with its test.
 
-- `func (o DockerOwnership) RefreshLogin(ctx context.Context, refreshToken string, scopes []string) ([]byte, error)`.
-  - It runs `claude auth login` in a container from the pinned job image, with an empty temp config dir (0700, removed afterwards).
-  - `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` and `CLAUDE_CODE_OAUTH_SCOPES` are passed with `--env-file` from a 0600 file in the same temp dir, so the values never appear in an argument list.
-  - The network is the job egress network, limited to `api.anthropic.com`, `console.anthropic.com` and `claude.ai`; this is checked in Task 7.
+- `claudelogin.RefreshGrant(oauth) (token string, scopes []string, err error)` and `CheckRefreshGrant(token, scopes) error`. The token is printable ASCII without spaces, at most 4096 bytes; there are 1 to 32 scopes, each matching `^[A-Za-z0-9:._-]{1,128}$`.
+- `our-runner claude-login-refresh` takes no arguments, reads both variables from its environment, runs `claude auth login` with `CLAUDE_CONFIG_DIR=/tmp/claude-login` and `HOME=/tmp` within 90 s, discards its output, and prints the saved `.credentials.json`. Failures are fixed messages without values.
+- `func (o DockerOwnership) RefreshLogin(ctx context.Context, in LoginRefresh) ([]byte, error)`, with `type LoginRefresh struct { RunnerID, Network, RefreshToken string; Scopes []string }`.
+  - It runs the helper subcommand in a container from the pinned job image as uid 10001, with every capability dropped, `no-new-privileges`, a read-only root, a 16 MiB tmpfs at `/tmp`, logging off, and the runner binary mounted read-only as entrypoint, within 2 minutes.
+  - `CLAUDE_CODE_OAUTH_REFRESH_TOKEN` and `CLAUDE_CODE_OAUTH_SCOPES` (space-separated) are passed with `--env-file` from a 0600 file in a private temp dir under the state dir, removed afterwards, so the values never appear in an argument list.
+  - The network is the restricted job network (never `host`, `none` or `bridge`); whether it reaches the sign-in hosts is checked in Task 7.
   - It returns the new `.credentials.json` bytes.
-- The daemon refreshes when a registered job exists or a Claude job is starting and the host `expiresAt` is within 15 minutes. It does this under the host lock and at most once per lineage, then runs `writeBack` and exchanges with all jobs.
-- On failure it logs `claude login refresh failed` with the exit status only, and tries again after 2 minutes.
+- The daemon refreshes when the host `expiresAt` is within 15 minutes and either a registered job of that host dir exists (checked every 10 s) or a Claude subscription job is about to copy the login (`beforeStart`, synchronous, before `PrepareHomeWithLogin`). Without the second case an idle runner's first job would start with an expired token and Claude Code in it would rotate the lineage. It does this under the host lock, re-reads the host under it, and refreshes at most once per lineage. It checks the result as in "Scheduled refresh", merges it into the host file, and in the same tick hands it on to all jobs.
+- On failure it logs `claude login refresh failed` with the exit status or reason (`older`, `unparsable`, `implausible_expiry`, `account_mismatch`) only, and tries again after 2 minutes. Without Docker isolation and the restricted job network it logs `claude login refresh unavailable` once.
 - In this slice, a job start with an unusable login keeps today's failure code. The new code `provider_login_refresh_failed` changes the wire contract (`api/runner/v1/job_finished.go`), so it waits for agreement with the control plane.
 - Tests:
   - one refresh for three jobs;
@@ -285,7 +285,21 @@ Files: create `internal/daemon/claude_login_refresh.go` and its test; modify `in
 
 Files: modify `internal/doctor/doctor.go` and its test, `README.md` (subscription login section) and the known issue in `docs/development/release-0.4.1.md`; add a 0.4.3 release note.
 
-- The doctor line `claude login sync` reports the source (`file`, `keychain`, `api key`), whether sync applies, whether the account check is available, and the time to expiry rounded to minutes.
+- The doctor check `claude-login-sync` (`internal/doctor/claude_login_check.go`, reading the host through `isolation.HostClaudeLogin`) reports the source (`file`, `keychain`, none, or API key only), whether sync applies, whether the scheduled refresh and the account check are available, and the time to expiry rounded to minutes.
 - Live check, which needs the master's approval because it refreshes the real login:
   1. one `RefreshLogin` against the host login, with hashes before and after, and an interactive `claude` on the host still working afterwards;
   2. then the 3c run with `max_concurrent: 3` described above.
+
+#### Live check 1 (2026-11-26, master-approved single refresh of `~/.claude-personal`)
+
+- Setup: the daemon's `refreshHost` with `DockerOwnership.RefreshLogin`, a statically built runner, the local job image `local/our-runner-job:e2e-611eaa7` (Claude Code 2.1.299), and a temporary user-defined bridge network (removed afterwards). This host has no restricted job network, so the network leg is not verified here.
+- A dry run with a fake refresh token reached the sign-in server (`400`, exit 1) in under a second. The read-only root with the `/tmp` tmpfs was enough for `claude auth login`.
+- The real refresh, in hashes (SHA-256 prefixes, no values):
+  - refresh token `4169bcc58944d301` → `f417393bbbfde216`;
+  - file `c7f05e1613b62377` → `945bf892e613820c`;
+  - every other top-level key unchanged (`7a0ea5de23c8d82a` before and after); mode 0600;
+  - access token lifetime 276 → 479 minutes; the refresh took 13 s.
+- Afterwards `claude -p` with the same `CLAUDE_CONFIG_DIR` answered, and the refresh token was still `f417393bbbfde216` (Claude Code only rewrote other keys).
+- Timing: the refresh starts within 10 s of entering the 15-minute window and took 13 s, with a 2-minute retry. That leaves about 4 retries before Claude Code's 5-minute margin.
+- Open: the token endpoint in this Claude Code is `platform.claude.com`. The restricted job network must allow it. Jobs on that network already refreshed in the 3c runs, so it is reachable there (inferred, not checked). The 3c run with `max_concurrent: 3` is still to do.
+- Found: a refresh whose result is refused (`older`, `implausible_expiry`, `account_mismatch`) has already rotated the lineage, so the host login then needs a new sign-in. Refusing is still the safe choice, and the failure is logged.

@@ -24,7 +24,7 @@ func fakeOAuth(refresh string, expiresAt int64, account string) string {
 	if account != "" {
 		accountFields = fmt.Sprintf(`,"accountUuid":%q,"organizationUuid":"org"`, account)
 	}
-	return fmt.Sprintf(`{"accessToken":"fake-access-%s","refreshToken":"fake-%s","expiresAt":%d%s}`, refresh, refresh, expiresAt, accountFields)
+	return fmt.Sprintf(`{"accessToken":"fake-access-%s","refreshToken":"fake-%s","expiresAt":%d,"scopes":["user:profile","user:inference"]%s}`, refresh, refresh, expiresAt, accountFields)
 }
 
 func fakeCredentials(oauth string) string {
@@ -39,6 +39,7 @@ type loginSyncFixture struct {
 	logs    *bytes.Buffer
 	calls   atomic.Int32
 	homes   map[string]string
+	writes  int
 }
 
 func newLoginSyncFixture(t *testing.T, hostOAuth string) *loginSyncFixture {
@@ -47,16 +48,26 @@ func newLoginSyncFixture(t *testing.T, hostOAuth string) *loginSyncFixture {
 	if err := os.MkdirAll(hostDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writeTestFile(t, filepath.Join(hostDir, ".credentials.json"), `{"mcpOAuth":{"server":{"accessToken":"fake-mcp"}},"claudeAiOauth":`+hostOAuth+`}`)
 	f := &loginSyncFixture{t: t, hostDir: hostDir, now: time.Unix(1_800_000_000, 0), logs: &bytes.Buffer{}, homes: map[string]string{}}
+	f.setHost(hostOAuth)
 	logger := slog.New(slog.NewTextHandler(f.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	f.sync = newClaudeLoginSync(func(ctx context.Context, attemptID, home string, request claudelogin.ExchangeRequest) (claudelogin.ExchangeResult, error) {
 		f.calls.Add(1)
 		return claudelogin.Exchange(ctx, home, request, claudelogin.LockOptions{Retry: time.Millisecond, Timeout: 100 * time.Millisecond})
-	}, logger)
+	}, nil, logger)
 	f.sync.now = func() time.Time { return f.now }
 	f.sync.lock = claudelogin.LockOptions{Retry: time.Millisecond, Timeout: 100 * time.Millisecond}
 	return f
+}
+
+func (f *loginSyncFixture) setHost(oauth string) {
+	path := filepath.Join(f.hostDir, ".credentials.json")
+	writeTestFile(f.t, path, `{"mcpOAuth":{"server":{"accessToken":"fake-mcp"}},"claudeAiOauth":`+oauth+`}`)
+	f.writes++
+	future := time.Now().Add(time.Duration(f.writes) * time.Minute)
+	if err := os.Chtimes(path, future, future); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 func writeTestFile(t *testing.T, path, content string) {
@@ -77,7 +88,7 @@ func (f *loginSyncFixture) addJob(attemptID, jobOAuth, baselineRefresh string) *
 	return f.sync.register(attemptID, isolation.JobHome{
 		Path: home, ClaudeConfigDir: f.hostDir, ClaudeStateFile: filepath.Join(f.hostDir, ".claude.json"),
 		Baseline: sha256.Sum256([]byte("fake-" + baselineRefresh)), SyncsLogin: true,
-	})
+	}, nil)
 }
 
 func (f *loginSyncFixture) setJob(attemptID, jobOAuth string) {
@@ -120,49 +131,45 @@ func (f *loginSyncFixture) assertNoTokenLogged() {
 	}
 }
 
-func TestClaudeLoginSyncWritesARefreshBackAndHandsItOn(t *testing.T) {
+func TestClaudeLoginSyncHandsANewerHostLoginOnToEveryJob(t *testing.T) {
 	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
 	for _, id := range []string{"a1", "a2", "a3"} {
 		f.addJob(id, fakeOAuth("r0", 100, ""), "r0")
 	}
-	f.setJob("a1", fakeOAuth("r1", 200, ""))
-	f.now = f.now.Add(claudeLoginExchangeInterval)
+	f.setHost(fakeOAuth("r1", 200, ""))
 	f.sync.tick(context.Background())
-	f.assertHost("r1")
 	for _, id := range []string{"a1", "a2", "a3"} {
 		if got := f.jobRefresh(id); got != "r1" {
 			t.Fatalf("job %s login = %s, want r1", id, got)
 		}
 	}
 	calls := f.calls.Load()
-	f.now = f.now.Add(claudeLoginHostCheckInterval)
-	f.sync.tick(context.Background())
 	f.now = f.now.Add(claudeLoginExchangeInterval)
 	f.sync.tick(context.Background())
-	f.assertHost("r1")
 	if f.calls.Load() <= calls {
 		t.Fatal("the periodic exchange did not run again")
 	}
-	if !strings.Contains(f.logs.String(), "claude login write-back") || !strings.Contains(f.logs.String(), "reason=ok") {
-		t.Fatalf("write-back not logged: %s", f.logs.String())
+	f.assertHost("r1")
+	if strings.Count(f.logs.String(), "claude login handed on") != 3 {
+		t.Fatalf("hand-ons not logged once per job: %s", f.logs.String())
 	}
 	f.assertNoTokenLogged()
 }
 
-func TestClaudeLoginSyncDoesNotOverwriteANewerJobLogin(t *testing.T) {
+func TestClaudeLoginSyncNeverWritesAJobRotationBack(t *testing.T) {
 	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
 	f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
-	f.addJob("a3", fakeOAuth("r0", 100, ""), "r0")
 	f.setJob("a1", fakeOAuth("r1", 200, ""))
-	f.setJob("a3", fakeOAuth("r5", 500, ""))
-	f.now = f.now.Add(claudeLoginExchangeInterval)
-	f.sync.tick(context.Background())
-	f.assertHost("r1")
-	if got := f.jobRefresh("a3"); got != "r5" {
-		t.Fatalf("job a3 login = %s, want its own newer r5", got)
+	for range 2 {
+		f.now = f.now.Add(claudeLoginExchangeInterval)
+		f.sync.tick(context.Background())
 	}
-	if !strings.Contains(f.logs.String(), "reason=host_changed") {
-		t.Fatalf("the skipped write-back was not logged: %s", f.logs.String())
+	f.assertHost("r0")
+	if got := f.jobRefresh("a1"); got != "r1" {
+		t.Fatalf("job login = %s, want its own r1", got)
+	}
+	if got := strings.Count(f.logs.String(), "event=job_login_rotated"); got != 1 {
+		t.Fatalf("rotation warnings = %d, want 1: %s", got, f.logs.String())
 	}
 	f.assertNoTokenLogged()
 }
@@ -170,11 +177,7 @@ func TestClaudeLoginSyncDoesNotOverwriteANewerJobLogin(t *testing.T) {
 func TestClaudeLoginSyncDoesNotHandOnAnotherAccountsLogin(t *testing.T) {
 	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, "a"))
 	f.addJob("a1", fakeOAuth("r0", 100, "a"), "r0")
-	writeTestFile(t, filepath.Join(f.hostDir, ".credentials.json"), fakeCredentials(fakeOAuth("r9", 900, "b")))
-	future := time.Now().Add(time.Minute)
-	if err := os.Chtimes(filepath.Join(f.hostDir, ".credentials.json"), future, future); err != nil {
-		t.Fatal(err)
-	}
+	f.setHost(fakeOAuth("r9", 900, "b"))
 	f.sync.tick(context.Background())
 	if f.calls.Load() != 1 {
 		t.Fatalf("a host change triggered %d exchanges, want 1", f.calls.Load())
@@ -185,7 +188,7 @@ func TestClaudeLoginSyncDoesNotHandOnAnotherAccountsLogin(t *testing.T) {
 	f.assertNoTokenLogged()
 }
 
-func TestClaudeLoginSyncFinalSyncWritesTheReclaimedCopyBack(t *testing.T) {
+func TestClaudeLoginSyncFinalCheckReportsARotationWithoutWritingIt(t *testing.T) {
 	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
 	job := f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
 	f.setJob("a1", fakeOAuth("r1", 200, ""))
@@ -197,13 +200,34 @@ func TestClaudeLoginSyncFinalSyncWritesTheReclaimedCopyBack(t *testing.T) {
 	}
 	job.final()
 	job.final()
-	f.assertHost("r1")
+	f.assertHost("r0")
+	if got := strings.Count(f.logs.String(), "event=job_login_rotated"); got != 1 {
+		t.Fatalf("rotation warnings = %d, want 1", got)
+	}
 	f.now = f.now.Add(claudeLoginExchangeInterval)
 	f.sync.tick(context.Background())
 	if f.calls.Load() != 0 {
 		t.Fatal("a finished job was exchanged")
 	}
 	f.assertNoTokenLogged()
+}
+
+func TestClaudeLoginSyncFinalCheckStaysInsideTheJobHome(t *testing.T) {
+	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
+	job := f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
+	outside := filepath.Join(t.TempDir(), "outside")
+	writeTestFile(t, filepath.Join(outside, ".credentials.json"), fakeCredentials(fakeOAuth("r1", 200, "")))
+	jobConfig := filepath.Join(f.homes["a1"], ".claude")
+	if err := os.RemoveAll(jobConfig); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, jobConfig); err != nil {
+		t.Fatal(err)
+	}
+	job.final()
+	if !strings.Contains(f.logs.String(), "claude login final check skipped") || strings.Contains(f.logs.String(), "job_login_rotated") {
+		t.Fatalf("the escaping link was followed: %s", f.logs.String())
+	}
 }
 
 func TestClaudeLoginSyncStopWaitsForARunningExchange(t *testing.T) {
@@ -250,55 +274,25 @@ func TestClaudeLoginSyncLogsAFailedExchangeWithoutValues(t *testing.T) {
 	f.assertNoTokenLogged()
 }
 
-func TestClaudeLoginSyncRefusesAnImplausibleExpiry(t *testing.T) {
-	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
-	job := f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
-	f.setJob("a1", fakeOAuth("r1", f.now.Add(30*24*time.Hour).UnixMilli(), ""))
-	job.final()
-	f.assertHost("r0")
-	if !strings.Contains(f.logs.String(), "reason=implausible_expiry") {
-		t.Fatalf("the refusal was not logged: %s", f.logs.String())
-	}
-}
-
-func TestClaudeLoginSyncFinalSyncStaysInsideTheJobHome(t *testing.T) {
-	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
-	job := f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
-	outside := filepath.Join(t.TempDir(), "outside")
-	writeTestFile(t, filepath.Join(outside, ".credentials.json"), fakeCredentials(fakeOAuth("r1", 200, "")))
-	jobConfig := filepath.Join(f.homes["a1"], ".claude")
-	if err := os.RemoveAll(jobConfig); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(outside, jobConfig); err != nil {
-		t.Fatal(err)
-	}
-	job.final()
-	f.assertHost("r0")
-	if !strings.Contains(f.logs.String(), "claude login final sync skipped") {
-		t.Fatalf("the escaping link was not refused: %s", f.logs.String())
-	}
-}
-
-func TestClaudeLoginSyncWithoutAHelperOnlyRunsTheFinalSync(t *testing.T) {
+func TestClaudeLoginSyncWithoutAHelperDoesNotExchange(t *testing.T) {
 	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
 	f.sync.exchange = (&Daemon{}).claudeLoginExchanger()
-	job := f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
-	f.setJob("a1", fakeOAuth("r1", 200, ""))
+	f.addJob("a1", fakeOAuth("r0", 100, ""), "r0")
+	f.setHost(fakeOAuth("r1", 200, ""))
 	f.now = f.now.Add(claudeLoginExchangeInterval)
 	f.sync.tick(context.Background())
-	f.assertHost("r0")
-	job.final()
-	f.assertHost("r1")
+	if got := f.jobRefresh("a1"); got != "r0" {
+		t.Fatalf("job login = %s without a helper, want r0", got)
+	}
 }
 
 func TestClaudeLoginSyncIgnoresHomesThatDoNotSync(t *testing.T) {
 	f := newLoginSyncFixture(t, fakeOAuth("r0", 100, ""))
-	job := f.sync.register("a1", isolation.JobHome{Path: t.TempDir()})
+	job := f.sync.register("a1", isolation.JobHome{Path: t.TempDir()}, nil)
 	job.stop()
 	job.final()
 	var none *claudeLoginSync
-	none.register("a2", isolation.JobHome{SyncsLogin: true}).final()
+	none.register("a2", isolation.JobHome{SyncsLogin: true}, nil).final()
 	f.now = f.now.Add(claudeLoginExchangeInterval)
 	f.sync.tick(context.Background())
 	if f.calls.Load() != 0 {

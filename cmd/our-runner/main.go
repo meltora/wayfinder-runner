@@ -69,6 +69,8 @@ func runCLI(args []string) int {
 		return cmdPlanCommandGuard(args[1:])
 	case "claude-login-exchange":
 		return cmdClaudeLoginExchange(args[1:])
+	case "claude-login-refresh":
+		return cmdClaudeLoginRefresh(args[1:])
 	case "support-bundle":
 		err = cmdSupportBundle(args[1:])
 	case "version":
