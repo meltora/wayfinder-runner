@@ -13,9 +13,14 @@ const (
 	claudeLoginRefreshWindow = 15 * time.Minute
 	claudeLoginRefreshRetry  = 2 * time.Minute
 	claudeLoginMaxLifetime   = 24 * time.Hour
+
+	claudeLoginRefreshLockWait = 2 * time.Minute
 )
 
-var errClaudeLoginRefreshUnavailable = errors.New("the scheduled Claude login refresh needs docker isolation on the restricted job network")
+var (
+	errClaudeLoginRefreshUnavailable = errors.New("the scheduled Claude login refresh needs docker isolation on the restricted job network")
+	errClaudeLoginRefreshIncomplete  = errors.New("the refreshed Claude login lacks an access or refresh token")
+)
 
 type claudeLoginRefresher func(ctx context.Context, refreshToken string, scopes []string) ([]byte, error)
 
@@ -95,11 +100,23 @@ func (s *claudeLoginSync) refreshHost(ctx context.Context, dir string) bool {
 	if _, host, err := claudelogin.ReadLogin(dir); err != nil || !s.refreshDue(state, host) {
 		return false
 	}
+	lockCtx, cancel := context.WithTimeout(ctx, claudeLoginRefreshLockWait)
+	unlockRefresh, err := claudelogin.LockRefresh(lockCtx, dir)
+	cancel()
+	if err != nil {
+		s.logger.Warn("claude login refresh skipped", "reason", "refresh_locked", "err", err)
+		return false
+	}
+	defer func() {
+		if err := unlockRefresh(); err != nil {
+			s.logger.Warn("claude login refresh lock release failed", "err", err)
+		}
+	}()
 	var baseline claudelogin.Login
 	var token string
 	var scopes []string
 	due := false
-	err := s.withHostLock(ctx, dir, func() error {
+	err = s.withHostLock(ctx, dir, func() error {
 		_, host, err := claudelogin.ReadLogin(dir)
 		if err != nil || !s.refreshDue(state, host) {
 			return nil
@@ -164,6 +181,9 @@ func (s *claudeLoginSync) refreshHost(ctx context.Context, dir string) bool {
 		merged, err := claudelogin.MergeCredentials(data, fresh.OAuth)
 		if err != nil {
 			return err
+		}
+		if written, err := claudelogin.ParseCredentials(merged); err != nil || !written.HasRefresh || written.RefreshHash != fresh.RefreshHash {
+			return errClaudeLoginRefreshIncomplete
 		}
 		if err := claudelogin.WriteFileAtomic(dir, ".credentials.json", merged, -1); err != nil {
 			return err

@@ -141,6 +141,13 @@ func TestClaudeLoginRefreshRefusesAnUnusableResult(t *testing.T) {
 		"older":            {out: func(f *loginSyncFixture) string { return fakeCredentials(fakeOAuth("r1", 100, "")) }, reason: "older"},
 		"no refresh token": {out: func(*loginSyncFixture) string { return `{"claudeAiOauth":{"accessToken":"fake-a","expiresAt":9e15}}` }, reason: "unparsable"},
 		"not json":         {out: func(*loginSyncFixture) string { return "fake-r1" }, reason: "unparsable"},
+		"empty access token": {out: func(*loginSyncFixture) string {
+			return `{"claudeAiOauth":{"accessToken":"","refreshToken":"fake-r1","expiresAt":9e15}}`
+		}, reason: "unparsable"},
+		"empty refresh token": {out: func(*loginSyncFixture) string {
+			return `{"claudeAiOauth":{"accessToken":"fake-a","refreshToken":"","expiresAt":9e15}}`
+		}, reason: "unparsable"},
+		"no tokens": {out: func(*loginSyncFixture) string { return `{"claudeAiOauth":{}}` }, reason: "unparsable"},
 		"another account": {out: func(f *loginSyncFixture) string {
 			return fakeCredentials(fakeOAuth("r1", f.now.Add(8*time.Hour).UnixMilli(), "acct-other"))
 		}, reason: "account_mismatch"},
